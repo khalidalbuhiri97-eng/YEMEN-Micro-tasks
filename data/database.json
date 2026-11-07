@@ -1,0 +1,129 @@
+{
+  "profiles": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "fullName": "مالك منصة كسب اليمن",
+      "phone": "739701293",
+      "email": "khalidalbuhiri@gmail.com",
+      "avatarUrl": "",
+      "role": "admin",
+      "status": "active",
+      "referralCode": "OWNER01",
+      "city": "صنعاء",
+      "createdAt": "2026-11-06T15:52:54.212Z",
+      "updatedAt": "2026-11-06T15:52:54.212Z"
+    }
+  ],
+  "passwords": {
+    "00000000-0000-4000-8000-000000000001": "4d3a883122f931ca14491b68a450f10e6fd62ef734c509dfe9ec8d9e3c38a89e"
+  },
+  "wallets": [
+    {
+      "id": "wallet-owner",
+      "userId": "00000000-0000-4000-8000-000000000001",
+      "availableBalance": 0,
+      "pendingBalance": 0,
+      "totalEarned": 0,
+      "totalWithdrawn": 0,
+      "currency": "YER",
+      "createdAt": "2026-11-06T15:52:54.212Z",
+      "updatedAt": "2026-11-06T15:52:54.212Z"
+    }
+  ],
+  "walletTransactions": [],
+  "tasks": [],
+  "taskSubmissions": [],
+  "withdrawalRequests": [],
+  "payoutMethods": [
+    {
+      "id": "pm-1",
+      "code": "KURAIMI",
+      "name": "Al-Kuraimi Microfinance Bank",
+      "nameAr": "بنك الكريمي للتمويل الأصغر الإسلامي",
+      "minWithdrawal": 1000,
+      "maxWithdrawal": 500000,
+      "feePercentage": 1,
+      "feeFlat": 0,
+      "isActive": true,
+      "requiredFields": [
+        "beneficiary_name",
+        "phone_number",
+        "account_number"
+      ]
+    },
+    {
+      "id": "pm-2",
+      "code": "NAJM",
+      "name": "Al-Najm Financial Remittance",
+      "nameAr": "شبكة النجم للحوالات المالية الفورية",
+      "minWithdrawal": 1000,
+      "maxWithdrawal": 500000,
+      "feePercentage": 1.5,
+      "feeFlat": 0,
+      "isActive": true,
+      "requiredFields": [
+        "beneficiary_name",
+        "phone_number"
+      ]
+    },
+    {
+      "id": "pm-3",
+      "code": "JAWALI",
+      "name": "Jawali Wallet (CAC Bank)",
+      "nameAr": "محفظة جوالي كاك بنك",
+      "minWithdrawal": 1000,
+      "maxWithdrawal": 250000,
+      "feePercentage": 1,
+      "feeFlat": 0,
+      "isActive": true,
+      "requiredFields": [
+        "beneficiary_name",
+        "phone_number"
+      ]
+    },
+    {
+      "id": "pm-4",
+      "code": "ONE_CASH",
+      "name": "OneCash Wallet",
+      "nameAr": "محفظة ون كاش (OneCash)",
+      "minWithdrawal": 1000,
+      "maxWithdrawal": 300000,
+      "feePercentage": 1,
+      "feeFlat": 0,
+      "isActive": true,
+      "requiredFields": [
+        "beneficiary_name",
+        "phone_number"
+      ]
+    }
+  ],
+  "notifications": [],
+  "settings": {
+    "id": "settings-1",
+    "platformName": "كسب اليمن",
+    "currency": "YER",
+    "minWithdrawal": 1000,
+    "maxWithdrawal": 500000,
+    "dailyWithdrawalLimit": 1000000,
+    "defaultFeePercentage": 1.5,
+    "referralBonus": 300,
+    "taskSubmissionLimit": 10,
+    "isRegistrationOpen": true,
+    "maintenanceMode": false,
+    "contactPhone": "+967 739 701 293",
+    "contactEmail": "khalidalbuhiri@gmail.com",
+    "updatedAt": "2026-11-06T15:52:54.212Z"
+  },
+  "supportTickets": [],
+  "adminLogs": [
+    {
+      "id": "298283eb-d9b4-4c61-a97c-97a4569623dd",
+      "adminId": "00000000-0000-4000-8000-000000000001",
+      "action": "PROVISION_OWNER_ADMIN",
+      "targetType": "SYSTEM",
+      "targetId": "00000000-0000-4000-8000-000000000001",
+      "details": "تهيئة الحساب الحصري المعتمد لمالك المنصة: khalidalbuhiri@gmail.com",
+      "createdAt": "2026-11-06T15:52:54.212Z"
+    }
+  ]
+}
