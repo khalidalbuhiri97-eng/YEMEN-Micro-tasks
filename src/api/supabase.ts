@@ -1,10 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Get Supabase URL and Anon Key from environment variables (Vite / Vercel compatible)
-const SUPABASE_URL =
+let rawUrl =
   (import.meta as any).env?.VITE_SUPABASE_URL ||
   (import.meta as any).env?.NEXT_PUBLIC_SUPABASE_URL ||
   'https://pevftfrgtzspiphibbla.supabase.co';
+
+// Automatically fix typo if user enters .supabase.com instead of standard .supabase.co
+const SUPABASE_URL = rawUrl.trim().replace(/\.supabase\.com$/i, '.supabase.co');
 
 const SUPABASE_ANON_KEY =
   (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
