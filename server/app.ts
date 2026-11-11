@@ -1,6 +1,12 @@
 import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
+import { createClient } from '@supabase/supabase-js';
 import { db } from './db';
+
+const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://pevftfrgtzspiphibbla.supabase.co').trim().replace(/\.supabase\.com$/i, '.supabase.co');
+const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBldmZ0ZnJndHpzcGlwaGliYmxhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQwNTAxOTAsImV4cCI6MjEwOTYyNjE5MH0.OavlxMWS9mtCv8Ass3jM-Iz9CCSfT9FDx632gqBMvkA').trim();
+
+export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const app = express();
 
@@ -176,20 +182,56 @@ app.get('/api/settings', (_req: Request, res: Response) => {
   });
 });
 
-// Tasks (Public / User) - Returns actual database tasks
-app.get('/api/tasks', (req: Request, res: Response) => {
+// Tasks (Public / User) - Returns actual database tasks from Supabase Cloud or local DB
+app.get('/api/tasks', async (req: Request, res: Response) => {
   const { category, search } = req.query;
-  let tasks = db.getData().tasks.filter((t) => t.status === 'ACTIVE');
 
+  try {
+    let query = supabaseServer.from('tasks').select('*').eq('status', 'ACTIVE').order('created_at', { ascending: false });
+    if (category && category !== 'all') {
+      query = query.eq('category', String(category));
+    }
+    const { data: supaTasks, error: supaErr } = await query;
+    if (!supaErr && supaTasks && supaTasks.length > 0) {
+      let filtered = supaTasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        category: t.category,
+        rewardYer: Number(t.reward_yer || t.rewardYer || 0),
+        steps: t.steps || [],
+        proofRequirements: t.proof_requirements || t.proofRequirements || { requireImage: true, requireText: true },
+        timeEstimateMinutes: t.time_estimate_minutes || t.timeEstimateMinutes || 10,
+        totalQuantity: t.total_quantity || t.totalQuantity || 1,
+        completedQuantity: t.completed_quantity || t.completedQuantity || 0,
+        maxPerUser: t.max_per_user || 1,
+        budgetYer: Number(t.budget_yer || t.budgetYer || 0),
+        budgetSpentYer: Number(t.budget_spent_yer || t.budgetSpentYer || 0),
+        status: t.status,
+        createdBy: t.created_by,
+        createdAt: t.created_at,
+      }));
+
+      if (search && typeof search === 'string') {
+        const q = search.toLowerCase();
+        filtered = filtered.filter((t) => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
+      }
+
+      return res.json({ tasks: filtered });
+    }
+  } catch (err) {
+    console.warn('[SUPABASE_FETCH_TASKS_WARN]', err);
+  }
+
+  // Local DB Fallback
+  let tasks = db.getData().tasks.filter((t) => t.status === 'ACTIVE');
   if (category && category !== 'all') {
     tasks = tasks.filter((t) => t.category === category);
   }
-
   if (search && typeof search === 'string') {
     const q = search.toLowerCase();
     tasks = tasks.filter((t) => t.title.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
   }
-
   res.json({ tasks });
 });
 
@@ -547,7 +589,7 @@ app.get('/api/admin/tasks', adminMiddleware, (_req: AuthenticatedRequest, res: R
   res.json({ tasks: db.getData().tasks });
 });
 
-app.post('/api/admin/tasks', adminMiddleware, (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { title, description, category, rewardYer, steps, timeEstimateMinutes, totalQuantity, proofRequirements } = req.body;
   if (!title || !description || rewardYer === undefined || rewardYer === null || totalQuantity === undefined) {
     return res.status(400).json({ error: 'يرجى استكمال بيانات المهمة الأساسية.' });
@@ -570,8 +612,9 @@ app.post('/api/admin/tasks', adminMiddleware, (req: AuthenticatedRequest, res: R
     });
   }
 
+  const taskId = 'task-' + crypto.randomUUID().slice(0, 8);
   const newTask = {
-    id: 'task-' + crypto.randomUUID().slice(0, 8),
+    id: taskId,
     title: title.trim(),
     description: description.trim(),
     category: category || 'app_testing',
@@ -589,10 +632,37 @@ app.post('/api/admin/tasks', adminMiddleware, (req: AuthenticatedRequest, res: R
     createdAt: new Date().toISOString(),
   };
 
+  // 1. Attempt Atomic Supabase Cloud PostgreSQL RPC Insertion
+  try {
+    const { data: supaRes, error: supaErr } = await supabaseServer.rpc('create_task_with_ledger_transaction', {
+      p_title: title.trim(),
+      p_description: description.trim(),
+      p_category: category || 'app_testing',
+      p_reward_yer: numReward,
+      p_total_quantity: numQuantity,
+      p_time_estimate_minutes: Number(timeEstimateMinutes) || 10,
+      p_steps: Array.isArray(steps) && steps.length > 0 ? steps : ['اتبع تعليمات المهمة', 'قدم الإثبات المطلوب'],
+      p_proof_requirements: proofRequirements || { require_image: true, require_text: true },
+      p_admin_id: req.user.id && req.user.id.includes('-') ? req.user.id : null,
+      p_idempotency_key: `TASK_CREATE_${taskId}`
+    });
+
+    if (!supaErr && supaRes && supaRes.success && supaRes.task) {
+      console.log('[SUPABASE_RPC_TASK_SUCCESS]', supaRes.task.id);
+      newTask.id = supaRes.task.id || taskId;
+    } else if (supaErr) {
+      console.warn('[SUPABASE_RPC_TASK_WARN]', supaErr.message);
+    }
+  } catch (err) {
+    console.warn('[SUPABASE_RPC_TASK_EXCEPTION]', err);
+  }
+
+  // 2. Local Database & Ledger Sync
   db.reserveTaskBudget(newTask.id, budget, newTask.title, req.user.id);
   db.getData().tasks.unshift(newTask);
   db.logAdminAction(req.user.id, 'CREATE_TASK', 'TASK', newTask.id, `إنشاء مهمة جديدة: "${newTask.title}" مع حجز ميزانية ${budget} ر.ي من الخزينة`);
   db.save();
+
   res.json({ success: true, task: newTask });
 });
 

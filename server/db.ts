@@ -380,10 +380,8 @@ class DatabaseManager {
   }
 
   public verifyPassword(userId: string, plainText: string): boolean {
-    if (userId === AUTHORIZED_OWNER_ID && (plainText === 'Ownery2026!' || plainText === 'OwnerYemen2026!' || plainText === AUTHORIZED_OWNER_INITIAL_PASSWORD)) {
-      return true;
-    }
     const hashed = this.data.passwords[userId];
+    if (!hashed) return false;
     return hashed === hashPassword(plainText);
   }
 
