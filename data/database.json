@@ -23,11 +23,23 @@
       "city": "صنعاء",
       "createdAt": "2026-11-11T10:28:50.582Z",
       "updatedAt": "2026-11-11T10:28:50.582Z"
+    },
+    {
+      "id": "df1a477c-b703-46b2-9fe2-1a4bd0f9b52d",
+      "fullName": "مستخدم تجريبي فحص",
+      "phone": "771122334",
+      "role": "user",
+      "status": "active",
+      "referralCode": "KY479476",
+      "city": "صنعاء",
+      "createdAt": "2026-11-11T10:51:35.689Z",
+      "updatedAt": "2026-11-11T10:51:35.689Z"
     }
   ],
   "passwords": {
     "00000000-0000-4000-8000-000000000001": "4d3a883122f931ca14491b68a450f10e6fd62ef734c509dfe9ec8d9e3c38a89e",
-    "6489de36-2f42-482d-8601-37f2ddefdfd9": "531d985065d45cdd108da06d2d8f67ee29bf31a9a9890c3a77eaee7d65e31fb1"
+    "6489de36-2f42-482d-8601-37f2ddefdfd9": "531d985065d45cdd108da06d2d8f67ee29bf31a9a9890c3a77eaee7d65e31fb1",
+    "df1a477c-b703-46b2-9fe2-1a4bd0f9b52d": "4ff4ece2e1efb766e1a484cfce5ada30a8e3b2eecf17b895c748a04a539fdcd3"
   },
   "wallets": [
     {
@@ -59,6 +71,21 @@
       "currency": "YER",
       "createdAt": "2026-11-11T10:28:50.582Z",
       "updatedAt": "2026-11-11T10:28:50.582Z"
+    },
+    {
+      "id": "5dd4c8e1-9427-49a9-a576-1e123afb2728",
+      "userId": "df1a477c-b703-46b2-9fe2-1a4bd0f9b52d",
+      "walletAddress": "KY-D134356CAE1D",
+      "availableBalance": 0,
+      "pendingBalance": 0,
+      "reservedBalance": 0,
+      "totalEarned": 0,
+      "totalTransferred": 0,
+      "totalWithdrawn": 0,
+      "status": "ACTIVE",
+      "currency": "YER",
+      "createdAt": "2026-11-11T10:51:35.689Z",
+      "updatedAt": "2026-11-11T10:51:35.689Z"
     }
   ],
   "walletTransactions": [],
