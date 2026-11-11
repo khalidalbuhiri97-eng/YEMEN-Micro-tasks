@@ -96,35 +96,48 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 });
 
 app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { identifier, password } = req.body;
-  if (!identifier || !password) {
-    return res.status(400).json({ error: 'يرجى إدخال رقم الهاتف أو البريد وكلمة المرور.' });
-  }
+  try {
+    const { identifier, password } = req.body || {};
+    if (!identifier || !password) {
+      return res.status(400).json({ error: 'يرجى إدخال رقم الهاتف أو البريد وكلمة المرور.' });
+    }
 
-  const user = db.findUserByPhoneOrEmail(identifier);
-  if (!user || !db.verifyPassword(user.id, password)) {
-    return res.status(401).json({ error: 'بيانات الدخول غير صحيحة.' });
-  }
+    const user = db.findUserByPhoneOrEmail(identifier);
+    if (!user || !db.verifyPassword(user.id, password)) {
+      return res.status(401).json({ error: 'بيانات الدخول غير صحيحة.' });
+    }
 
-  if (user.status === 'suspended') {
-    return res.status(403).json({ error: 'تم تجميد هذا الحساب لمخالفة شروط الاستخدام.' });
-  }
+    if (user.status === 'suspended') {
+      return res.status(403).json({ error: 'تم تجميد هذا الحساب لمخالفة شروط الاستخدام.' });
+    }
 
-  const wallet = db.getWallet(user.id);
-  res.json({
-    success: true,
-    token: user.id,
-    user,
-    wallet,
-  });
+    const wallet = db.getWallet(user.id);
+    return res.json({
+      success: true,
+      token: user.id,
+      user,
+      wallet,
+    });
+  } catch (err: any) {
+    console.error('[AUTH_LOGIN_ERROR]', err?.message || err);
+    return res.status(401).json({ error: err?.message || 'بيانات الدخول غير صحيحة أو تعذر التحقق.' });
+  }
 });
 
 app.get('/api/auth/me', authMiddleware, (req: AuthenticatedRequest, res: Response) => {
-  const wallet = db.getWallet(req.user.id);
-  res.json({
-    user: req.user,
-    wallet,
-  });
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'جلسة التوثيق غير صالحة.' });
+    }
+    const wallet = db.getWallet(req.user.id);
+    return res.json({
+      user: req.user,
+      wallet,
+    });
+  } catch (err: any) {
+    console.error('[AUTH_ME_ERROR]', err?.message || err);
+    return res.status(401).json({ error: 'جلسة التوثيق غير صالحة.' });
+  }
 });
 
 // Real System Status
