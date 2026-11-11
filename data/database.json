@@ -12,22 +12,53 @@
       "city": "صنعاء",
       "createdAt": "2026-11-06T15:52:54.212Z",
       "updatedAt": "2026-11-06T15:52:54.212Z"
+    },
+    {
+      "id": "6489de36-2f42-482d-8601-37f2ddefdfd9",
+      "fullName": "مستثمر اختبار",
+      "phone": "770000000",
+      "role": "user",
+      "status": "active",
+      "referralCode": "KY625408",
+      "city": "صنعاء",
+      "createdAt": "2026-11-11T10:28:50.582Z",
+      "updatedAt": "2026-11-11T10:28:50.582Z"
     }
   ],
   "passwords": {
-    "00000000-0000-4000-8000-000000000001": "4d3a883122f931ca14491b68a450f10e6fd62ef734c509dfe9ec8d9e3c38a89e"
+    "00000000-0000-4000-8000-000000000001": "4d3a883122f931ca14491b68a450f10e6fd62ef734c509dfe9ec8d9e3c38a89e",
+    "6489de36-2f42-482d-8601-37f2ddefdfd9": "531d985065d45cdd108da06d2d8f67ee29bf31a9a9890c3a77eaee7d65e31fb1"
   },
   "wallets": [
     {
       "id": "wallet-owner",
       "userId": "00000000-0000-4000-8000-000000000001",
-      "availableBalance": 0,
+      "availableBalance": 10000000,
       "pendingBalance": 0,
       "totalEarned": 0,
       "totalWithdrawn": 0,
       "currency": "YER",
       "createdAt": "2026-11-06T15:52:54.212Z",
-      "updatedAt": "2026-11-06T15:52:54.212Z"
+      "updatedAt": "2026-11-06T15:52:54.212Z",
+      "walletAddress": "KY-F1E59268AC6D",
+      "reservedBalance": 0,
+      "totalTransferred": 0,
+      "status": "ACTIVE"
+    },
+    {
+      "id": "c7438919-f04f-4d1f-8bbe-3de845a68d7b",
+      "userId": "6489de36-2f42-482d-8601-37f2ddefdfd9",
+      "walletAddress": "KY-9D5558F65AD7",
+      "availableBalance": 0,
+      "pendingBalance": 0,
+      "reservedBalance": 0,
+      "totalEarned": 0,
+      "totalTransferred": 0,
+      "totalWithdrawn": 0,
+      "status": "ACTIVE",
+      "currency": "YER",
+      "createdAt": "2026-11-11T10:28:50.582Z",
+      "updatedAt": "2026-11-11T10:28:50.582Z"
     }
   ],
   "walletTransactions": [],
@@ -125,5 +156,41 @@
       "details": "تهيئة الحساب الحصري المعتمد لمالك المنصة: khalidalbuhiri@gmail.com",
       "createdAt": "2026-11-06T15:52:54.212Z"
     }
-  ]
+  ],
+  "ledgerTransactions": [
+    {
+      "id": "513a7529-8be4-42e0-a3e7-6d5d5eb29f93",
+      "transactionType": "TREASURY_INITIALIZATION",
+      "referenceId": "GENESIS_TREASURY_10M",
+      "idempotencyKey": "GENESIS_INIT_10M",
+      "description": "تهيئة الخزينة الافتراضية المركزية لمنصة كسب اليمن بمبلغ 10,000,000 وحدة افتراضية",
+      "createdBy": "00000000-0000-4000-8000-000000000001",
+      "createdAt": "2026-11-11T10:26:59.427Z"
+    }
+  ],
+  "ledgerEntries": [
+    {
+      "id": "dcb63d66-0c72-437e-ae44-8dc974fa448f",
+      "transactionId": "513a7529-8be4-42e0-a3e7-6d5d5eb29f93",
+      "accountId": "ISSUED_CAPITAL",
+      "debitAmount": 10000000,
+      "creditAmount": 0,
+      "createdAt": "2026-11-11T10:26:59.427Z"
+    },
+    {
+      "id": "686ecc58-2c32-4838-b103-5300d0fa466c",
+      "transactionId": "513a7529-8be4-42e0-a3e7-6d5d5eb29f93",
+      "accountId": "TREASURY_AVAILABLE",
+      "debitAmount": 0,
+      "creditAmount": 10000000,
+      "createdAt": "2026-11-11T10:26:59.427Z"
+    }
+  ],
+  "walletTransfers": [],
+  "treasury": {
+    "totalIssuedUnits": 10000000,
+    "treasuryAvailable": 10000000,
+    "taskBudgetReserved": 0,
+    "initializedAt": "2026-11-11T10:26:59.427Z"
+  }
 }
