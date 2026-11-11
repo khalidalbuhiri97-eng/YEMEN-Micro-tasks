@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { SystemErrorLog, DatabaseMonitoringStats, ErrorType } from '../../types/index.ts';
+import type { SystemErrorLog, DatabaseMonitoringStats, ErrorType, ErrorAggregationGroup } from '../../types/index.ts';
 import {
   Activity,
   AlertTriangle,
@@ -25,7 +25,14 @@ import {
   FileCode,
   X,
   Send,
-  AlertCircle
+  AlertCircle,
+  BarChart3,
+  TrendingUp,
+  Table,
+  ArrowRight,
+  ChevronLeft,
+  SlidersHorizontal,
+  Flame,
 } from 'lucide-react';
 
 const ERROR_TYPE_LABELS: Record<string, { labelAr: string; color: string }> = {
@@ -46,10 +53,14 @@ const ERROR_TYPE_LABELS: Record<string, { labelAr: string; color: string }> = {
 export const DatabaseErrorsView: React.FC = () => {
   const { showToast } = useAuth();
   const [logs, setLogs] = useState<SystemErrorLog[]>([]);
+  const [aggregations, setAggregations] = useState<ErrorAggregationGroup[]>([]);
   const [stats, setStats] = useState<DatabaseMonitoringStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<any | null>(null);
+
+  // Active View Mode: 'aggregated' (Bottleneck analysis) or 'detailed' (Individual log records)
+  const [viewMode, setViewMode] = useState<'aggregated' | 'detailed'>('aggregated');
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,6 +75,30 @@ export const DatabaseErrorsView: React.FC = () => {
   const [resolutionNote, setResolutionNote] = useState('');
   const [isResolving, setIsResolving] = useState(false);
 
+  // Unique list of source tables extracted from logs and aggregations for dropdown
+  const uniqueTables = useMemo(() => {
+    const tableSet = new Set<string>();
+    tableSet.add('platform_settings');
+    tableSet.add('profiles');
+    tableSet.add('wallets');
+    tableSet.add('tasks');
+    tableSet.add('task_submissions');
+    tableSet.add('wallet_transactions');
+    tableSet.add('withdrawals');
+    tableSet.add('system_error_logs');
+    tableSet.add('general');
+
+    logs.forEach(l => {
+      if (l.sourceTable) tableSet.add(l.sourceTable);
+      if (l.sourceFunction) tableSet.add(l.sourceFunction);
+    });
+    aggregations.forEach(a => {
+      if (a.sourceTable) tableSet.add(a.sourceTable);
+    });
+
+    return Array.from(tableSet);
+  }, [logs, aggregations]);
+
   const fetchLogsAndStats = async () => {
     setIsLoading(true);
     try {
@@ -76,8 +111,40 @@ export const DatabaseErrorsView: React.FC = () => {
         endDate: endDate || undefined,
       });
 
-      setLogs(res.logs || []);
+      const fetchedLogs: SystemErrorLog[] = res.logs || [];
+      setLogs(fetchedLogs);
       setStats(res.stats || null);
+
+      if (res.aggregations && res.aggregations.length > 0) {
+        setAggregations(res.aggregations);
+      } else {
+        // Fallback aggregation client-side if server didn't provide it
+        const map: Record<string, ErrorAggregationGroup> = {};
+        fetchedLogs.forEach((l) => {
+          const type = l.errorType || 'UNKNOWN_ERROR';
+          const table = l.sourceTable || l.sourceFunction || 'general';
+          const key = `${type}___${table}`;
+          if (!map[key]) {
+            map[key] = {
+              errorType: type,
+              sourceTable: table,
+              count: 0,
+              unresolvedCount: 0,
+              lastOccurredAt: l.occurredAt,
+              sampleMessage: l.message,
+              sampleCode: l.errorCode,
+            };
+          }
+          map[key].count += 1;
+          if (!l.resolved) map[key].unresolvedCount += 1;
+          if (new Date(l.occurredAt).getTime() > new Date(map[key].lastOccurredAt).getTime()) {
+            map[key].lastOccurredAt = l.occurredAt;
+            map[key].sampleMessage = l.message;
+            map[key].sampleCode = l.errorCode;
+          }
+        });
+        setAggregations(Object.values(map).sort((a, b) => b.count - a.count));
+      }
     } catch (err: any) {
       showToast(err.message || 'فشل في جلب سجل مراقبة أخطاء قاعدة البيانات', 'error');
     } finally {
@@ -129,6 +196,12 @@ export const DatabaseErrorsView: React.FC = () => {
     } finally {
       setIsResolving(false);
     }
+  };
+
+  const handleFilterByGroup = (errorType: string, sourceTable: string) => {
+    setSelectedErrorType(errorType);
+    setSelectedTable(sourceTable);
+    setViewMode('detailed');
   };
 
   const clearFilters = () => {
@@ -311,7 +384,7 @@ export const DatabaseErrorsView: React.FC = () => {
 
       {/* Search & Filtering Control Panel */}
       <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-        <form onSubmit={handleSearchSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <form onSubmit={handleSearchSubmit} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
           {/* Search Box */}
           <div className="lg:col-span-2 relative">
             <Search className="w-4 h-4 absolute right-3 top-3 text-slate-400 pointer-events-none" />
@@ -334,6 +407,20 @@ export const DatabaseErrorsView: React.FC = () => {
               <option value="ALL">جميع التصنيفات</option>
               {Object.entries(ERROR_TYPE_LABELS).map(([k, v]) => (
                 <option key={k} value={k}>{v.labelAr}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Source Table Filter */}
+          <div>
+            <select
+              value={selectedTable}
+              onChange={(e) => setSelectedTable(e.target.value)}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-mono"
+            >
+              <option value="ALL">جميع الجداول / المصادر</option>
+              {uniqueTables.map((t) => (
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
           </div>
@@ -371,97 +458,379 @@ export const DatabaseErrorsView: React.FC = () => {
         </form>
       </div>
 
-      {/* Main Database Error Log Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-right text-xs">
-            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-semibold">
-              <tr>
-                <th className="py-3.5 px-4">التاريخ والوقت</th>
-                <th className="py-3.5 px-4">العملية</th>
-                <th className="py-3.5 px-4">المصدر / الجدول</th>
-                <th className="py-3.5 px-4">التصنيف</th>
-                <th className="py-3.5 px-4 font-mono">الرمز</th>
-                <th className="py-3.5 px-4">الرسالة الأصلية</th>
-                <th className="py-3.5 px-4">الحالة</th>
-                <th className="py-3.5 px-4 text-left">التفاصيل / الإجراء</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-600" />
-                    <span>جارِ تحميل سجل الأخطاء من Supabase...</span>
-                  </td>
-                </tr>
-              ) : logs.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400 space-y-2">
-                    <ShieldAlert className="w-8 h-8 text-emerald-500 mx-auto opacity-60" />
-                    <div className="font-bold text-slate-700 dark:text-slate-300">لا توجد أخطاء مطابقة للفلاتر المححددة</div>
-                    <div className="text-xs">قاعدة البيانات تعمل بسلاسة دون وجود استثناءات معلقة.</div>
-                  </td>
-                </tr>
-              ) : (
-                logs.map((log) => {
-                  const meta = ERROR_TYPE_LABELS[log.errorType] || { labelAr: log.errorType, color: 'bg-slate-100 text-slate-700' };
-                  return (
-                    <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
-                        {new Date(log.occurredAt).toLocaleString('ar-YE')}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900 dark:text-white">{log.operation}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{log.sourceTable || log.sourceFunction || 'عام'}</div>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border block w-fit ${meta.color}`}>
-                          {meta.labelAr}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-400 block mt-0.5" dir="ltr">
-                          [{log.errorType}]
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono font-bold rounded text-[11px] border border-slate-200 dark:border-slate-700">
-                          {log.errorCode || 'ERR'}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-800 dark:text-slate-200 max-w-sm font-mono text-[11px] truncate" title={`${log.errorType}: ${log.message}`}>
-                        <span className="font-bold text-rose-600 dark:text-rose-400">{log.errorType}</span>: {log.message}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        {log.resolved ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                            تم الحل
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                            جديد / معلق
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-left">
-                        <button
-                          onClick={() => {
-                            setSelectedLog(log);
-                            setResolutionNote(log.resolutionNote || '');
-                          }}
-                          className="px-3 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold rounded-lg transition-colors flex items-center gap-1 text-[11px]"
-                        >
-                          <Eye className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>عرض وتشخيص</span>
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+      {/* View Switcher Tabs: Error Aggregation (Bottlenecks) vs Detailed Logs */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 p-2 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setViewMode('aggregated')}
+            className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+              viewMode === 'aggregated'
+                ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200/60 dark:border-slate-700'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-emerald-500" />
+            <span>تجميع الأخطاء ونقاط الاختناق (Error Aggregation)</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              {aggregations.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setViewMode('detailed')}
+            className={`flex-1 sm:flex-initial px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all ${
+              viewMode === 'detailed'
+                ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm border border-slate-200/60 dark:border-slate-700'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <Table className="w-4 h-4 text-blue-500" />
+            <span>سجل الأخطاء التفصيلي (Detailed Logs)</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400">
+              {logs.length}
+            </span>
+          </button>
+        </div>
+
+        <div className="text-xs text-slate-500 dark:text-slate-400 px-3 flex items-center gap-2">
+          {viewMode === 'aggregated' ? (
+            <span className="flex items-center gap-1.5">
+              <Flame className="w-4 h-4 text-amber-500 shrink-0" />
+              <span>مجمعة حسب <strong>نوع الخطأ (error_type)</strong> و<strong>الجدول (source_table)</strong> لكشف الاختناقات وتكرارها</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5">
+              <FileCode className="w-4 h-4 text-slate-400 shrink-0" />
+              <span>سجل زمني مفصل لكل استثناء حدث مع تفاصيل رسالة الخطأ الأصلية</span>
+            </span>
+          )}
         </div>
       </div>
+
+      {/* VIEW 1: ERROR AGGREGATION & BOTTLENECK ANALYSIS */}
+      {viewMode === 'aggregated' && (
+        <div className="space-y-4">
+          {/* Aggregation Summary Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <span className="text-xs text-slate-500 block mb-1 font-semibold flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-emerald-500" />
+                <span>إجمالي مجموعات الاختناق</span>
+              </span>
+              <div className="text-2xl font-black font-mono tabular-nums text-slate-900 dark:text-white">
+                {aggregations.length}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                مجموعات متميزة من تصنيف الخطأ والجدول
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <span className="text-xs text-slate-500 block mb-1 font-semibold flex items-center gap-1.5">
+                <Flame className="w-3.5 h-3.5 text-rose-500" />
+                <span>أعلى نقطة اختناق تكراراً</span>
+              </span>
+              <div className="text-sm font-extrabold text-rose-600 dark:text-rose-400 truncate" title={aggregations[0] ? `${aggregations[0].sourceTable} (${aggregations[0].count})` : 'لا يوجد'}>
+                {aggregations[0] ? `${aggregations[0].sourceTable}` : 'لا توجد أخطاء'}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1 truncate">
+                {aggregations[0]
+                  ? `${aggregations[0].count} تكرار • ${ERROR_TYPE_LABELS[aggregations[0].errorType]?.labelAr || aggregations[0].errorType}`
+                  : 'النظام سليم بالكامل'}
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <span className="text-xs text-slate-500 block mb-1 font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                <span>الأخطاء المعلقة غير المعالجة</span>
+              </span>
+              <div className="text-2xl font-black font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                {aggregations.reduce((acc, g) => acc + g.unresolvedCount, 0)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                من إجمالي {logs.length} خطأ مسجل
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <span className="text-xs text-slate-500 block mb-1 font-semibold flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5 text-blue-500" />
+                <span>إجمالي استثناءات المجموعات</span>
+              </span>
+              <div className="text-2xl font-black font-mono tabular-nums text-slate-900 dark:text-white">
+                {aggregations.reduce((acc, g) => acc + g.count, 0)}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                تكرار استعلامات تم تسجيلها
+              </div>
+            </div>
+          </div>
+
+          {/* Aggregated Bottlenecks Table */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-emerald-600" />
+                  <span>جدول تجميع الأخطاء حسب التصنيف والجدول (Error Aggregation Table)</span>
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  مرتب تنازلياً حسب كثافة التكرار لاكتشاف مواطن الضعف الأكثر تأثيراً على أداء النظام
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-semibold">
+                  <tr>
+                    <th className="py-3.5 px-4">نوع وتصنيف الخطأ (Error Type)</th>
+                    <th className="py-3.5 px-4">الجدول / المصدر (Source Table)</th>
+                    <th className="py-3.5 px-4 text-center">التكرار (Count)</th>
+                    <th className="py-3.5 px-4 text-center">الحالة المعلقة</th>
+                    <th className="py-3.5 px-4">أحدث رسالة خطأ مسجلة</th>
+                    <th className="py-3.5 px-4">آخر حدوث</th>
+                    <th className="py-3.5 px-4 text-left">الإجراء التشخيصي</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-slate-400">
+                        <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-600" />
+                        <span>جارِ تجميع وتحليل سجلات الأخطاء...</span>
+                      </td>
+                    </tr>
+                  ) : aggregations.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-12 text-center text-slate-400 space-y-2">
+                        <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto opacity-80" />
+                        <div className="font-bold text-slate-700 dark:text-slate-300">
+                          لا توجد اختناقات مسجلة حالياً
+                        </div>
+                        <div className="text-xs">
+                          جميع استعلامات وتكاملات Supabase تعمل ضمن المعدلات الطبيعية.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    aggregations.map((group, idx) => {
+                      const meta = ERROR_TYPE_LABELS[group.errorType] || {
+                        labelAr: group.errorType,
+                        color: 'bg-slate-100 text-slate-700 border-slate-200',
+                      };
+                      const totalErrors = logs.length || 1;
+                      const percentage = Math.min(100, Math.round((group.count / totalErrors) * 100));
+
+                      return (
+                        <tr
+                          key={`${group.errorType}-${group.sourceTable}-${idx}`}
+                          className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors"
+                        >
+                          {/* Error Type */}
+                          <td className="py-3.5 px-4">
+                            <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border inline-block ${meta.color}`}>
+                              {meta.labelAr}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400 block mt-1" dir="ltr">
+                              [{group.errorType}]
+                            </span>
+                          </td>
+
+                          {/* Source Table */}
+                          <td className="py-3.5 px-4">
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-lg font-mono text-xs font-bold border border-slate-200 dark:border-slate-700">
+                              <Database className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                              <span>{group.sourceTable}</span>
+                            </div>
+                            {group.sampleCode && (
+                              <span className="text-[10px] font-mono text-slate-400 block mt-1" dir="ltr">
+                                Code: {group.sampleCode}
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Count & Frequency */}
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex flex-col items-center">
+                              <span className="font-mono font-black text-sm text-slate-900 dark:text-white">
+                                {group.count}
+                              </span>
+                              <div className="w-16 bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
+                                <div
+                                  className={`h-full ${group.count > 5 ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                                  style={{ width: `${Math.max(10, percentage)}%` }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                {percentage}% من الإجمالي
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Unresolved Count */}
+                          <td className="py-3.5 px-4 text-center">
+                            {group.unresolvedCount > 0 ? (
+                              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-200 dark:border-rose-800 inline-flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                <span>{group.unresolvedCount} معلق</span>
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 inline-flex items-center gap-1">
+                                <Check className="w-3 h-3 text-emerald-600" />
+                                <span>معالج بالكامل</span>
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Sample Message */}
+                          <td className="py-3.5 px-4 max-w-xs font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                            <div className="truncate" title={group.sampleMessage}>
+                              {group.sampleMessage}
+                            </div>
+                          </td>
+
+                          {/* Last Occurred */}
+                          <td className="py-3.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                            {new Date(group.lastOccurredAt).toLocaleString('ar-YE')}
+                          </td>
+
+                          {/* Action Button */}
+                          <td className="py-3.5 px-4 text-left">
+                            <button
+                              onClick={() => handleFilterByGroup(group.errorType, group.sourceTable)}
+                              className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/80 text-emerald-700 dark:text-emerald-300 font-bold rounded-xl transition-all border border-emerald-200 dark:border-emerald-800 flex items-center gap-1 text-[11px] shadow-sm whitespace-nowrap"
+                            >
+                              <span>فلترة وعرض السجلات</span>
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW 2: DETAILED SYSTEM ERROR LOG TABLE */}
+      {viewMode === 'detailed' && (
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+          <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Table className="w-4 h-4 text-blue-600" />
+                <span>سجل الأخطاء التفصيلي الزمني (Detailed Error Logs)</span>
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                عرض كامل لجميع السجلات الفردية مع إمكانية التشخيص ومعاينة الحقول المشفرة
+              </p>
+            </div>
+            {(selectedErrorType !== 'ALL' || selectedTable !== 'ALL') && (
+              <button
+                onClick={clearFilters}
+                className="text-xs text-rose-600 dark:text-rose-400 font-bold hover:underline flex items-center gap-1"
+              >
+                <span>إلغاء الفلترة السريعة</span>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-right text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-semibold">
+                <tr>
+                  <th className="py-3.5 px-4">التاريخ والوقت</th>
+                  <th className="py-3.5 px-4">العملية</th>
+                  <th className="py-3.5 px-4">المصدر / الجدول</th>
+                  <th className="py-3.5 px-4">التصنيف</th>
+                  <th className="py-3.5 px-4 font-mono">الرمز</th>
+                  <th className="py-3.5 px-4">الرسالة الأصلية</th>
+                  <th className="py-3.5 px-4">الحالة</th>
+                  <th className="py-3.5 px-4 text-left">التفاصيل / الإجراء</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-slate-400">
+                      <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-emerald-600" />
+                      <span>جارِ تحميل سجل الأخطاء من Supabase...</span>
+                    </td>
+                  </tr>
+                ) : logs.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-12 text-center text-slate-400 space-y-2">
+                      <ShieldAlert className="w-8 h-8 text-emerald-500 mx-auto opacity-60" />
+                      <div className="font-bold text-slate-700 dark:text-slate-300">لا توجد أخطاء مطابقة للفلاتر المححددة</div>
+                      <div className="text-xs">قاعدة البيانات تعمل بسلاسة دون وجود استثناءات معلقة.</div>
+                    </td>
+                  </tr>
+                ) : (
+                  logs.map((log) => {
+                    const meta = ERROR_TYPE_LABELS[log.errorType] || { labelAr: log.errorType, color: 'bg-slate-100 text-slate-700' };
+                    return (
+                      <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                          {new Date(log.occurredAt).toLocaleString('ar-YE')}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <div className="font-bold text-slate-900 dark:text-white">{log.operation}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">{log.sourceTable || log.sourceFunction || 'عام'}</div>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border block w-fit ${meta.color}`}>
+                            {meta.labelAr}
+                          </span>
+                          <span className="text-[10px] font-mono text-slate-400 block mt-0.5" dir="ltr">
+                            [{log.errorType}]
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono font-bold rounded text-[11px] border border-slate-200 dark:border-slate-700">
+                            {log.errorCode || 'ERR'}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-800 dark:text-slate-200 max-w-sm font-mono text-[11px] truncate" title={`${log.errorType}: ${log.message}`}>
+                          <span className="font-bold text-rose-600 dark:text-rose-400">{log.errorType}</span>: {log.message}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {log.resolved ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                              تم الحل
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                              جديد / معلق
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-left">
+                          <button
+                            onClick={() => {
+                              setSelectedLog(log);
+                              setResolutionNote(log.resolutionNote || '');
+                            }}
+                            className="px-3 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-bold rounded-lg transition-colors flex items-center gap-1 text-[11px]"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>عرض وتشخيص</span>
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Safe Error Detail Modal / Drawer */}
       {selectedLog && (

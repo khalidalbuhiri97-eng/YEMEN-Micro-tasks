@@ -164,7 +164,7 @@ export const api = {
     if (params?.resolvedStatus) q.append('resolvedStatus', params.resolvedStatus);
     if (params?.startDate) q.append('startDate', params.startDate);
     if (params?.endDate) q.append('endDate', params.endDate);
-    return request<{ logs: any[]; stats: any }>(`/admin/database-errors?${q.toString()}`);
+    return request<{ logs: any[]; aggregations?: any[]; stats: any }>(`/admin/database-errors?${q.toString()}`);
   },
   resolveDatabaseError: (id: string, resolutionNote?: string) =>
     request<any>(`/admin/database-errors/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolutionNote }) }),

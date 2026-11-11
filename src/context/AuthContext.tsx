@@ -75,7 +75,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showToast('تم إنشاء وتفعيل حسابك بنجاح!', 'success');
   };
 
-  const logout = () => {
+  const logout = async () => {
     clearAuthToken();
     setUser(null);
     setWallet(null);

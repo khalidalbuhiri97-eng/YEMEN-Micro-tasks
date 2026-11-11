@@ -330,3 +330,13 @@ export interface DatabaseMonitoringStats {
   } | null;
   errorTypeBreakdown: Record<string, number>;
 }
+
+export interface ErrorAggregationGroup {
+  errorType: ErrorType | string;
+  sourceTable: string;
+  count: number;
+  unresolvedCount: number;
+  lastOccurredAt: string;
+  sampleMessage: string;
+  sampleCode?: string;
+}
