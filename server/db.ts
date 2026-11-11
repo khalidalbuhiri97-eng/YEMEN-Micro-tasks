@@ -288,12 +288,16 @@ class DatabaseManager {
 
   private saveDirect(dataToSave: DatabaseSchema): void {
     try {
+      if (process.env.VERCEL === '1') {
+        // Read-only serverless environment on Vercel
+        return;
+      }
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
       fs.writeFileSync(DB_FILE, JSON.stringify(dataToSave, null, 2), 'utf-8');
     } catch (err) {
-      console.error('Failed to write database file', err);
+      console.warn('Disk write skipped (serverless read-only system):', (err as any)?.message);
     }
   }
 
