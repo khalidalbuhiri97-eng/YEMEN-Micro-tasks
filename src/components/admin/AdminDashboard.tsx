@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary, LedgerTransaction } from '../../types/index.ts';
+import { DatabaseErrorsView } from './DatabaseErrorsView.tsx';
 import {
   ShieldAlert,
   Users,
@@ -27,12 +28,13 @@ import {
   Coins,
   ShieldCheck,
   Check,
+  Database,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'submissions' | 'withdrawals' | 'tasks' | 'users' | 'reports' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'users' | 'reports' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -79,26 +81,26 @@ export const AdminDashboard: React.FC = () => {
     setIsLoading(true);
     try {
       const [overviewRes, subsRes, withsRes, tasksRes, usersRes, repRes, setRes, treasuryRes, ledgerRes] = await Promise.all([
-        api.getAdminOverview(),
-        api.getAdminSubmissions(),
-        api.getAdminWithdrawals(),
-        api.getAdminTasks(),
-        api.getAdminUsers(),
-        api.getFinancialReport(),
-        api.getSettings(),
+        api.getAdminOverview().catch(() => ({ stats: null })),
+        api.getAdminSubmissions().catch(() => ({ submissions: [] })),
+        api.getAdminWithdrawals().catch(() => ({ withdrawals: [] })),
+        api.getAdminTasks().catch(() => ({ tasks: [] })),
+        api.getAdminUsers().catch(() => ({ users: [] })),
+        api.getFinancialReport().catch(() => ({ report: null })),
+        api.getSettings().catch(() => ({ settings: null })),
         api.getTreasury().catch(() => ({ treasury: null })),
         api.getLedger({ limit: 100 }).catch(() => ({ transactions: [] })),
       ]);
 
-      setStats(overviewRes.stats);
-      setSubmissions(subsRes.submissions || []);
-      setWithdrawals(withsRes.withdrawals || []);
-      setTasks(tasksRes.tasks || []);
-      setUsersList(usersRes.users || []);
-      setFinancialReport(repRes.report);
-      setSettings(setRes.settings);
-      setTreasury(treasuryRes.treasury || null);
-      setLedgerTransactions(ledgerRes.transactions || []);
+      if (overviewRes?.stats) setStats(overviewRes.stats);
+      if (subsRes?.submissions) setSubmissions(subsRes.submissions);
+      if (withsRes?.withdrawals) setWithdrawals(withsRes.withdrawals);
+      if (tasksRes?.tasks) setTasks(tasksRes.tasks);
+      if (usersRes?.users) setUsersList(usersRes.users);
+      if (repRes?.report) setFinancialReport(repRes.report);
+      if (setRes?.settings) setSettings(setRes.settings);
+      if (treasuryRes?.treasury) setTreasury(treasuryRes.treasury);
+      if (ledgerRes?.transactions) setLedgerTransactions(ledgerRes.transactions);
     } catch (err) {
       console.error('Failed to load admin data', err);
     } finally {
@@ -333,6 +335,7 @@ export const AdminDashboard: React.FC = () => {
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
           { id: 'treasury', label: 'الخزينة والمحاسبة', count: null },
+          { id: 'db_errors', label: 'أخطاء قاعدة البيانات', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب والصرافة', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
@@ -364,6 +367,9 @@ export const AdminDashboard: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {/* DATABASE ERRORS MONITORING TAB */}
+      {activeTab === 'db_errors' && <DatabaseErrorsView />}
 
       {/* TREASURY & ACCOUNTING LEDGER TAB */}
       {activeTab === 'treasury' && (

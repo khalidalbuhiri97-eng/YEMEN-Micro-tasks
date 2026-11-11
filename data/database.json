@@ -45,13 +45,26 @@
       "city": "صنعاء",
       "createdAt": "2026-11-11T11:43:36.065Z",
       "updatedAt": "2026-11-11T11:43:36.065Z"
+    },
+    {
+      "id": "ffb25afa-0760-4c63-8039-f4a92413bc41",
+      "fullName": "محمد أحمد علي",
+      "phone": "771234567",
+      "email": "user_test_regular@test.com",
+      "role": "user",
+      "status": "active",
+      "referralCode": "KY454139",
+      "city": "صنعاء",
+      "createdAt": "2026-11-11T14:23:57.348Z",
+      "updatedAt": "2026-11-11T14:23:57.348Z"
     }
   ],
   "passwords": {
     "00000000-0000-4000-8000-000000000001": "4d3a883122f931ca14491b68a450f10e6fd62ef734c509dfe9ec8d9e3c38a89e",
     "6489de36-2f42-482d-8601-37f2ddefdfd9": "531d985065d45cdd108da06d2d8f67ee29bf31a9a9890c3a77eaee7d65e31fb1",
     "df1a477c-b703-46b2-9fe2-1a4bd0f9b52d": "4ff4ece2e1efb766e1a484cfce5ada30a8e3b2eecf17b895c748a04a539fdcd3",
-    "502a8069-ba76-4e9c-80c7-d2a5784b38c8": "531d985065d45cdd108da06d2d8f67ee29bf31a9a9890c3a77eaee7d65e31fb1"
+    "502a8069-ba76-4e9c-80c7-d2a5784b38c8": "531d985065d45cdd108da06d2d8f67ee29bf31a9a9890c3a77eaee7d65e31fb1",
+    "ffb25afa-0760-4c63-8039-f4a92413bc41": "4ff4ece2e1efb766e1a484cfce5ada30a8e3b2eecf17b895c748a04a539fdcd3"
   },
   "wallets": [
     {
@@ -113,6 +126,21 @@
       "currency": "YER",
       "createdAt": "2026-11-11T11:43:36.065Z",
       "updatedAt": "2026-11-11T11:43:36.065Z"
+    },
+    {
+      "id": "1e20a893-84a5-4736-aa90-fa389be417a5",
+      "userId": "ffb25afa-0760-4c63-8039-f4a92413bc41",
+      "walletAddress": "KY-08BEFE785644",
+      "availableBalance": 0,
+      "pendingBalance": 0,
+      "reservedBalance": 0,
+      "totalEarned": 0,
+      "totalTransferred": 0,
+      "totalWithdrawn": 0,
+      "status": "ACTIVE",
+      "currency": "YER",
+      "createdAt": "2026-11-11T14:23:57.348Z",
+      "updatedAt": "2026-11-11T14:23:57.348Z"
     }
   ],
   "walletTransactions": [],
@@ -197,10 +225,28 @@
     "maintenanceMode": false,
     "contactPhone": "+967 739 701 293",
     "contactEmail": "khalidalbuhiri@gmail.com",
-    "updatedAt": "2026-11-06T15:52:54.212Z"
+    "updatedAt": "2026-11-11T14:23:57.356Z"
   },
   "supportTickets": [],
   "adminLogs": [
+    {
+      "id": "c8cba597-7943-45c0-8b95-f61c91c605f0",
+      "adminId": "00000000-0000-4000-8000-000000000001",
+      "action": "UPDATE_PLATFORM_SETTINGS",
+      "targetType": "SETTINGS",
+      "targetId": "settings-1",
+      "details": "تحديث إعدادات ورسوم المنصة",
+      "createdAt": "2026-11-11T14:23:57.356Z"
+    },
+    {
+      "id": "cda895f6-a87e-4cb9-b363-efe98f6808d1",
+      "adminId": "00000000-0000-4000-8000-000000000001",
+      "action": "UPDATE_PLATFORM_SETTINGS",
+      "targetType": "SETTINGS",
+      "targetId": "settings-1",
+      "details": "تحديث إعدادات ورسوم المنصة",
+      "createdAt": "2026-11-11T14:23:35.232Z"
+    },
     {
       "id": "298283eb-d9b4-4c61-a97c-97a4569623dd",
       "adminId": "00000000-0000-4000-8000-000000000001",

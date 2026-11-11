@@ -277,3 +277,56 @@ export interface SupportTicket {
     createdAt: string;
   }>;
 }
+
+export type ErrorType =
+  | 'NETWORK_CONNECTION'
+  | 'AUTHENTICATION'
+  | 'PERMISSIONS_RLS'
+  | 'MISSING_TABLE_COLUMN'
+  | 'CONSTRAINT_VIOLATION'
+  | 'POSTGRES_INTERNAL'
+  | 'RPC_FUNCTION_ERROR'
+  | 'DATA_WRITE_ERROR'
+  | 'DATA_READ_ERROR'
+  | 'STORAGE_ERROR'
+  | 'TIMEOUT_ERROR'
+  | 'UNKNOWN_ERROR';
+
+export type SeverityLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface SystemErrorLog {
+  id: string;
+  errorCode?: string;
+  errorType: ErrorType;
+  severity: SeverityLevel;
+  operation: string;
+  sourceTable?: string;
+  sourceFunction?: string;
+  apiRoute?: string;
+  message: string;
+  details?: Record<string, any>;
+  requestId?: string;
+  environment: 'Production' | 'Development';
+  executionDurationMs?: number;
+  resolved: boolean;
+  resolutionNote?: string;
+  occurredAt: string;
+  resolvedAt?: string;
+}
+
+export interface DatabaseMonitoringStats {
+  isConnected: boolean;
+  pingMs: number;
+  lastSuccessfulConnection: string;
+  lastErrorTimestamp: string | null;
+  errors24h: number;
+  errors7d: number;
+  totalSuccessfulOps: number;
+  totalFailedOps: number;
+  lastFailedOp?: {
+    operation: string;
+    message: string;
+    occurredAt: string;
+  } | null;
+  errorTypeBreakdown: Record<string, number>;
+}

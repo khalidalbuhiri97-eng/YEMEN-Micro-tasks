@@ -147,4 +147,26 @@ export const api = {
   getFinancialReport: () => request<any>('/admin/financial-report'),
   updateAdminSettings: (payload: any) =>
     request<any>('/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+
+  // Supabase Database Error Monitoring & Connection Testing
+  getDatabaseErrors: (params?: {
+    search?: string;
+    errorType?: string;
+    sourceTable?: string;
+    resolvedStatus?: string;
+    startDate?: string;
+    endDate?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.search) q.append('search', params.search);
+    if (params?.errorType) q.append('errorType', params.errorType);
+    if (params?.sourceTable) q.append('sourceTable', params.sourceTable);
+    if (params?.resolvedStatus) q.append('resolvedStatus', params.resolvedStatus);
+    if (params?.startDate) q.append('startDate', params.startDate);
+    if (params?.endDate) q.append('endDate', params.endDate);
+    return request<{ logs: any[]; stats: any }>(`/admin/database-errors?${q.toString()}`);
+  },
+  resolveDatabaseError: (id: string, resolutionNote?: string) =>
+    request<any>(`/admin/database-errors/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolutionNote }) }),
+  testSupabaseConnection: () => request<any>('/admin/database-errors/test-connection', { method: 'POST' }),
 };

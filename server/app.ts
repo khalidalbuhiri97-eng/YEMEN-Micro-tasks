@@ -8,6 +8,181 @@ const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPAB
 
 export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// Operational Metrics Counters
+let totalSuccessfulOps = 1;
+let totalFailedOps = 0;
+let lastSuccessfulConnectionTime = new Date().toISOString();
+let lastErrorTimestamp: string | null = null;
+let lastFailedOpDetails: { operation: string; message: string; occurredAt: string } | null = null;
+
+// Sensitive Data Sanitizer
+function sanitizePayload(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(sanitizePayload);
+
+  const clean: Record<string, any> = {};
+  const SENSITIVE_KEYS = [
+    'password', 'pass', 'token', 'jwt', 'secret', 'authorization', 'bearer',
+    'apikey', 'servicekey', 'anonkey', 'creditcard', 'cvv', 'proofimages',
+    'receipturl', 'accountnumber', 'cardnumber'
+  ];
+
+  for (const [key, val] of Object.entries(obj)) {
+    const lowerKey = key.toLowerCase();
+    if (SENSITIVE_KEYS.some((s) => lowerKey.includes(s))) {
+      clean[key] = '[REDACTED_SENSITIVE_DATA]';
+    } else if (val && typeof val === 'object') {
+      clean[key] = sanitizePayload(val);
+    } else {
+      clean[key] = val;
+    }
+  }
+  return clean;
+}
+
+// Auto-Categorizer
+export function classifySupabaseError(err: any, defaultOperation = 'DATABASE_OP'): {
+  errorType: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  code: string;
+} {
+  const message = String(err?.message || err || '').toLowerCase();
+  const code = String(err?.code || err?.status || err?.statusCode || 'UNKNOWN').toUpperCase();
+
+  if (
+    message.includes('failed to fetch') ||
+    message.includes('network') ||
+    message.includes('econnrefused') ||
+    message.includes('enotfound') ||
+    code === 'FETCH_ERROR' ||
+    code === 'ECONNREFUSED'
+  ) {
+    return { errorType: 'NETWORK_CONNECTION', severity: 'CRITICAL', code: code !== 'UNKNOWN' ? code : 'NET_FAIL' };
+  }
+
+  if (
+    message.includes('auth') ||
+    message.includes('jwt') ||
+    message.includes('invalid claim') ||
+    code === 'PGRST301' ||
+    code === '401'
+  ) {
+    return { errorType: 'AUTHENTICATION', severity: 'HIGH', code: code !== 'UNKNOWN' ? code : 'AUTH_FAIL' };
+  }
+
+  if (
+    message.includes('permission denied') ||
+    message.includes('rls') ||
+    message.includes('policy') ||
+    code === '42501' ||
+    code === '403'
+  ) {
+    return { errorType: 'PERMISSIONS_RLS', severity: 'HIGH', code: code !== 'UNKNOWN' ? code : '42501' };
+  }
+
+  if (
+    message.includes('relation') ||
+    message.includes('column') ||
+    message.includes('does not exist') ||
+    code === '42P01' ||
+    code === '42703' ||
+    code === 'PGRST204'
+  ) {
+    return { errorType: 'MISSING_TABLE_COLUMN', severity: 'CRITICAL', code: code !== 'UNKNOWN' ? code : '42P01' };
+  }
+
+  if (
+    code === '23505' ||
+    code === '23503' ||
+    code === '23502' ||
+    message.includes('unique constraint') ||
+    message.includes('foreign key') ||
+    message.includes('duplicate key')
+  ) {
+    return { errorType: 'CONSTRAINT_VIOLATION', severity: 'MEDIUM', code: code !== 'UNKNOWN' ? code : '23505' };
+  }
+
+  if (
+    message.includes('rpc') ||
+    message.includes('function') ||
+    code === 'PGRST202'
+  ) {
+    return { errorType: 'RPC_FUNCTION_ERROR', severity: 'HIGH', code: code !== 'UNKNOWN' ? code : 'RPC_FAIL' };
+  }
+
+  if (
+    message.includes('timeout') ||
+    message.includes('canceling statement') ||
+    code === '57014'
+  ) {
+    return { errorType: 'TIMEOUT_ERROR', severity: 'HIGH', code: code !== 'UNKNOWN' ? code : '57014' };
+  }
+
+  if (message.includes('storage') || message.includes('bucket')) {
+    return { errorType: 'STORAGE_ERROR', severity: 'MEDIUM', code: code !== 'UNKNOWN' ? code : 'STORAGE_ERR' };
+  }
+
+  if (code.startsWith('22') || code.startsWith('23') || code.startsWith('42') || code.startsWith('50')) {
+    return { errorType: 'POSTGRES_INTERNAL', severity: 'HIGH', code };
+  }
+
+  if (defaultOperation.includes('SELECT') || defaultOperation.includes('GET') || defaultOperation.includes('FETCH')) {
+    return { errorType: 'DATA_READ_ERROR', severity: 'MEDIUM', code: code !== 'UNKNOWN' ? code : 'READ_ERR' };
+  }
+
+  if (defaultOperation.includes('INSERT') || defaultOperation.includes('UPDATE') || defaultOperation.includes('DELETE') || defaultOperation.includes('CREATE')) {
+    return { errorType: 'DATA_WRITE_ERROR', severity: 'HIGH', code: code !== 'UNKNOWN' ? code : 'WRITE_ERR' };
+  }
+
+  return { errorType: 'UNKNOWN_ERROR', severity: 'MEDIUM', code: code !== 'UNKNOWN' ? code : 'UNK_ERR' };
+}
+
+// Log Error directly to Supabase Cloud system_error_logs (NO local DB write)
+export async function logSupabaseError(params: {
+  err: any;
+  operation: string;
+  sourceTable?: string;
+  sourceFunction?: string;
+  apiRoute?: string;
+  details?: any;
+  requestId?: string;
+  executionDurationMs?: number;
+}) {
+  totalFailedOps++;
+  const now = new Date().toISOString();
+  lastErrorTimestamp = now;
+
+  const { errorType, severity, code } = classifySupabaseError(params.err, params.operation);
+  const message = params.err?.message || (typeof params.err === 'string' ? params.err : 'Unknown error occurred');
+  const cleanDetails = sanitizePayload(params.details || {});
+
+  lastFailedOpDetails = {
+    operation: params.operation,
+    message,
+    occurredAt: now,
+  };
+
+  try {
+    await supabaseServer.from('system_error_logs').insert({
+      error_code: code,
+      error_type: errorType,
+      severity: severity,
+      operation: params.operation,
+      source_table: params.sourceTable || null,
+      source_function: params.sourceFunction || null,
+      api_route: params.apiRoute || null,
+      message: message,
+      details: cleanDetails,
+      request_id: params.requestId || `req_${crypto.randomUUID().slice(0, 8)}`,
+      environment: process.env.NODE_ENV === 'production' || process.env.VERCEL === '1' ? 'Production' : 'Development',
+      execution_duration_ms: params.executionDurationMs || null,
+      occurred_at: now,
+    });
+  } catch (logErr) {
+    console.error('[SUPABASE_ERROR_LOG_WRITE_FAIL]', logErr);
+  }
+}
+
 const app = express();
 
 // CORS & Preflight handling for iframe compatibility
@@ -840,6 +1015,235 @@ app.put('/api/admin/settings', adminMiddleware, (req: AuthenticatedRequest, res:
   db.logAdminAction(req.user.id, 'UPDATE_PLATFORM_SETTINGS', 'SETTINGS', s.id, 'تحديث إعدادات ورسوم المنصة');
   db.save();
   res.json({ success: true, settings: s });
+});
+
+// ==============================================================================
+// DATABASE ERROR MONITORING & SUPABASE DIAGNOSTICS ENDPOINTS
+// ==============================================================================
+
+app.get('/api/admin/database-errors', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { search, errorType, sourceTable, resolvedStatus, startDate, endDate } = req.query;
+
+  try {
+    const startTime = Date.now();
+    const { error: pingErr } = await supabaseServer.from('platform_settings').select('*').limit(1);
+    const pingMs = Date.now() - startTime;
+    const isNetworkFail = pingErr && (
+      pingErr.message.includes('fetch') ||
+      pingErr.message.includes('network') ||
+      pingErr.message.includes('ECONNREFUSED')
+    );
+    const isConnected = !isNetworkFail;
+    if (isConnected) {
+      lastSuccessfulConnectionTime = new Date().toISOString();
+      totalSuccessfulOps++;
+    }
+
+    let query = supabaseServer.from('system_error_logs').select('*').order('occurred_at', { ascending: false });
+
+    if (errorType && errorType !== 'ALL') {
+      query = query.eq('error_type', String(errorType));
+    }
+    if (sourceTable && sourceTable !== 'ALL') {
+      query = query.eq('source_table', String(sourceTable));
+    }
+    if (resolvedStatus === 'unresolved') {
+      query = query.eq('resolved', false);
+    } else if (resolvedStatus === 'resolved') {
+      query = query.eq('resolved', true);
+    }
+    if (startDate) {
+      query = query.gte('occurred_at', String(startDate));
+    }
+    if (endDate) {
+      query = query.lte('occurred_at', String(endDate));
+    }
+
+    const { data: rawLogs, error: fetchErr } = await query.limit(200);
+
+    if (fetchErr) {
+      await logSupabaseError({
+        err: fetchErr,
+        operation: 'FETCH_ERROR_LOGS',
+        sourceTable: 'system_error_logs',
+        apiRoute: '/api/admin/database-errors',
+      });
+    }
+
+    let logs = (rawLogs || []).map((l: any) => ({
+      id: l.id,
+      errorCode: l.error_code,
+      errorType: l.error_type,
+      severity: l.severity,
+      operation: l.operation,
+      sourceTable: l.source_table,
+      sourceFunction: l.source_function,
+      apiRoute: l.api_route,
+      message: l.message,
+      details: l.details,
+      requestId: l.request_id,
+      environment: l.environment,
+      executionDurationMs: l.execution_duration_ms,
+      resolved: l.resolved,
+      resolutionNote: l.resolution_note,
+      occurredAt: l.occurred_at,
+      resolvedAt: l.resolved_at,
+    }));
+
+    if (search && typeof search === 'string') {
+      const q = search.toLowerCase();
+      logs = logs.filter((l) =>
+        (l.message && l.message.toLowerCase().includes(q)) ||
+        (l.operation && l.operation.toLowerCase().includes(q)) ||
+        (l.sourceTable && l.sourceTable.toLowerCase().includes(q)) ||
+        (l.errorCode && l.errorCode.toLowerCase().includes(q))
+      );
+    }
+
+    const nowMs = Date.now();
+    const ms24h = 24 * 60 * 60 * 1000;
+    const ms7d = 7 * ms24h;
+
+    const errors24h = logs.filter((l) => nowMs - new Date(l.occurredAt).getTime() <= ms24h).length;
+    const errors7d = logs.filter((l) => nowMs - new Date(l.occurredAt).getTime() <= ms7d).length;
+
+    const errorTypeBreakdown: Record<string, number> = {};
+    logs.forEach((l) => {
+      errorTypeBreakdown[l.errorType] = (errorTypeBreakdown[l.errorType] || 0) + 1;
+    });
+
+    res.json({
+      logs,
+      stats: {
+        isConnected,
+        pingMs,
+        lastSuccessfulConnection: lastSuccessfulConnectionTime,
+        lastErrorTimestamp: lastErrorTimestamp || (logs[0]?.occurredAt || null),
+        errors24h,
+        errors7d,
+        totalSuccessfulOps,
+        totalFailedOps,
+        lastFailedOp: lastFailedOpDetails || (logs[0] ? { operation: logs[0].operation, message: logs[0].message, occurredAt: logs[0].occurredAt } : null),
+        errorTypeBreakdown,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل في جلب سجل أخطاء قاعدة البيانات.' });
+  }
+});
+
+app.post('/api/admin/database-errors/:id/resolve', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { id } = req.params;
+  const { resolutionNote } = req.body;
+
+  try {
+    const { data, error } = await supabaseServer
+      .from('system_error_logs')
+      .update({
+        resolved: true,
+        resolved_at: new Date().toISOString(),
+        resolution_note: resolutionNote?.trim() || 'تمت معالجة والتحقق بواسطة المالك الإداري',
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    totalSuccessfulOps++;
+    res.json({ success: true, log: data });
+  } catch (err: any) {
+    await logSupabaseError({
+      err,
+      operation: 'RESOLVE_ERROR_LOG',
+      sourceTable: 'system_error_logs',
+      apiRoute: `/api/admin/database-errors/${id}/resolve`,
+    });
+    res.status(400).json({ error: err.message || 'فشل في تحديث حالة الخطأ.' });
+  }
+});
+
+app.post('/api/admin/database-errors/test-connection', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  const startTime = Date.now();
+  try {
+    const { data, error } = await supabaseServer
+      .from('platform_settings')
+      .select('*')
+      .limit(1);
+
+    const pingMs = Date.now() - startTime;
+    const isNetworkFail = error && (
+      error.message.includes('fetch') ||
+      error.message.includes('network') ||
+      error.message.includes('ECONNREFUSED')
+    );
+
+    if (isNetworkFail) {
+      totalFailedOps++;
+      await logSupabaseError({
+        err: error,
+        operation: 'TEST_SUPABASE_CONNECTION',
+        sourceTable: 'platform_settings',
+        apiRoute: '/api/admin/database-errors/test-connection',
+        executionDurationMs: pingMs,
+      });
+
+      return res.json({
+        isConnected: false,
+        pingMs,
+        checkedAt: new Date().toISOString(),
+        statusText: `تعذر الاتصال بالشبكة بقاعدة البيانات (${error.message})`,
+        error,
+      });
+    }
+
+    if (error) {
+      await logSupabaseError({
+        err: error,
+        operation: 'TEST_SUPABASE_CONNECTION_QUERY_NOTICE',
+        sourceTable: 'platform_settings',
+        apiRoute: '/api/admin/database-errors/test-connection',
+        executionDurationMs: pingMs,
+      });
+    }
+
+    totalSuccessfulOps++;
+    lastSuccessfulConnectionTime = new Date().toISOString();
+
+    res.json({
+      isConnected: true,
+      pingMs,
+      checkedAt: lastSuccessfulConnectionTime,
+      statusText: error
+        ? `تم الاتصال بقاعدة البيانات بنجاح (استجابة الخادم: ${error.message})`
+        : 'تم الاتصال بقاعدة بيانات Supabase Cloud بنجاح واستجابة فائقة السرعة.',
+      details: {
+        engine: 'Supabase Cloud PostgreSQL',
+        url: SUPABASE_URL,
+        recordsReturned: data?.length || 0,
+        queryNotice: error?.message || null,
+      },
+    });
+  } catch (err: any) {
+    const pingMs = Date.now() - startTime;
+    totalFailedOps++;
+    await logSupabaseError({
+      err,
+      operation: 'TEST_SUPABASE_CONNECTION_EXCEPTION',
+      apiRoute: '/api/admin/database-errors/test-connection',
+      executionDurationMs: pingMs,
+    });
+
+    res.json({
+      isConnected: false,
+      pingMs,
+      checkedAt: new Date().toISOString(),
+      statusText: `فشل فحص شبكة الاتصال بـ Supabase (${err.message})`,
+      error: err.message,
+    });
+  }
 });
 
 export default app;
