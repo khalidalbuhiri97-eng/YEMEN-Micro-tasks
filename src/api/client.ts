@@ -37,7 +37,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retries =
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(data.error || 'حدث خطأ أثناء الاتصال بالخادم.');
+        if (response.status === 404) {
+          throw new Error('مسار الخادم المطلوب غير متوفر (404 Not Found). يرجى التأكد من تشغيل خادم الـ API.');
+        }
+        throw new Error(data.error || `خطأ في الخادم (رمز ${response.status}): تعذر إكمال العملية.`);
       }
 
       return data as T;
