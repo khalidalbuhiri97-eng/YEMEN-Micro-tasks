@@ -5,7 +5,7 @@
  */
 
 import crypto from 'node:crypto';
-import { supabaseServer, logSupabaseError } from './app';
+import { supabaseServer, getSupabaseAdminClient, logSupabaseError } from './app';
 import type {
   UserProfile,
   UserRole,
@@ -54,7 +54,7 @@ export const supabaseDb = {
   async findUserById(id: string): Promise<UserProfile | null> {
     const startTime = Date.now();
     try {
-      // 1. Query 'profiles' table selecting only existing columns
+      // 1. Query 'profiles' table selecting only actual existing columns
       const { data: profileData, error: profileErr } = await supabaseServer
         .from('profiles')
         .select('id, full_name, phone, city, area_name, avatar_url, account_status, created_at, updated_at')
@@ -93,24 +93,34 @@ export const supabaseDb = {
       // Default role to lowest safe privilege 'user' if no role record exists (never grant admin by default)
       const userRole: UserRole = roleData?.role === 'admin' ? 'admin' : 'user';
 
-      // 3. Query Supabase Auth for User Email using server admin SDK and check error explicitly
+      // 3. Fetch Email safely using getSupabaseAdminClient() with explicit error handling
       let userEmail = '';
-      const { data: authUserData, error: authErr } = await supabaseServer.auth.admin.getUserById(id);
+      try {
+        const adminClient = getSupabaseAdminClient();
+        const { data: authUserData, error: authErr } = await adminClient.auth.admin.getUserById(id);
 
-      if (authErr) {
+        if (authErr) {
+          await logSupabaseError({
+            err: authErr,
+            operation: 'FIND_USER_BY_ID_AUTH_EMAIL',
+            executionDurationMs: Date.now() - startTime,
+          });
+        } else if (authUserData?.user?.email) {
+          userEmail = authUserData.user.email;
+        }
+      } catch (keyErr: any) {
+        // If SERVICE_ROLE_KEY is unconfigured, log error safely without leaking secrets
         await logSupabaseError({
-          err: authErr,
-          operation: 'FIND_USER_BY_ID_AUTH_EMAIL',
+          err: keyErr,
+          operation: 'FIND_USER_BY_ID_ADMIN_CLIENT_CHECK',
           executionDurationMs: Date.now() - startTime,
         });
-      } else if (authUserData?.user?.email) {
-        userEmail = authUserData.user.email;
       }
 
       // 4. Map account_status column to UserProfile status
       const accountStatus: AccountStatus = (profileData.account_status as AccountStatus) || 'active';
 
-      // 5. Construct UserProfile without relying on non-existent columns or inventing data
+      // 5. Construct UserProfile cleanly without assuming non-existent profile columns or inventing data
       return {
         id: profileData.id,
         fullName: profileData.full_name || '',
