@@ -8,6 +8,8 @@ import crypto from 'node:crypto';
 import { supabaseServer, logSupabaseError } from './app';
 import type {
   UserProfile,
+  UserRole,
+  AccountStatus,
   UserWallet,
   WalletTransaction,
   TaskItem,
@@ -52,36 +54,71 @@ export const supabaseDb = {
   async findUserById(id: string): Promise<UserProfile | null> {
     const startTime = Date.now();
     try {
-      const { data, error } = await supabaseServer
+      // 1. Fetch Profile from 'profiles' table using actual existing schema
+      const { data: profileData, error: profileErr } = await supabaseServer
         .from('profiles')
         .select('*')
         .eq('id', id)
         .maybeSingle();
 
-      if (error) {
+      if (profileErr) {
         await logSupabaseError({
-          err: error,
-          operation: 'FIND_USER_BY_ID',
+          err: profileErr,
+          operation: 'FIND_USER_BY_ID_PROFILE',
           sourceTable: 'profiles',
           executionDurationMs: Date.now() - startTime,
         });
-        throw error;
+        throw profileErr;
       }
 
-      if (!data) return null;
+      if (!profileData) return null;
+
+      // 2. Fetch User Role from 'user_roles' table (default to lowest safe privilege 'user')
+      let userRole: UserRole = 'user';
+      try {
+        const { data: roleData } = await supabaseServer
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', id)
+          .maybeSingle();
+
+        if (roleData?.role === 'admin' || roleData?.role === 'user') {
+          userRole = roleData.role;
+        }
+      } catch (roleErr) {
+        console.warn(`[findUserById] Could not fetch role for user ${id}, defaulting to 'user'`, roleErr);
+      }
+
+      // 3. Fetch Email safely from Supabase Auth
+      let userEmail = profileData.email || '';
+      if (!userEmail) {
+        try {
+          const { data: authUserData } = await supabaseServer.auth.admin.getUserById(id);
+          if (authUserData?.user?.email) {
+            userEmail = authUserData.user.email;
+          }
+        } catch (authErr) {
+          // Fallback if auth admin API is restricted
+        }
+      }
+
+      // 4. Map account_status to status in UserProfile
+      const accountStatus: AccountStatus = (profileData.account_status || profileData.status || 'active') as AccountStatus;
+
+      // 5. Construct UserProfile safely without assuming missing columns
       return {
-        id: data.id,
-        fullName: data.full_name,
-        phone: data.phone,
-        email: data.email,
-        avatarUrl: data.avatar_url || '',
-        role: data.role,
-        status: data.status,
-        referralCode: data.referral_code,
-        referredBy: data.referred_by,
-        city: data.city || 'صنعاء',
-        createdAt: data.created_at,
-        updatedAt: data.updated_at,
+        id: profileData.id,
+        fullName: profileData.full_name || '',
+        phone: profileData.phone || '',
+        email: userEmail,
+        avatarUrl: profileData.avatar_url || '',
+        role: userRole,
+        status: accountStatus,
+        referralCode: profileData.referral_code || ('KY' + profileData.id.replace(/-/g, '').slice(0, 6).toUpperCase()),
+        referredBy: profileData.referred_by || undefined,
+        city: profileData.city || profileData.area_name || 'صنعاء',
+        createdAt: profileData.created_at || new Date().toISOString(),
+        updatedAt: profileData.updated_at || new Date().toISOString(),
       };
     } catch (err: any) {
       console.error('[Supabase FIND_USER_BY_ID]', err.message);
