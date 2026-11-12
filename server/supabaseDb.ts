@@ -54,10 +54,10 @@ export const supabaseDb = {
   async findUserById(id: string): Promise<UserProfile | null> {
     const startTime = Date.now();
     try {
-      // 1. Fetch Profile from 'profiles' table using actual existing schema
+      // 1. Query 'profiles' table selecting only existing columns
       const { data: profileData, error: profileErr } = await supabaseServer
         .from('profiles')
-        .select('*')
+        .select('id, full_name, phone, city, area_name, avatar_url, account_status, created_at, updated_at')
         .eq('id', id)
         .maybeSingle();
 
@@ -73,39 +73,44 @@ export const supabaseDb = {
 
       if (!profileData) return null;
 
-      // 2. Fetch User Role from 'user_roles' table (default to lowest safe privilege 'user')
-      let userRole: UserRole = 'user';
-      try {
-        const { data: roleData } = await supabaseServer
-          .from('user_roles')
-          .select('role')
-          .eq('user_id', id)
-          .maybeSingle();
+      // 2. Query 'user_roles' table and check error explicitly
+      const { data: roleData, error: roleErr } = await supabaseServer
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', id)
+        .maybeSingle();
 
-        if (roleData?.role === 'admin' || roleData?.role === 'user') {
-          userRole = roleData.role;
-        }
-      } catch (roleErr) {
-        console.warn(`[findUserById] Could not fetch role for user ${id}, defaulting to 'user'`, roleErr);
+      if (roleErr) {
+        await logSupabaseError({
+          err: roleErr,
+          operation: 'FIND_USER_BY_ID_ROLES',
+          sourceTable: 'user_roles',
+          executionDurationMs: Date.now() - startTime,
+        });
+        throw roleErr;
       }
 
-      // 3. Fetch Email safely from Supabase Auth
-      let userEmail = profileData.email || '';
-      if (!userEmail) {
-        try {
-          const { data: authUserData } = await supabaseServer.auth.admin.getUserById(id);
-          if (authUserData?.user?.email) {
-            userEmail = authUserData.user.email;
-          }
-        } catch (authErr) {
-          // Fallback if auth admin API is restricted
-        }
+      // Default role to lowest safe privilege 'user' if no role record exists (never grant admin by default)
+      const userRole: UserRole = roleData?.role === 'admin' ? 'admin' : 'user';
+
+      // 3. Query Supabase Auth for User Email using server admin SDK and check error explicitly
+      let userEmail = '';
+      const { data: authUserData, error: authErr } = await supabaseServer.auth.admin.getUserById(id);
+
+      if (authErr) {
+        await logSupabaseError({
+          err: authErr,
+          operation: 'FIND_USER_BY_ID_AUTH_EMAIL',
+          executionDurationMs: Date.now() - startTime,
+        });
+      } else if (authUserData?.user?.email) {
+        userEmail = authUserData.user.email;
       }
 
-      // 4. Map account_status to status in UserProfile
-      const accountStatus: AccountStatus = (profileData.account_status || profileData.status || 'active') as AccountStatus;
+      // 4. Map account_status column to UserProfile status
+      const accountStatus: AccountStatus = (profileData.account_status as AccountStatus) || 'active';
 
-      // 5. Construct UserProfile safely without assuming missing columns
+      // 5. Construct UserProfile without relying on non-existent columns or inventing data
       return {
         id: profileData.id,
         fullName: profileData.full_name || '',
@@ -114,8 +119,8 @@ export const supabaseDb = {
         avatarUrl: profileData.avatar_url || '',
         role: userRole,
         status: accountStatus,
-        referralCode: profileData.referral_code || ('KY' + profileData.id.replace(/-/g, '').slice(0, 6).toUpperCase()),
-        referredBy: profileData.referred_by || undefined,
+        referralCode: '',
+        referredBy: undefined,
         city: profileData.city || profileData.area_name || 'صنعاء',
         createdAt: profileData.created_at || new Date().toISOString(),
         updatedAt: profileData.updated_at || new Date().toISOString(),
