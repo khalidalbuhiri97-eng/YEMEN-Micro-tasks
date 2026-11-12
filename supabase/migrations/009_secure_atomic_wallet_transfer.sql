@@ -16,37 +16,76 @@ BEGIN
     END IF;
 END $$;
 
--- 2. Check duplicate idempotency keys before creating UNIQUE constraint
+-- 2. Inspect PostgreSQL catalog for UNIQUE constraints on transfer_idempotency_keys
 DO $$
 DECLARE
-    v_duplicate_count INT;
+    v_has_exact_unique BOOLEAN := FALSE;
+    v_has_wrong_named_constraint BOOLEAN := FALSE;
+    v_duplicate_count INT := 0;
 BEGIN
-    SELECT COUNT(*) INTO v_duplicate_count
-    FROM (
-        SELECT sender_id, idempotency_key
-        FROM public.transfer_idempotency_keys
-        WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
-        GROUP BY sender_id, idempotency_key
-        HAVING COUNT(*) > 1
-    ) dupes;
+    -- Check if ANY UNIQUE constraint exists covering EXACTLY (sender_id, idempotency_key) in either order
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+          AND t.relname = 'transfer_idempotency_keys'
+          AND c.contype = 'u'
+          AND (
+              ARRAY(
+                  SELECT a.attname::text
+                  FROM unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+                  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+                  ORDER BY a.attname
+              ) = ARRAY['idempotency_key', 'sender_id']
+          )
+    ) INTO v_has_exact_unique;
 
-    IF v_duplicate_count > 0 THEN
-        RAISE EXCEPTION 'MIGRATION_HALTED: يوجد عدد % سجلات مكررة في جدول transfer_idempotency_keys. يجب مراجعتها وحلها يدوياً قبل تطبيق القيد.', v_duplicate_count;
+    -- Check if constraint named transfer_idempotency_sender_key_unique exists with wrong column structure
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_constraint c
+        JOIN pg_class t ON c.conrelid = t.oid
+        JOIN pg_namespace n ON t.relnamespace = n.oid
+        WHERE n.nspname = 'public'
+          AND t.relname = 'transfer_idempotency_keys'
+          AND c.conname = 'transfer_idempotency_sender_key_unique'
+          AND NOT (
+              ARRAY(
+                  SELECT a.attname::text
+                  FROM unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+                  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+                  ORDER BY a.attname
+              ) = ARRAY['idempotency_key', 'sender_id']
+          )
+    ) INTO v_has_wrong_named_constraint;
+
+    IF v_has_wrong_named_constraint THEN
+        RAISE EXCEPTION 'MIGRATION_HALTED: القيد transfer_idempotency_sender_key_unique موجود لكن تعريفه خاطئ ولا يغطي (sender_id, idempotency_key) بدقة. يجب مراجعته يدويًا.';
     END IF;
 
-    IF NOT EXISTS (
-        SELECT 1
-        FROM information_schema.table_constraints
-        WHERE table_schema = 'public'
-          AND table_name = 'transfer_idempotency_keys'
-          AND constraint_name = 'transfer_idempotency_sender_key_unique'
-    ) THEN
+    -- If no exact UNIQUE constraint exists, verify duplicate records first, then create constraint
+    IF NOT v_has_exact_unique THEN
+        SELECT COUNT(*) INTO v_duplicate_count
+        FROM (
+            SELECT sender_id, idempotency_key
+            FROM public.transfer_idempotency_keys
+            WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+            GROUP BY sender_id, idempotency_key
+            HAVING COUNT(*) > 1
+        ) dupes;
+
+        IF v_duplicate_count > 0 THEN
+            RAISE EXCEPTION 'MIGRATION_HALTED: يوجد عدد % سجلات مكررة في جدول transfer_idempotency_keys. يجب مراجعتها وحلها يدوياً قبل تطبيق القيد.', v_duplicate_count;
+        END IF;
+
         ALTER TABLE public.transfer_idempotency_keys 
         ADD CONSTRAINT transfer_idempotency_sender_key_unique UNIQUE (sender_id, idempotency_key);
     END IF;
 END $$;
 
--- 3. Secure PL/pgSQL Function with Strict Amount Validation, Double Lock Re-verification & Row Count Checks
+-- 3. Secure PL/pgSQL Function with Explicit NaN / Infinity Amount Checks, Double Lock Re-verification & Row Count Checks
 CREATE OR REPLACE FUNCTION public.transfer_wallet_balance(
     p_sender_id UUID,
     p_recipient_address_or_id TEXT,
@@ -76,12 +115,16 @@ DECLARE
     v_clean_notes TEXT := NULLIF(TRIM(p_notes), '');
     v_rows_updated INT := 0;
 BEGIN
-    -- 1. Validate Basic Inputs and Amount Integrity
+    -- 1. Validate Basic Inputs and Explicit Amount Integrity (Rejecting NULL, NaN, Infinity, -Infinity, <= 0)
     IF p_sender_id IS NULL THEN
         RAISE EXCEPTION 'معرف المرسل غير محدد.';
     END IF;
 
-    IF p_amount IS NULL OR NOT (p_amount > 0) OR p_amount = 'Infinity'::numeric OR p_amount = '-Infinity'::numeric THEN
+    IF p_amount IS NULL 
+       OR p_amount = 'NaN'::numeric 
+       OR p_amount = 'Infinity'::numeric 
+       OR p_amount = '-Infinity'::numeric 
+       OR NOT (p_amount > 0) THEN
         RAISE EXCEPTION 'المبلغ المحدد غير صالح للتحويل. يجب أن يكون رقماً موجباً غير منتهٍ وأكبر من صفر.';
     END IF;
 
