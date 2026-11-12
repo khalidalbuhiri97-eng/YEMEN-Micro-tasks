@@ -3,7 +3,7 @@
 -- Platform: Yemen Micro-tasks (كسب اليمن)
 -- ==============================================================================
 
--- 1. Ensure notes column exists in transfer_idempotency_keys
+-- 1. Ensure notes column and UNIQUE constraint exist on transfer_idempotency_keys
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -16,7 +16,29 @@ BEGIN
     END IF;
 END $$;
 
--- 2. Secure PL/pgSQL Function with Full Idempotency Validation & Service Role Access Only
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.table_constraints
+        WHERE table_schema = 'public'
+          AND table_name = 'transfer_idempotency_keys'
+          AND constraint_name = 'transfer_idempotency_sender_key_unique'
+    ) AND NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND tablename = 'transfer_idempotency_keys'
+          AND indexname = 'idx_transfer_idempotency_sender_key'
+    ) THEN
+        ALTER TABLE public.transfer_idempotency_keys ADD CONSTRAINT transfer_idempotency_sender_key_unique UNIQUE (sender_id, idempotency_key);
+    END IF;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+    WHEN others THEN NULL;
+END $$;
+
+-- 2. Secure PL/pgSQL Function with Transaction-Level Advisory Lock & Service Role Access Only
 CREATE OR REPLACE FUNCTION public.transfer_wallet_balance(
     p_sender_id UUID,
     p_recipient_address_or_id TEXT,
@@ -72,8 +94,12 @@ BEGIN
         RAISE EXCEPTION 'لا يمكنك تحويل الرصيد إلى نفس حسابك الشخصي.';
     END IF;
 
-    -- 3. Strict Idempotency Check with Complete Parameter Matching
+    -- 3. Strict Idempotency Check with Transaction-Level Advisory Lock (pg_advisory_xact_lock)
     IF p_idempotency_key IS NOT NULL AND TRIM(p_idempotency_key) <> '' THEN
+        -- Acquire transaction-level advisory lock derived from sender_id and idempotency_key to queue concurrent requests
+        PERFORM pg_advisory_xact_lock(hashtext(p_sender_id::text || '_' || TRIM(p_idempotency_key)));
+
+        -- Inspect idempotency record AFTER acquiring lock
         SELECT * INTO v_idempotency_record
         FROM public.transfer_idempotency_keys
         WHERE sender_id = p_sender_id AND idempotency_key = TRIM(p_idempotency_key);
@@ -92,12 +118,12 @@ BEGIN
                 RAISE EXCEPTION 'مفتاح منع التكرار مستخدم سابقاً بملاحظات مختلفة.';
             END IF;
 
-            -- Exact match -> return stored response payload without re-executing
+            -- Exact match -> return stored response payload without re-executing debit/credit
             RETURN v_idempotency_record.response_payload;
         END IF;
     END IF;
 
-    -- 4. Lock Sender & Recipient Wallets in Deterministic Order
+    -- 4. Lock Sender & Recipient Wallets in Deterministic Order (FOR UPDATE)
     IF p_sender_id < v_recipient_id THEN
         v_first_id := p_sender_id;
         v_second_id := v_recipient_id;
@@ -187,6 +213,6 @@ BEGIN
 END;
 $$;
 
--- 3. REVOKE ALL FROM PUBLIC / ANON / AUTHENTICATED & GRANT ONLY TO SERVICE_ROLE
+-- 3. REVOKE ALL FROM PUBLIC / ANON / AUTHENTICATED & GRANT EXECUTE ONLY TO SERVICE_ROLE
 REVOKE ALL ON FUNCTION public.transfer_wallet_balance(UUID, TEXT, NUMERIC, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.transfer_wallet_balance(UUID, TEXT, NUMERIC, TEXT, TEXT) TO service_role;

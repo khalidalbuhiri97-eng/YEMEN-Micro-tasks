@@ -14,6 +14,20 @@ export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY, {
   },
 });
 
+// Dedicated Service Role Client for Sensitive Financial Operations
+export const getSupabaseAdminClient = () => {
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  if (!serviceKey) {
+    throw new Error('SERVICE_ROLE_KEY_MISSING: مفتاح صلاحيات الخادم (SUPABASE_SERVICE_ROLE_KEY) غير مهيأ.');
+  }
+  return createClient(SUPABASE_URL, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+};
+
 // Operational Metrics Counters
 let totalSuccessfulOps = 1;
 let totalFailedOps = 0;
@@ -639,7 +653,20 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
   try {
     const { recipientAddress, amount, note, idempotencyKey } = req.body || {};
 
-    // 1. Validate inputs
+    // 1. Enforce Service Role Client exclusively - reject if key is missing
+    let adminClient;
+    try {
+      adminClient = getSupabaseAdminClient();
+    } catch (keyErr: any) {
+      await logSupabaseError({
+        err: keyErr,
+        operation: 'SERVICE_ROLE_KEY_CHECK_FAIL',
+        apiRoute: '/api/wallet/transfer',
+      });
+      return res.status(500).json({ error: 'تعذر تنفيذ التحويل المالي: مفتاح صلاحيات الخادم (Service Role Key) غير مهيأ.' });
+    }
+
+    // 2. Validate inputs
     const numAmount = Number(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح للتحويل.' });
@@ -653,8 +680,8 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
     const cleanIdempotencyKey = idempotencyKey ? String(idempotencyKey).trim() : undefined;
     const cleanNote = note ? String(note).trim() : undefined;
 
-    // 2. Invoke Atomic Stored Procedure transfer_wallet_balance
-    const { data: rpcResult, error: rpcErr } = await supabaseServer.rpc('transfer_wallet_balance', {
+    // 3. Invoke Atomic Stored Procedure transfer_wallet_balance strictly via adminClient (Service Role)
+    const { data: rpcResult, error: rpcErr } = await adminClient.rpc('transfer_wallet_balance', {
       p_sender_id: req.user.id,
       p_recipient_address_or_id: cleanRecipientAddress,
       p_amount: numAmount,
@@ -673,7 +700,7 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
       return res.status(400).json({ error: rpcErr.message || 'فشلت عملية التحويل المالي.' });
     }
 
-    // 3. Re-fetch sender wallet for updated UI state
+    // 4. Re-fetch sender wallet for updated UI state
     const updatedSenderWallet = await supabaseDb.getWallet(req.user.id);
 
     return res.json({
