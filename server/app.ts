@@ -666,10 +666,10 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
       return res.status(500).json({ error: 'تعذر تنفيذ التحويل المالي: مفتاح صلاحيات الخادم (Service Role Key) غير مهيأ.' });
     }
 
-    // 2. Validate inputs
+    // 2. Strict input validation
     const numAmount = Number(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح للتحويل.' });
+    if (typeof numAmount !== 'number' || !Number.isFinite(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح ومحدد أكبر من صفر للتحويل.' });
     }
 
     if (!recipientAddress || typeof recipientAddress !== 'string' || !recipientAddress.trim()) {

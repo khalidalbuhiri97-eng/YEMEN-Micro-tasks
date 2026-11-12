@@ -3,7 +3,7 @@
 -- Platform: Yemen Micro-tasks (كسب اليمن)
 -- ==============================================================================
 
--- 1. Ensure notes column and UNIQUE constraint exist on transfer_idempotency_keys
+-- 1. Ensure notes column exists on transfer_idempotency_keys
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -16,29 +16,37 @@ BEGIN
     END IF;
 END $$;
 
+-- 2. Check duplicate idempotency keys before creating UNIQUE constraint
 DO $$
+DECLARE
+    v_duplicate_count INT;
 BEGIN
+    SELECT COUNT(*) INTO v_duplicate_count
+    FROM (
+        SELECT sender_id, idempotency_key
+        FROM public.transfer_idempotency_keys
+        WHERE sender_id IS NOT NULL AND idempotency_key IS NOT NULL
+        GROUP BY sender_id, idempotency_key
+        HAVING COUNT(*) > 1
+    ) dupes;
+
+    IF v_duplicate_count > 0 THEN
+        RAISE EXCEPTION 'MIGRATION_HALTED: يوجد عدد % سجلات مكررة في جدول transfer_idempotency_keys. يجب مراجعتها وحلها يدوياً قبل تطبيق القيد.', v_duplicate_count;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM information_schema.table_constraints
         WHERE table_schema = 'public'
           AND table_name = 'transfer_idempotency_keys'
           AND constraint_name = 'transfer_idempotency_sender_key_unique'
-    ) AND NOT EXISTS (
-        SELECT 1
-        FROM pg_indexes
-        WHERE schemaname = 'public'
-          AND tablename = 'transfer_idempotency_keys'
-          AND indexname = 'idx_transfer_idempotency_sender_key'
     ) THEN
-        ALTER TABLE public.transfer_idempotency_keys ADD CONSTRAINT transfer_idempotency_sender_key_unique UNIQUE (sender_id, idempotency_key);
+        ALTER TABLE public.transfer_idempotency_keys 
+        ADD CONSTRAINT transfer_idempotency_sender_key_unique UNIQUE (sender_id, idempotency_key);
     END IF;
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-    WHEN others THEN NULL;
 END $$;
 
--- 2. Secure PL/pgSQL Function with Transaction-Level Advisory Lock & Service Role Access Only
+-- 3. Secure PL/pgSQL Function with Strict Amount Validation, Double Lock Re-verification & Row Count Checks
 CREATE OR REPLACE FUNCTION public.transfer_wallet_balance(
     p_sender_id UUID,
     p_recipient_address_or_id TEXT,
@@ -66,21 +74,22 @@ DECLARE
     v_first_id UUID;
     v_second_id UUID;
     v_clean_notes TEXT := NULLIF(TRIM(p_notes), '');
+    v_rows_updated INT := 0;
 BEGIN
-    -- 1. Validate Basic Inputs
+    -- 1. Validate Basic Inputs and Amount Integrity
     IF p_sender_id IS NULL THEN
         RAISE EXCEPTION 'معرف المرسل غير محدد.';
     END IF;
 
-    IF p_amount IS NULL OR p_amount <= 0 THEN
-        RAISE EXCEPTION 'المبلغ يجب أن يكون رقماً موجباً أكبر من صفر.';
+    IF p_amount IS NULL OR NOT (p_amount > 0) OR p_amount = 'Infinity'::numeric OR p_amount = '-Infinity'::numeric THEN
+        RAISE EXCEPTION 'المبلغ المحدد غير صالح للتحويل. يجب أن يكون رقماً موجباً غير منتهٍ وأكبر من صفر.';
     END IF;
 
     IF p_recipient_address_or_id IS NULL OR TRIM(p_recipient_address_or_id) = '' THEN
         RAISE EXCEPTION 'عنوان محفظة المستلم مطلوب.';
     END IF;
 
-    -- 2. Resolve Recipient Wallet
+    -- 2. Resolve Recipient Wallet ID
     SELECT user_id, wallet_address INTO v_recipient_id, v_recipient_address
     FROM public.wallets
     WHERE (wallet_address = UPPER(TRIM(p_recipient_address_or_id)) OR user_id::text = TRIM(p_recipient_address_or_id))
@@ -96,16 +105,14 @@ BEGIN
 
     -- 3. Strict Idempotency Check with Transaction-Level Advisory Lock (pg_advisory_xact_lock)
     IF p_idempotency_key IS NOT NULL AND TRIM(p_idempotency_key) <> '' THEN
-        -- Acquire transaction-level advisory lock derived from sender_id and idempotency_key to queue concurrent requests
         PERFORM pg_advisory_xact_lock(hashtext(p_sender_id::text || '_' || TRIM(p_idempotency_key)));
 
-        -- Inspect idempotency record AFTER acquiring lock
         SELECT * INTO v_idempotency_record
         FROM public.transfer_idempotency_keys
         WHERE sender_id = p_sender_id AND idempotency_key = TRIM(p_idempotency_key);
 
         IF FOUND THEN
-            -- Check parameter mismatch (recipient, amount, or notes)
+            -- Verify parameter matching (recipient, amount, or notes)
             IF v_idempotency_record.recipient_id <> v_recipient_id THEN
                 RAISE EXCEPTION 'مفتاح منع التكرار مستخدم سابقاً لمستلم مختلف.';
             END IF;
@@ -123,7 +130,7 @@ BEGIN
         END IF;
     END IF;
 
-    -- 4. Lock Sender & Recipient Wallets in Deterministic Order (FOR UPDATE)
+    -- 4. Deterministic Row Locking (FOR UPDATE)
     IF p_sender_id < v_recipient_id THEN
         v_first_id := p_sender_id;
         v_second_id := v_recipient_id;
@@ -135,7 +142,7 @@ BEGIN
     PERFORM id FROM public.wallets WHERE user_id = v_first_id FOR UPDATE;
     PERFORM id FROM public.wallets WHERE user_id = v_second_id FOR UPDATE;
 
-    -- Fetch Sender Balances
+    -- Re-fetch and verify sender wallet AFTER locking
     SELECT wallet_address, COALESCE(available_balance, balance, 0)
     INTO v_sender_address, v_sender_avail
     FROM public.wallets
@@ -149,17 +156,21 @@ BEGIN
         RAISE EXCEPTION 'رصيدك المتاح غير كافٍ لإتمام عملية التحويل.';
     END IF;
 
-    -- Fetch Recipient Balances
+    -- Re-fetch and verify recipient wallet AFTER locking
     SELECT COALESCE(available_balance, balance, 0)
     INTO v_recipient_avail
     FROM public.wallets
     WHERE user_id = v_recipient_id;
 
+    IF v_recipient_avail IS NULL THEN
+        RAISE EXCEPTION 'محفظة المستلم غير موجودة في قاعدة البيانات.';
+    END IF;
+
     -- 5. Calculate New Balances
     v_new_sender_avail := v_sender_avail - p_amount;
     v_new_recipient_avail := v_recipient_avail + p_amount;
 
-    -- Update Sender Wallet
+    -- Update Sender Wallet and verify exactly 1 row updated
     UPDATE public.wallets
     SET 
         available_balance = v_new_sender_avail,
@@ -168,7 +179,12 @@ BEGIN
         updated_at = v_now
     WHERE user_id = p_sender_id;
 
-    -- Update Recipient Wallet
+    GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
+    IF v_rows_updated <> 1 THEN
+        RAISE EXCEPTION 'فشل تحديث محفظة المرسل: لم يتم تعديل أي صف.';
+    END IF;
+
+    -- Update Recipient Wallet and verify exactly 1 row updated
     UPDATE public.wallets
     SET 
         available_balance = v_new_recipient_avail,
@@ -176,6 +192,11 @@ BEGIN
         total_earned = COALESCE(total_earned, 0) + p_amount,
         updated_at = v_now
     WHERE user_id = v_recipient_id;
+
+    GET DIAGNOSTICS v_rows_updated = ROW_COUNT;
+    IF v_rows_updated <> 1 THEN
+        RAISE EXCEPTION 'فشل تحديث محفظة المستلم: لم يتم تعديل أي صف.';
+    END IF;
 
     -- 6. Insert Debit and Credit Wallet Transactions
     INSERT INTO public.wallet_transactions (
@@ -213,6 +234,6 @@ BEGIN
 END;
 $$;
 
--- 3. REVOKE ALL FROM PUBLIC / ANON / AUTHENTICATED & GRANT EXECUTE ONLY TO SERVICE_ROLE
+-- 4. REVOKE ALL FROM PUBLIC / ANON / AUTHENTICATED & GRANT EXECUTE ONLY TO SERVICE_ROLE
 REVOKE ALL ON FUNCTION public.transfer_wallet_balance(UUID, TEXT, NUMERIC, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.transfer_wallet_balance(UUID, TEXT, NUMERIC, TEXT, TEXT) TO service_role;
