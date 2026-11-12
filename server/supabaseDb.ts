@@ -197,29 +197,40 @@ export const supabaseDb = {
    */
   async getWallet(userId: string): Promise<UserWallet> {
     const startTime = Date.now();
+
+    // 1. Validate userId input
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      throw new Error('معرف المستخدم غير صالح للجلب من المحفظة.');
+    }
+    const cleanUserId = userId.trim();
+
     try {
-      const { data, error } = await supabaseServer
+      // 2. Fetch existing wallet (limit 1 ordered by creation to prevent PGRST116 if duplicates exist prior to migration)
+      const { data: existingList, error: fetchErr } = await supabaseServer
         .from('wallets')
         .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
+        .eq('user_id', cleanUserId)
+        .order('created_at', { ascending: true })
+        .limit(1);
 
-      if (error) {
+      if (fetchErr) {
         await logSupabaseError({
-          err: error,
-          operation: 'GET_WALLET',
+          err: fetchErr,
+          operation: 'GET_WALLETS_FETCH',
           sourceTable: 'wallets',
           executionDurationMs: Date.now() - startTime,
         });
-        throw error;
+        throw fetchErr;
       }
 
-      if (data) {
+      // 3. Return existing wallet if found
+      if (existingList && existingList.length > 0) {
+        const data = existingList[0];
         return {
           id: data.id,
           userId: data.user_id,
-          walletAddress: data.wallet_address || generateWalletAddress(userId),
-          availableBalance: Number(data.available_balance || 0),
+          walletAddress: data.wallet_address || generateWalletAddress(cleanUserId),
+          availableBalance: Number(data.available_balance ?? data.balance ?? 0),
           pendingBalance: Number(data.pending_balance || 0),
           reservedBalance: Number(data.reserved_balance || 0),
           totalEarned: Number(data.total_earned || 0),
@@ -232,13 +243,14 @@ export const supabaseDb = {
         };
       }
 
-      // If wallet does not exist yet, create initial 0 YER wallet
+      // 4. Attempt to create initial 0 YER wallet if none exists
       const now = new Date().toISOString();
-      const newWalletAddress = generateWalletAddress(userId);
-      const newWallet = {
+      const newWalletAddress = generateWalletAddress(cleanUserId);
+      const newWallet: Record<string, any> = {
         id: crypto.randomUUID(),
-        user_id: userId,
+        user_id: cleanUserId,
         wallet_address: newWalletAddress,
+        balance: 0,
         available_balance: 0,
         pending_balance: 0,
         reserved_balance: 0,
@@ -251,26 +263,79 @@ export const supabaseDb = {
         updated_at: now,
       };
 
-      const { data: created, error: insertError } = await supabaseServer
+      let { data: created, error: insertError } = await supabaseServer
         .from('wallets')
         .insert(newWallet)
         .select('*')
-        .single();
+        .maybeSingle();
 
+      // Gracefully handle column variation (available_balance vs balance)
+      if (insertError && (insertError.message?.includes('available_balance') || insertError.message?.includes('balance'))) {
+        delete newWallet.available_balance;
+        const fallback = await supabaseServer
+          .from('wallets')
+          .insert(newWallet)
+          .select('*')
+          .maybeSingle();
+        created = fallback.data;
+        insertError = fallback.error;
+      }
+
+      // 5. Concurrency Collision Handling (Duplicate Key 23505 / UNIQUE Constraint)
       if (insertError) {
+        const isDuplicateCollision =
+          insertError.code === '23505' ||
+          insertError.message?.includes('duplicate key') ||
+          insertError.message?.includes('unique constraint') ||
+          insertError.message?.includes('wallets_user_id_key');
+
+        if (isDuplicateCollision) {
+          // Re-fetch existing wallet created by concurrent request
+          const { data: refetchedList, error: refetchErr } = await supabaseServer
+            .from('wallets')
+            .select('*')
+            .eq('user_id', cleanUserId)
+            .order('created_at', { ascending: true })
+            .limit(1);
+
+          if (!refetchErr && refetchedList && refetchedList.length > 0) {
+            const row = refetchedList[0];
+            return {
+              id: row.id,
+              userId: row.user_id,
+              walletAddress: row.wallet_address || newWalletAddress,
+              availableBalance: Number(row.available_balance ?? row.balance ?? 0),
+              pendingBalance: Number(row.pending_balance || 0),
+              reservedBalance: Number(row.reserved_balance || 0),
+              totalEarned: Number(row.total_earned || 0),
+              totalTransferred: Number(row.total_transferred || 0),
+              totalWithdrawn: Number(row.total_withdrawn || 0),
+              status: row.status || 'ACTIVE',
+              currency: 'YER',
+              createdAt: row.created_at,
+              updatedAt: row.updated_at,
+            };
+          }
+        }
+
         await logSupabaseError({
           err: insertError,
           operation: 'CREATE_INITIAL_WALLET',
           sourceTable: 'wallets',
+          executionDurationMs: Date.now() - startTime,
         });
         throw insertError;
+      }
+
+      if (!created) {
+        throw new Error('لم يتم إرجاع بيانات المحفظة المنشأة حديثاً من خادم قاعدة البيانات.');
       }
 
       return {
         id: created.id,
         userId: created.user_id,
-        walletAddress: created.wallet_address,
-        availableBalance: Number(created.available_balance || 0),
+        walletAddress: created.wallet_address || newWalletAddress,
+        availableBalance: Number(created.available_balance ?? created.balance ?? 0),
         pendingBalance: Number(created.pending_balance || 0),
         reservedBalance: Number(created.reserved_balance || 0),
         totalEarned: Number(created.total_earned || 0),
@@ -282,7 +347,7 @@ export const supabaseDb = {
         updatedAt: created.updated_at,
       };
     } catch (err: any) {
-      console.error('[Supabase GET_WALLET]', err.message);
+      console.error('[Supabase GET_WALLET Error]', err.message);
       throw new Error(`فشل جلب بيانات المحفظة من Supabase: ${err.message}`);
     }
   },

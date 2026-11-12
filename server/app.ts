@@ -209,7 +209,7 @@ export interface AuthenticatedRequest extends Request {
   user?: any;
 }
 
-// User Authentication Middleware (Validates Real Supabase JWT or User UUID in Profiles)
+// User Authentication Middleware (Validates Real Supabase JWT exclusively)
 export const authMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -222,48 +222,36 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
   }
 
   try {
-    // 1. Try validating as a genuine Supabase Auth JWT
-    if (token.includes('.') && token.length > 30) {
-      const { data: authData, error: authErr } = await supabaseServer.auth.getUser(token);
-      if (authData?.user && !authErr) {
-        let profile = await supabaseDb.findUserById(authData.user.id);
-        if (!profile) {
-          // Profile exists in auth.users but not yet in profiles, construct profile
-          profile = {
-            id: authData.user.id,
-            fullName: authData.user.user_metadata?.full_name || 'مستخدم كسب اليمن',
-            phone: authData.user.user_metadata?.phone || authData.user.phone || '',
-            email: authData.user.email,
-            avatarUrl: '',
-            role: authData.user.email === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
-            status: 'active',
-            referralCode: 'KY' + Math.floor(100000 + Math.random() * 900000),
-            city: authData.user.user_metadata?.city || 'صنعاء',
-            createdAt: authData.user.created_at,
-            updatedAt: authData.user.created_at,
-          };
-        }
+    // Validate exclusively via Supabase Auth JWT
+    const { data: authData, error: authErr } = await supabaseServer.auth.getUser(token);
 
-        if (profile.status === 'suspended') {
-          return res.status(403).json({ error: 'الحساب مجمد من قبل الإدارة لمخالفة شروط الاستخدام.' });
-        }
-
-        req.user = profile;
-        return next();
-      }
-    }
-
-    // 2. Validate by ID directly from Supabase profiles
-    const user = await supabaseDb.findUserById(token);
-    if (!user) {
+    if (authErr || !authData?.user) {
       return res.status(401).json({ error: 'جلسة الدخول غير صالحة أو منتهية.' });
     }
 
-    if (user.status === 'suspended') {
+    let profile = await supabaseDb.findUserById(authData.user.id);
+    if (!profile) {
+      // Profile exists in auth.users but not yet in profiles table, construct profile structure from authenticated token
+      profile = {
+        id: authData.user.id,
+        fullName: authData.user.user_metadata?.full_name || 'مستخدم كسب اليمن',
+        phone: authData.user.user_metadata?.phone || authData.user.phone || '',
+        email: authData.user.email,
+        avatarUrl: '',
+        role: authData.user.email === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
+        status: 'active',
+        referralCode: 'KY' + Math.floor(100000 + Math.random() * 900000),
+        city: authData.user.user_metadata?.city || 'صنعاء',
+        createdAt: authData.user.created_at,
+        updatedAt: authData.user.created_at,
+      };
+    }
+
+    if (profile.status === 'suspended') {
       return res.status(403).json({ error: 'الحساب مجمد من قبل الإدارة لمخالفة شروط الاستخدام.' });
     }
 
-    req.user = user;
+    req.user = profile;
     next();
   } catch (err: any) {
     return res.status(401).json({ error: 'فشل في التحقق من جلسة المصادقة مع قاعدة البيانات.' });
@@ -294,41 +282,52 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'كلمة المرور يجب أن لا تقل عن 6 خانات.' });
     }
 
-    const cleanEmail = email ? email.trim().toLowerCase() : `ky_${phone.trim().replace(/\D/g, '')}@kasbyemen.local`;
+    const cleanPhone = phone.trim();
+    const cleanEmail = email ? email.trim().toLowerCase() : `ky_${cleanPhone.replace(/\D/g, '')}@kasbyemen.local`;
 
-    // Attempt Supabase Auth registration
-    let authUserId = crypto.randomUUID();
-    let authToken = authUserId;
-
-    try {
-      const { data: supaAuth, error: supaAuthErr } = await supabaseServer.auth.signUp({
-        email: cleanEmail,
-        password: password,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-            phone: phone.trim(),
-            city: city?.trim() || 'صنعاء',
-          },
-        },
-      });
-
-      if (!supaAuthErr && supaAuth?.user) {
-        authUserId = supaAuth.user.id;
-        if (supaAuth.session?.access_token) {
-          authToken = supaAuth.session.access_token;
-        }
+    // 1. Check duplicate phone or email in existing profiles
+    const existingPhone = await supabaseDb.findUserByPhoneOrEmail(cleanPhone);
+    if (existingPhone) {
+      return res.status(400).json({ error: 'رقم الهاتف مسجل مسبقاً في النظام.' });
+    }
+    if (email) {
+      const existingEmail = await supabaseDb.findUserByPhoneOrEmail(cleanEmail);
+      if (existingEmail) {
+        return res.status(400).json({ error: 'البريد الإلكتروني مسجل مسبقاً في النظام.' });
       }
-    } catch (e) {
-      // Supabase signup attempt notice
     }
 
+    // 2. Register strictly via Supabase Auth
+    const { data: supaAuth, error: supaAuthErr } = await supabaseServer.auth.signUp({
+      email: cleanEmail,
+      password: password,
+      options: {
+        data: {
+          full_name: fullName.trim(),
+          phone: cleanPhone,
+          city: city?.trim() || 'صنعاء',
+        },
+      },
+    });
+
+    if (supaAuthErr || !supaAuth?.user) {
+      await logSupabaseError({
+        err: supaAuthErr || 'Supabase Auth user creation returned null',
+        operation: 'REGISTER_SUPABASE_AUTH_SIGNUP',
+        apiRoute: '/api/auth/register',
+      });
+      return res.status(400).json({ error: supaAuthErr?.message || 'فشل في إنشاء الحساب لدى خادم المصادقة.' });
+    }
+
+    const authUserId = supaAuth.user.id;
     const now = new Date().toISOString();
     const refCode = 'KY' + Math.floor(100000 + Math.random() * 900000);
+
+    // 3. Create/Upsert Profile strictly with authenticated authUserId
     const newProfile = {
       id: authUserId,
       full_name: fullName.trim(),
-      phone: phone.trim(),
+      phone: cleanPhone,
       email: cleanEmail,
       role: cleanEmail === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
       status: 'active',
@@ -338,7 +337,6 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       updated_at: now,
     };
 
-    // Save profile to Supabase
     const { data: profileData, error: profileErr } = await supabaseServer
       .from('profiles')
       .upsert(newProfile, { onConflict: 'id' })
@@ -350,30 +348,59 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         err: profileErr,
         operation: 'REGISTER_PROFILE_UPSERT',
         sourceTable: 'profiles',
+        apiRoute: '/api/auth/register',
+      });
+      return res.status(400).json({ error: `فشل في إنشاء الملف الشخصي: ${profileErr.message}` });
+    }
+
+    // 4. Create/Get Wallet strictly for authUserId
+    let wallet;
+    try {
+      wallet = await supabaseDb.getWallet(authUserId);
+    } catch (walletErr: any) {
+      await logSupabaseError({
+        err: walletErr,
+        operation: 'REGISTER_WALLET_CREATION',
+        sourceTable: 'wallets',
+        apiRoute: '/api/auth/register',
+      });
+      return res.status(400).json({ error: `فشل في إنشاء محفظة المستخدم: ${walletErr.message}` });
+    }
+
+    // 5. Handle Session and Response
+    const userPayload = {
+      id: profileData.id,
+      fullName: profileData.full_name,
+      phone: profileData.phone,
+      email: profileData.email,
+      role: profileData.role,
+      status: profileData.status,
+      referralCode: profileData.referral_code,
+      city: profileData.city,
+      createdAt: profileData.created_at,
+      updatedAt: profileData.updated_at,
+    };
+
+    if (supaAuth.session?.access_token) {
+      return res.json({
+        success: true,
+        token: supaAuth.session.access_token,
+        user: userPayload,
+        wallet,
       });
     }
 
-    // Ensure wallet in Supabase
-    const wallet = await supabaseDb.getWallet(authUserId);
-
-    res.json({
+    // Email confirmation required or no immediate session
+    return res.json({
       success: true,
-      token: authToken,
-      user: {
-        id: authUserId,
-        fullName: fullName.trim(),
-        phone: phone.trim(),
-        email: cleanEmail,
-        role: newProfile.role,
-        status: 'active',
-        referralCode: refCode,
-        city: newProfile.city,
-        createdAt: now,
-        updatedAt: now,
-      },
+      requiresEmailConfirmation: true,
+      message: 'تم إنشاء الحساب بنجاح. يرجى مراجعة بريدك الإلكتروني لتأكيد الحساب قبل تسجيل الدخول.',
+      token: null,
+      user: userPayload,
       wallet,
     });
   } catch (err: any) {
+    console.error('[AUTH_REGISTER_ERROR]', err?.message || err);
     res.status(400).json({ error: err.message || 'فشل في إنشاء الحساب.' });
   }
 });
@@ -387,7 +414,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
 
     const clean = identifier.trim().toLowerCase();
 
-    // 1. Try Supabase Auth SignIn if identifier looks like email
+    // Determine target email for Supabase Auth signInWithPassword
     let targetEmail = clean;
     if (!clean.includes('@')) {
       const userByPhone = await supabaseDb.findUserByPhoneOrEmail(identifier);
@@ -396,60 +423,46 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       }
     }
 
-    try {
-      const { data: authRes, error: authErr } = await supabaseServer.auth.signInWithPassword({
-        email: targetEmail,
-        password,
-      });
+    // Authenticate strictly with Supabase Auth
+    const { data: authRes, error: authErr } = await supabaseServer.auth.signInWithPassword({
+      email: targetEmail,
+      password,
+    });
 
-      if (!authErr && authRes?.session && authRes?.user) {
-        totalSuccessfulOps++;
-        lastSuccessfulConnectionTime = new Date().toISOString();
-        const profile = (await supabaseDb.findUserById(authRes.user.id)) || {
-          id: authRes.user.id,
-          fullName: authRes.user.user_metadata?.full_name || 'مستخدم',
-          phone: authRes.user.user_metadata?.phone || '',
-          email: authRes.user.email,
-          role: authRes.user.email === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
-          status: 'active',
-          referralCode: 'KY' + Math.floor(100000 + Math.random() * 900000),
-          city: 'صنعاء',
-          createdAt: authRes.user.created_at,
-          updatedAt: authRes.user.created_at,
-        };
-
-        const wallet = await supabaseDb.getWallet(authRes.user.id);
-        return res.json({
-          success: true,
-          token: authRes.session.access_token,
-          user: profile,
-          wallet,
-        });
-      }
-    } catch {
-      // Supabase direct auth attempt notice
-    }
-
-    // 2. Direct lookup in profiles table
-    const user = await supabaseDb.findUserByPhoneOrEmail(identifier);
-    if (!user) {
+    if (authErr || !authRes?.session || !authRes?.user) {
       return res.status(401).json({ error: 'بيانات الدخول غير صحيحة.' });
     }
 
-    if (user.status === 'suspended') {
+    totalSuccessfulOps++;
+    lastSuccessfulConnectionTime = new Date().toISOString();
+
+    const profile = (await supabaseDb.findUserById(authRes.user.id)) || {
+      id: authRes.user.id,
+      fullName: authRes.user.user_metadata?.full_name || 'مستخدم',
+      phone: authRes.user.user_metadata?.phone || '',
+      email: authRes.user.email,
+      role: authRes.user.email === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
+      status: 'active',
+      referralCode: 'KY' + Math.floor(100000 + Math.random() * 900000),
+      city: 'صنعاء',
+      createdAt: authRes.user.created_at,
+      updatedAt: authRes.user.created_at,
+    };
+
+    if (profile.status === 'suspended') {
       return res.status(403).json({ error: 'تم تجميد هذا الحساب لمخالفة شروط الاستخدام.' });
     }
 
-    const wallet = await supabaseDb.getWallet(user.id);
+    const wallet = await supabaseDb.getWallet(authRes.user.id);
     return res.json({
       success: true,
-      token: user.id,
-      user,
+      token: authRes.session.access_token,
+      user: profile,
       wallet,
     });
   } catch (err: any) {
     console.error('[AUTH_LOGIN_ERROR]', err?.message || err);
-    return res.status(401).json({ error: err?.message || 'بيانات الدخول غير صحيحة أو تعذر التحقق.' });
+    return res.status(401).json({ error: 'بيانات الدخول غير صحيحة أو تعذر التحقق.' });
   }
 });
 
@@ -624,152 +637,127 @@ app.get('/api/wallet/lookup', authMiddleware, async (req: AuthenticatedRequest, 
 
 app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { recipientAddress, amount, note, idempotencyKey } = req.body;
-    const numAmount = Math.floor(Number(amount));
+    const { recipientAddress, amount, note, idempotencyKey } = req.body || {};
+
+    // 1. Validate inputs
+    const numAmount = Number(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح للتحويل.' });
     }
 
-    const senderWallet = await supabaseDb.getWallet(req.user.id);
-    if (senderWallet.availableBalance < numAmount) {
-      return res.status(400).json({ error: 'رصيدك المتاح غير كافٍ لإتمام عملية التحويل.' });
+    if (!recipientAddress || typeof recipientAddress !== 'string' || !recipientAddress.trim()) {
+      return res.status(400).json({ error: 'يرجى تحديد عنوان محفظة المستلم.' });
     }
 
-    // Lookup recipient wallet in Supabase
-    const { data: recipientWalletData } = await supabaseServer
-      .from('wallets')
-      .select('id, user_id, wallet_address, available_balance')
-      .eq('wallet_address', recipientAddress.trim().toUpperCase())
-      .maybeSingle();
+    const cleanRecipientAddress = recipientAddress.trim().toUpperCase();
+    const cleanIdempotencyKey = idempotencyKey ? String(idempotencyKey).trim() : undefined;
+    const cleanNote = note ? String(note).trim() : undefined;
 
-    if (!recipientWalletData) {
-      return res.status(404).json({ error: 'عنوان محفظة المستلم غير موجود.' });
+    // 2. Invoke Atomic Stored Procedure transfer_wallet_balance
+    const { data: rpcResult, error: rpcErr } = await supabaseServer.rpc('transfer_wallet_balance', {
+      p_sender_id: req.user.id,
+      p_recipient_address_or_id: cleanRecipientAddress,
+      p_amount: numAmount,
+      p_idempotency_key: cleanIdempotencyKey || null,
+      p_notes: cleanNote || null,
+    });
+
+    if (rpcErr) {
+      await logSupabaseError({
+        err: rpcErr,
+        operation: 'ATOMIC_WALLET_TRANSFER_RPC',
+        sourceTable: 'wallets',
+        apiRoute: '/api/wallet/transfer',
+        details: { senderId: req.user.id, recipientAddress: cleanRecipientAddress, amount: numAmount, idempotencyKey: cleanIdempotencyKey },
+      });
+      return res.status(400).json({ error: rpcErr.message || 'فشلت عملية التحويل المالي.' });
     }
 
-    if (recipientWalletData.user_id === req.user.id) {
-      return res.status(400).json({ error: 'لا يمكن تحويل الرصيد إلى نفس محفظتك الشخصية.' });
-    }
+    // 3. Re-fetch sender wallet for updated UI state
+    const updatedSenderWallet = await supabaseDb.getWallet(req.user.id);
 
-    // Atomic debit & credit via Supabase
-    const now = new Date().toISOString();
-    const newSenderBal = senderWallet.availableBalance - numAmount;
-    const newRecipientBal = Number(recipientWalletData.available_balance || 0) + numAmount;
-    const transferId = crypto.randomUUID();
-
-    await Promise.all([
-      supabaseServer.from('wallets').update({ available_balance: newSenderBal, updated_at: now }).eq('user_id', req.user.id),
-      supabaseServer.from('wallets').update({ available_balance: newRecipientBal, updated_at: now }).eq('user_id', recipientWalletData.user_id),
-      supabaseServer.from('wallet_transactions').insert([
-        {
-          id: crypto.randomUUID(),
-          user_id: req.user.id,
-          type: 'WALLET_TRANSFER_SENT',
-          amount: -numAmount,
-          previous_balance: senderWallet.availableBalance,
-          new_balance: newSenderBal,
-          status: 'COMPLETED',
-          reference_id: transferId,
-          description: `تحويل إلى ${recipientAddress}`,
-          created_at: now,
-        },
-        {
-          id: crypto.randomUUID(),
-          user_id: recipientWalletData.user_id,
-          type: 'WALLET_TRANSFER_RECEIVED',
-          amount: numAmount,
-          previous_balance: Number(recipientWalletData.available_balance || 0),
-          new_balance: newRecipientBal,
-          status: 'COMPLETED',
-          reference_id: transferId,
-          description: `استلام تحويل من ${senderWallet.walletAddress}`,
-          created_at: now,
-        },
-      ]),
-    ]);
-
-    const updatedWallet = await supabaseDb.getWallet(req.user.id);
-    res.json({
+    return res.json({
       success: true,
-      newAvailableBalance: newSenderBal,
-      wallet: updatedWallet,
+      transferId: rpcResult?.transferId || rpcResult?.id,
+      newAvailableBalance: rpcResult?.newAvailableBalance ?? updatedSenderWallet.availableBalance,
+      wallet: updatedSenderWallet,
+      details: rpcResult,
     });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'فشلت عملية التحويل.' });
+    await logSupabaseError({
+      err,
+      operation: 'WALLET_TRANSFER_ROUTE_FAIL',
+      apiRoute: '/api/wallet/transfer',
+    });
+    return res.status(400).json({ error: err.message || 'حدث خطأ غير متوقع أثناء تنفيذ التحويل.' });
   }
 });
 
 // Withdrawals
 app.post('/api/withdrawals/request', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { method, amount, beneficiaryName, phoneNumber, accountNumber } = req.body;
-    const numAmount = Math.floor(Number(amount));
+    const { method, amount, beneficiaryName, phoneNumber, accountNumber, idempotencyKey } = req.body || {};
 
-    const wallet = await supabaseDb.getWallet(req.user.id);
-    if (wallet.availableBalance < numAmount) {
-      return res.status(400).json({ error: 'رصيدك المتاح غير كافٍ لطلب هذا المبلغ.' });
+    const numAmount = Number(amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح للسحب.' });
     }
 
+    if (!method || typeof method !== 'string' || !method.trim()) {
+      return res.status(400).json({ error: 'يرجى تحديد طريقة السحب.' });
+    }
+
+    if (!beneficiaryName || typeof beneficiaryName !== 'string' || !beneficiaryName.trim()) {
+      return res.status(400).json({ error: 'اسم المستفيد التجاري أو الشخصي مطلوب.' });
+    }
+
+    if (!phoneNumber || typeof phoneNumber !== 'string' || !phoneNumber.trim()) {
+      return res.status(400).json({ error: 'رقم كشف الحساب أو الهاتف المحول إليه مطلوب.' });
+    }
+
+    const cleanMethod = method.trim();
+    const cleanBeneficiaryName = beneficiaryName.trim();
+    const cleanPhoneNumber = phoneNumber.trim();
+    const cleanAccountNumber = accountNumber ? String(accountNumber).trim() : null;
+    const cleanIdempotencyKey = idempotencyKey ? String(idempotencyKey).trim() : null;
+
+    // Execute Atomic RPC reserve_withdrawal strictly without non-atomic fallbacks
     const { data: rpcRes, error: rpcErr } = await supabaseServer.rpc('reserve_withdrawal', {
       p_user_id: req.user.id,
-      p_method: method,
+      p_method: cleanMethod,
       p_amount: numAmount,
-      p_beneficiary_name: beneficiaryName.trim(),
-      p_phone_number: phoneNumber.trim(),
-      p_account_number: accountNumber?.trim() || null,
+      p_beneficiary_name: cleanBeneficiaryName,
+      p_phone_number: cleanPhoneNumber,
+      p_account_number: cleanAccountNumber,
+      p_idempotency_key: cleanIdempotencyKey,
     });
 
-    if (!rpcErr && rpcRes && rpcRes.success) {
-      return res.json({ success: true, result: rpcRes });
+    if (rpcErr || !rpcRes) {
+      await logSupabaseError({
+        err: rpcErr || 'RPC reserve_withdrawal returned null',
+        operation: 'ATOMIC_WITHDRAWAL_RESERVE_RPC',
+        sourceTable: 'withdrawal_requests',
+        apiRoute: '/api/withdrawals/request',
+        details: { userId: req.user.id, amount: numAmount, method: cleanMethod, idempotencyKey: cleanIdempotencyKey },
+      });
+      return res.status(400).json({ error: rpcErr?.message || 'فشلت عملية حجز رصيد السحب.' });
     }
 
-    // Direct atomic table reserve if RPC schema cache is refreshing
-    const now = new Date().toISOString();
-    const fee = Math.round(numAmount * 0.015);
-    const netAmount = numAmount - fee;
-    const newBal = wallet.availableBalance - numAmount;
-    const withdrawalId = crypto.randomUUID();
-
-    await Promise.all([
-      supabaseServer.from('wallets').update({
-        available_balance: newBal,
-        pending_balance: wallet.pendingBalance + numAmount,
-        updated_at: now,
-      }).eq('user_id', req.user.id),
-      supabaseServer.from('withdrawal_requests').insert({
-        id: withdrawalId,
-        user_id: req.user.id,
-        method,
-        amount: numAmount,
-        fee,
-        net_amount: netAmount,
-        beneficiary_name: beneficiaryName.trim(),
-        phone_number: phoneNumber.trim(),
-        account_number: accountNumber?.trim() || null,
-        status: 'PENDING',
-        created_at: now,
-      }),
-      supabaseServer.from('wallet_transactions').insert({
-        id: crypto.randomUUID(),
-        user_id: req.user.id,
-        type: 'WITHDRAWAL_REQUEST',
-        amount: -numAmount,
-        previous_balance: wallet.availableBalance,
-        new_balance: newBal,
-        status: 'COMPLETED',
-        reference_id: withdrawalId,
-        description: `حجز رصيد لطلب سحب عبر ${method}`,
-        created_at: now,
-      }),
-    ]);
-
     const updatedWallet = await supabaseDb.getWallet(req.user.id);
-    res.json({
+    return res.json({
       success: true,
-      newAvailableBalance: newBal,
+      withdrawalId: rpcRes.withdrawalId || rpcRes.id,
+      newAvailableBalance: rpcRes.newAvailableBalance ?? updatedWallet.availableBalance,
       wallet: updatedWallet,
+      result: rpcRes,
     });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'فشل في إنشاء طلب السحب.' });
+    await logSupabaseError({
+      err,
+      operation: 'WITHDRAWAL_REQUEST_ROUTE_FAIL',
+      apiRoute: '/api/withdrawals/request',
+    });
+    return res.status(400).json({ error: err.message || 'فشلت عملية إنشاء طلب السحب.' });
   }
 });
 
@@ -1003,6 +991,10 @@ app.post('/api/admin/withdrawals/:id/review', adminMiddleware, async (req: Authe
     const { data: withData } = await supabaseServer.from('withdrawal_requests').select('*').eq('id', withdrawalId).single();
     if (!withData) {
       return res.status(404).json({ error: 'طلب السحب غير موجود.' });
+    }
+
+    if (withData.status !== 'PENDING') {
+      return res.status(400).json({ error: 'تمت معالجة طلب السحب هذا مسبقاً.' });
     }
 
     const now = new Date().toISOString();
