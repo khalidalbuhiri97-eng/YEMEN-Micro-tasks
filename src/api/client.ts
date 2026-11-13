@@ -177,6 +177,8 @@ export const api = {
   getTaskById: (id: string) => request<any>(`/tasks/${id}`),
   submitTaskProof: (payload: { taskId: string; proofText?: string; proofImages?: string[]; proofUrl?: string }) =>
     request<any>('/tasks/submit', { method: 'POST', body: JSON.stringify(payload) }),
+  uploadImage: (fileBase64: string, fileName: string, contentType: string) =>
+    request<{ url: string }>('/upload', { method: 'POST', body: JSON.stringify({ fileBase64, fileName, contentType }) }),
   getMySubmissions: () => request<any>('/submissions/my'),
 
   // Wallet & Withdrawals

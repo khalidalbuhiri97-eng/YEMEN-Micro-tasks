@@ -613,6 +613,46 @@ app.get('/api/tasks/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Storage Image Upload to Supabase Bucket "task-proofs"
+app.post('/api/upload', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { fileBase64, fileName, contentType } = req.body || {};
+    if (!fileBase64) {
+      return res.status(400).json({ error: 'لم يتم إرسال ملف الصورة' });
+    }
+
+    const base64Data = fileBase64.replace(/^data:.*;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+    const safeFileName = `${Date.now()}_${Math.random().toString(36).substring(7)}_${fileName || 'proof.jpg'}`;
+
+    const { data, error } = await supabaseServer.storage
+      .from('task-proofs')
+      .upload(safeFileName, buffer, {
+        contentType: contentType || 'image/jpeg',
+        upsert: true,
+      });
+
+    if (error) {
+      console.error('Supabase storage upload error:', error);
+      return res.status(500).json({ error: `فشل رفع الصورة إلى التخزين: ${error.message}` });
+    }
+
+    const { data: publicUrlData } = supabaseServer.storage
+      .from('task-proofs')
+      .getPublicUrl(safeFileName);
+
+    const publicUrl = publicUrlData?.publicUrl;
+    if (!publicUrl) {
+      return res.status(500).json({ error: 'تعذر الحصول على رابط الصورة المرفوعة' });
+    }
+
+    return res.json({ url: publicUrl });
+  } catch (err: any) {
+    console.error('Upload error:', err);
+    return res.status(500).json({ error: err.message || 'حدث خطأ أثناء رفع الملف' });
+  }
+});
+
 // Task Submission (creates pending submission only; zero payout until admin approval)
 app.post('/api/tasks/submit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {

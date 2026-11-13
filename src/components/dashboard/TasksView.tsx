@@ -16,6 +16,33 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
+function renderTextWithSafeLinks(text: string) {
+  if (!text) return null;
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const parts = text.split(urlRegex);
+  return parts.map((part, i) => {
+    if (part.match(/^https?:\/\//i)) {
+      const lower = part.toLowerCase();
+      if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:')) {
+        return part;
+      }
+      return (
+        <a
+          key={i}
+          href={part}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-600 dark:text-emerald-400 underline hover:text-emerald-700 font-medium break-all inline-flex items-center gap-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
 interface TasksViewProps {
   onGoToSubmissions: () => void;
   onGoToWallet: () => void;
@@ -77,21 +104,39 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
     setActiveTask(null);
   };
 
-  // Simulate file upload or convert to base64
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Real upload to Supabase Storage bucket "task-proofs"
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        setSubmitError('حجم الصورة كبير جداً، يرجى اختيار صورة أقل من 5 ميجابايت.');
-        return;
-      }
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setSubmitError('حجم الصورة كبير جداً، يرجى اختيار صورة أقل من 5 ميجابايت.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError('');
+
+    try {
       const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          setProofImages([reader.result]);
-        }
-      };
-      reader.readAsDataURL(file);
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const base64Data = await base64Promise;
+
+      const uploadRes = await api.uploadImage(base64Data, file.name, file.type || 'image/jpeg');
+      if (uploadRes?.url) {
+        setProofImages([uploadRes.url]);
+        showToast('تم رفع الصورة بنجاح إلى التخزين السحابي', 'success');
+      } else {
+        throw new Error('فشل رفع الصورة');
+      }
+    } catch (err: any) {
+      setSubmitError(err.message || 'فشل رفع الصورة إلى التخزين السحابي، يرجى المحاولة مجدداً.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -295,7 +340,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
 
                   {/* Description */}
                   <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-4 line-clamp-3">
-                    {task.description}
+                    {renderTextWithSafeLinks(task.description)}
                   </p>
                 </div>
 
@@ -396,7 +441,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                   </ul>
                 ) : (
                   <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
-                    {activeTask.description}
+                    {renderTextWithSafeLinks(activeTask.description)}
                   </p>
                 )}
               </div>
@@ -450,48 +495,46 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                   </div>
                 )}
 
-                {/* Image Proof Upload */}
-                {activeTask.proofRequirements.requireImage && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      لقطة الشاشة / صورة الإثبات
-                    </label>
-                    <div className="mt-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 hover:border-emerald-500 transition-colors bg-slate-50/50 dark:bg-slate-800/30">
-                      {proofImages.length > 0 ? (
-                        <div className="relative w-full max-h-48 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
-                          <img
-                            src={proofImages[0]}
-                            alt="إثبات المهمة المرفوع"
-                            className="w-full h-40 object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setProofImages([])}
-                            className="absolute top-2 left-2 p-1 bg-rose-600 text-white rounded-md text-xs hover:bg-rose-700"
-                          >
-                            حذف وتغيير الصورة
-                          </button>
-                        </div>
-                      ) : (
-                        <label className="flex flex-col items-center justify-center cursor-pointer w-full py-3">
-                          <Upload className="w-8 h-8 text-emerald-600 mb-2" />
-                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                            انقر لاختيار لقطة الشاشة من جهازك
-                          </span>
-                          <span className="text-[11px] text-slate-400 mt-1">
-                            PNG, JPG, WEBP حتى 5 ميجابايت
-                          </span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={handleFileChange}
-                            className="hidden"
-                          />
-                        </label>
-                      )}
-                    </div>
+                {/* Image Proof Upload (Always Available) */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    لقطة الشاشة / صورة الإثبات {activeTask.proofRequirements.requireImage ? <span className="text-rose-500">* (مطلوب)</span> : <span className="text-slate-400">(اختياري)</span>}
+                  </label>
+                  <div className="mt-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 hover:border-emerald-500 transition-colors bg-slate-50/50 dark:bg-slate-800/30">
+                    {proofImages.length > 0 ? (
+                      <div className="relative w-full max-h-48 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
+                        <img
+                          src={proofImages[0]}
+                          alt="إثبات المهمة المرفوع"
+                          className="w-full h-40 object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setProofImages([])}
+                          className="absolute top-2 left-2 p-1 bg-rose-600 text-white rounded-md text-xs hover:bg-rose-700"
+                        >
+                          حذف وتغيير الصورة
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center justify-center cursor-pointer w-full py-3">
+                        <Upload className="w-8 h-8 text-emerald-600 mb-2" />
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                          انقر لاختيار لقطة الشاشة من جهازك
+                        </span>
+                        <span className="text-[11px] text-slate-400 mt-1">
+                          PNG, JPG, WEBP حتى 5 ميجابايت
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleFileChange}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
                   </div>
-                )}
+                </div>
 
                 <div className="pt-2 flex items-center justify-end gap-3">
                   <button
