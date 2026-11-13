@@ -5,7 +5,7 @@
  */
 
 import crypto from 'node:crypto';
-import { supabaseServer, getSupabaseAdminClient, logSupabaseError } from './app';
+import { supabaseServer, getSupabaseAdminClient, logSupabaseError } from './app.js';
 import type {
   UserProfile,
   UserRole,
@@ -449,17 +449,71 @@ export const supabaseDb = {
    */
   async getTasks(params?: { category?: string; search?: string }): Promise<TaskItem[]> {
     const startTime = Date.now();
-    try {
-      let query = supabaseServer.from('tasks').select('*').eq('status', 'ACTIVE');
-      if (params?.category) {
+    const mapRow = (t: any): TaskItem => {
+      const rewardYer = Number(t.reward_units ?? t.reward_yer ?? 0);
+      const totalQuantity = Number(t.slots ?? t.total_quantity ?? 0);
+      const completedQuantity = Number(t.approved_count ?? t.completed_quantity ?? 0);
+      const budgetYer = Number(t.total_budget_units ?? t.budget_yer ?? rewardYer * totalQuantity);
+      const budgetSpentYer = Number(t.budget_spent_yer ?? completedQuantity * rewardYer);
+      const rawStatus = String(t.status || 'ACTIVE').toUpperCase();
+      const status: TaskItem['status'] =
+        rawStatus === 'PAUSED' || rawStatus === 'COMPLETED' || rawStatus === 'ARCHIVED'
+          ? rawStatus
+          : 'ACTIVE';
+
+      return {
+        id: t.id,
+        title: t.title || '',
+        description: t.description || '',
+        category: (t.category || 'app_testing') as TaskItem['category'],
+        rewardYer,
+        steps: Array.isArray(t.steps) ? t.steps : [],
+        proofRequirements: t.proof_requirements || { requireImage: true, requireText: true },
+        timeEstimateMinutes: Number(t.time_estimate_minutes ?? 10),
+        totalQuantity,
+        completedQuantity,
+        maxPerUser: Number(t.max_per_user ?? 1),
+        budgetYer,
+        budgetSpentYer,
+        deadline: t.deadline_at ?? t.deadline ?? undefined,
+        status,
+        createdBy: t.created_by,
+        createdAt: t.created_at,
+      };
+    };
+
+    const buildQuery = (applyCategoryFilter: boolean) => {
+      let query = supabaseServer
+        .from('tasks')
+        .select('*')
+        .in('status', ['active', 'ACTIVE']);
+
+      if (applyCategoryFilter && params?.category && params.category !== 'all') {
         query = query.eq('category', params.category);
       }
       if (params?.search) {
         query = query.ilike('title', `%${params.search}%`);
       }
-      query = query.order('created_at', { ascending: false });
+      return query.order('created_at', { ascending: false });
+    };
 
-      const { data, error } = await query;
+    try {
+      const shouldFilterCategoryInSql = Boolean(params?.category && params.category !== 'all');
+      let { data, error } = await buildQuery(shouldFilterCategoryInSql);
+
+      // Graceful fallback if tasks.category column does not exist in the target schema
+      if (
+        error &&
+        shouldFilterCategoryInSql &&
+        (error.code === '42703' ||
+          error.code === 'PGRST204' ||
+          String(error.message || '').toLowerCase().includes('category'))
+      ) {
+        const fallbackRes = await buildQuery(false);
+        data = fallbackRes.data;
+        error = fallbackRes.error;
+      }
+
       if (error) {
         await logSupabaseError({
           err: error,
@@ -470,25 +524,11 @@ export const supabaseDb = {
         throw error;
       }
 
-      return (data || []).map((t: any) => ({
-        id: t.id,
-        title: t.title,
-        description: t.description,
-        category: t.category,
-        rewardYer: Number(t.reward_yer || 0),
-        steps: Array.isArray(t.steps) ? t.steps : [],
-        proofRequirements: t.proof_requirements || { requireImage: true, requireText: true },
-        timeEstimateMinutes: Number(t.time_estimate_minutes || 10),
-        totalQuantity: Number(t.total_quantity || 0),
-        completedQuantity: Number(t.completed_quantity || 0),
-        maxPerUser: Number(t.max_per_user || 1),
-        budgetYer: Number(t.budget_yer || 0),
-        budgetSpentYer: Number(t.budget_spent_yer || 0),
-        deadline: t.deadline,
-        status: t.status,
-        createdBy: t.created_by,
-        createdAt: t.created_at,
-      }));
+      let mapped = (data || []).map(mapRow);
+      if (params?.category && params.category !== 'all') {
+        mapped = mapped.filter((t) => t.category === params.category);
+      }
+      return mapped;
     } catch (err: any) {
       console.error('[Supabase GET_TASKS]', err.message);
       throw new Error(`فشل جلب قائمة المهام من Supabase: ${err.message}`);
@@ -513,25 +553,36 @@ export const supabaseDb = {
         throw error;
       }
 
-      return (data || []).map((t: any) => ({
-        id: t.id,
-        title: t.title,
-        description: t.description,
-        category: t.category,
-        rewardYer: Number(t.reward_yer || 0),
-        steps: Array.isArray(t.steps) ? t.steps : [],
-        proofRequirements: t.proof_requirements || { requireImage: true, requireText: true },
-        timeEstimateMinutes: Number(t.time_estimate_minutes || 10),
-        totalQuantity: Number(t.total_quantity || 0),
-        completedQuantity: Number(t.completed_quantity || 0),
-        maxPerUser: Number(t.max_per_user || 1),
-        budgetYer: Number(t.budget_yer || 0),
-        budgetSpentYer: Number(t.budget_spent_yer || 0),
-        deadline: t.deadline,
-        status: t.status,
-        createdBy: t.created_by,
-        createdAt: t.created_at,
-      }));
+      return (data || []).map((t: any) => {
+        const rewardYer = Number(t.reward_units ?? t.reward_yer ?? 0);
+        const totalQuantity = Number(t.slots ?? t.total_quantity ?? 0);
+        const completedQuantity = Number(t.approved_count ?? t.completed_quantity ?? 0);
+        const rawStatus = String(t.status || 'ACTIVE').toUpperCase();
+        const status: TaskItem['status'] =
+          rawStatus === 'PAUSED' || rawStatus === 'COMPLETED' || rawStatus === 'ARCHIVED'
+            ? rawStatus
+            : 'ACTIVE';
+
+        return {
+          id: t.id,
+          title: t.title || '',
+          description: t.description || '',
+          category: (t.category || 'app_testing') as TaskItem['category'],
+          rewardYer,
+          steps: Array.isArray(t.steps) ? t.steps : [],
+          proofRequirements: t.proof_requirements || { requireImage: true, requireText: true },
+          timeEstimateMinutes: Number(t.time_estimate_minutes ?? 10),
+          totalQuantity,
+          completedQuantity,
+          maxPerUser: Number(t.max_per_user ?? 1),
+          budgetYer: Number(t.total_budget_units ?? t.budget_yer ?? rewardYer * totalQuantity),
+          budgetSpentYer: Number(t.budget_spent_yer ?? completedQuantity * rewardYer),
+          deadline: t.deadline_at ?? t.deadline ?? undefined,
+          status,
+          createdBy: t.created_by,
+          createdAt: t.created_at,
+        };
+      });
     } catch (err: any) {
       throw new Error(`فشل جلب مهام المدير من Supabase: ${err.message}`);
     }
@@ -548,22 +599,31 @@ export const supabaseDb = {
       if (error) throw error;
       if (!data) return null;
 
+      const rewardYer = Number(data.reward_units ?? data.reward_yer ?? 0);
+      const totalQuantity = Number(data.slots ?? data.total_quantity ?? 0);
+      const completedQuantity = Number(data.approved_count ?? data.completed_quantity ?? 0);
+      const rawStatus = String(data.status || 'ACTIVE').toUpperCase();
+      const status: TaskItem['status'] =
+        rawStatus === 'PAUSED' || rawStatus === 'COMPLETED' || rawStatus === 'ARCHIVED'
+          ? rawStatus
+          : 'ACTIVE';
+
       return {
         id: data.id,
-        title: data.title,
-        description: data.description,
-        category: data.category,
-        rewardYer: Number(data.reward_yer || 0),
+        title: data.title || '',
+        description: data.description || '',
+        category: (data.category || 'app_testing') as TaskItem['category'],
+        rewardYer,
         steps: Array.isArray(data.steps) ? data.steps : [],
         proofRequirements: data.proof_requirements || { requireImage: true, requireText: true },
-        timeEstimateMinutes: Number(data.time_estimate_minutes || 10),
-        totalQuantity: Number(data.total_quantity || 0),
-        completedQuantity: Number(data.completed_quantity || 0),
-        maxPerUser: Number(data.max_per_user || 1),
-        budgetYer: Number(data.budget_yer || 0),
-        budgetSpentYer: Number(data.budget_spent_yer || 0),
-        deadline: data.deadline,
-        status: data.status,
+        timeEstimateMinutes: Number(data.time_estimate_minutes ?? 10),
+        totalQuantity,
+        completedQuantity,
+        maxPerUser: Number(data.max_per_user ?? 1),
+        budgetYer: Number(data.total_budget_units ?? data.budget_yer ?? rewardYer * totalQuantity),
+        budgetSpentYer: Number(data.budget_spent_yer ?? completedQuantity * rewardYer),
+        deadline: data.deadline_at ?? data.deadline ?? undefined,
+        status,
         createdBy: data.created_by,
         createdAt: data.created_at,
       };
@@ -575,36 +635,52 @@ export const supabaseDb = {
   async createTask(taskData: any): Promise<TaskItem> {
     const startTime = Date.now();
     const taskId = crypto.randomUUID();
-    const budgetYer = Number(taskData.rewardYer) * Number(taskData.totalQuantity);
+    const rewardUnits = Number(taskData.rewardYer);
+    const slots = Number(taskData.totalQuantity);
+    const totalBudgetUnits = rewardUnits * slots;
     const now = new Date().toISOString();
 
-    const taskRow = {
+    const taskRow: Record<string, any> = {
       id: taskId,
       title: taskData.title,
       description: taskData.description,
-      category: taskData.category,
-      reward_yer: Number(taskData.rewardYer),
-      steps: taskData.steps || [],
-      proof_requirements: taskData.proofRequirements || { requireImage: true, requireText: true },
-      time_estimate_minutes: Number(taskData.timeEstimateMinutes || 10),
-      total_quantity: Number(taskData.totalQuantity),
-      completed_quantity: 0,
-      max_per_user: Number(taskData.maxPerUser || 1),
-      budget_yer: budgetYer,
-      budget_spent_yer: 0,
-      deadline: taskData.deadline || null,
-      status: 'ACTIVE',
+      category: taskData.category || 'app_testing',
+      reward_units: rewardUnits,
+      slots,
+      approved_count: 0,
+      total_budget_units: totalBudgetUnits,
+      refunded_units: 0,
+      deadline_at: taskData.deadline || null,
+      creation_key: `task_${taskId}`,
+      status: 'active',
       created_by: taskData.createdBy || null,
       created_at: now,
-      updated_at: now,
     };
 
     try {
-      const { data, error } = await supabaseServer
+      let { data, error } = await supabaseServer
         .from('tasks')
         .insert(taskRow)
         .select('*')
         .single();
+
+      // Fallback if category column is absent
+      if (
+        error &&
+        (error.code === '42703' ||
+          error.code === 'PGRST204' ||
+          String(error.message || '').toLowerCase().includes('category'))
+      ) {
+        const rowWithoutCategory = { ...taskRow };
+        delete rowWithoutCategory.category;
+        const retry = await supabaseServer
+          .from('tasks')
+          .insert(rowWithoutCategory)
+          .select('*')
+          .single();
+        data = retry.data;
+        error = retry.error;
+      }
 
       if (error) {
         await logSupabaseError({
@@ -620,18 +696,18 @@ export const supabaseDb = {
         id: data.id,
         title: data.title,
         description: data.description,
-        category: data.category,
-        rewardYer: Number(data.reward_yer),
-        steps: data.steps,
-        proofRequirements: data.proof_requirements,
-        timeEstimateMinutes: Number(data.time_estimate_minutes),
-        totalQuantity: Number(data.total_quantity),
-        completedQuantity: Number(data.completed_quantity),
-        maxPerUser: Number(data.max_per_user),
-        budgetYer: Number(data.budget_yer),
-        budgetSpentYer: Number(data.budget_spent_yer),
-        deadline: data.deadline,
-        status: data.status,
+        category: (data.category || taskData.category || 'app_testing') as TaskItem['category'],
+        rewardYer: Number(data.reward_units ?? data.reward_yer ?? rewardUnits),
+        steps: Array.isArray(data.steps) ? data.steps : (taskData.steps || []),
+        proofRequirements: data.proof_requirements || taskData.proofRequirements || { requireImage: true, requireText: true },
+        timeEstimateMinutes: Number(data.time_estimate_minutes ?? taskData.timeEstimateMinutes ?? 10),
+        totalQuantity: Number(data.slots ?? data.total_quantity ?? slots),
+        completedQuantity: Number(data.approved_count ?? data.completed_quantity ?? 0),
+        maxPerUser: Number(data.max_per_user ?? taskData.maxPerUser ?? 1),
+        budgetYer: Number(data.total_budget_units ?? data.budget_yer ?? totalBudgetUnits),
+        budgetSpentYer: Number(data.budget_spent_yer ?? 0),
+        deadline: data.deadline_at ?? data.deadline ?? undefined,
+        status: String(data.status || 'ACTIVE').toUpperCase() as TaskItem['status'],
         createdBy: data.created_by,
         createdAt: data.created_at,
       };
@@ -661,32 +737,47 @@ export const supabaseDb = {
         .maybeSingle();
 
       if (existing) {
-        if (existing.status === 'APPROVED') {
+        const existingStatus = String(existing.status || '').toUpperCase();
+        if (existingStatus === 'APPROVED') {
           throw new Error('لقد أنجزت هذه المهمة بالفعل واستلمت مكافأتها مسبقاً.');
         }
-        if (existing.status === 'PENDING' || existing.status === 'UNDER_REVIEW') {
+        if (existingStatus === 'PENDING' || existingStatus === 'UNDER_REVIEW') {
           throw new Error('لديك إثبات قيد المراجعة لهذه المهمة بالفعل.');
         }
       }
 
       const submissionId = crypto.randomUUID();
       const now = new Date().toISOString();
+      const proofPayload = {
+        text: payload.proofText || null,
+        images: payload.proofImages || [],
+        url: payload.proofUrl || null,
+      };
+
       const subRow = {
         id: submissionId,
         task_id: payload.taskId,
         user_id: payload.userId,
-        proof_text: payload.proofText || null,
-        proof_images: payload.proofImages || [],
-        proof_url: payload.proofUrl || null,
-        status: 'PENDING',
+        proof: proofPayload,
+        status: 'pending',
         created_at: now,
       };
 
-      const { data, error } = await supabaseServer
+      let { data, error } = await supabaseServer
         .from('task_submissions')
         .insert(subRow)
         .select('*')
         .single();
+
+      if (error && String(error.message || '').toLowerCase().includes('status')) {
+        const retry = await supabaseServer
+          .from('task_submissions')
+          .insert({ ...subRow, status: 'PENDING' })
+          .select('*')
+          .single();
+        data = retry.data;
+        error = retry.error;
+      }
 
       if (error) {
         await logSupabaseError({
@@ -698,14 +789,16 @@ export const supabaseDb = {
         throw error;
       }
 
+      const parsedProof = typeof data.proof === 'string' ? (() => { try { return JSON.parse(data.proof); } catch { return { text: data.proof }; } })() : (data.proof || {});
+
       return {
         id: data.id,
         taskId: data.task_id,
         userId: data.user_id,
-        proofText: data.proof_text,
-        proofImages: data.proof_images || [],
-        proofUrl: data.proof_url,
-        status: data.status,
+        proofText: parsedProof.text ?? data.proof_text ?? payload.proofText,
+        proofImages: Array.isArray(parsedProof.images) ? parsedProof.images : (data.proof_images || payload.proofImages || []),
+        proofUrl: parsedProof.url ?? data.proof_url ?? payload.proofUrl,
+        status: String(data.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
         createdAt: data.created_at,
       };
     } catch (err: any) {
@@ -717,28 +810,31 @@ export const supabaseDb = {
     try {
       const { data, error } = await supabaseServer
         .from('task_submissions')
-        .select('*, tasks(title, reward_yer)')
+        .select('*, tasks(title, reward_units)')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      return (data || []).map((s: any) => ({
-        id: s.id,
-        taskId: s.task_id,
-        userId: s.user_id,
-        taskTitle: s.tasks?.title || 'مهمة مصغرة',
-        taskRewardYer: Number(s.tasks?.reward_yer || 0),
-        proofText: s.proof_text,
-        proofImages: s.proof_images || [],
-        proofUrl: s.proof_url,
-        status: s.status,
-        rejectionReason: s.rejection_reason,
-        reviewedBy: s.reviewed_by,
-        reviewedAt: s.reviewed_at,
-        rewardTransactionId: s.reward_transaction_id,
-        createdAt: s.created_at,
-      }));
+      return (data || []).map((s: any) => {
+        const parsedProof = typeof s.proof === 'string' ? (() => { try { return JSON.parse(s.proof); } catch { return { text: s.proof }; } })() : (s.proof || {});
+        return {
+          id: s.id,
+          taskId: s.task_id,
+          userId: s.user_id,
+          taskTitle: s.tasks?.title || 'مهمة مصغرة',
+          taskRewardYer: Number(s.tasks?.reward_units ?? s.tasks?.reward_yer ?? 0),
+          proofText: parsedProof.text ?? s.proof_text,
+          proofImages: Array.isArray(parsedProof.images) ? parsedProof.images : (s.proof_images || []),
+          proofUrl: parsedProof.url ?? s.proof_url,
+          status: String(s.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
+          rejectionReason: s.review_note ?? s.rejection_reason,
+          reviewedBy: s.reviewed_by,
+          reviewedAt: s.reviewed_at,
+          rewardTransactionId: s.reward_transaction_id,
+          createdAt: s.created_at,
+        };
+      });
     } catch (err: any) {
       console.error('[Supabase GET_MY_SUBMISSIONS]', err.message);
       return [];
@@ -749,29 +845,32 @@ export const supabaseDb = {
     try {
       const { data, error } = await supabaseServer
         .from('task_submissions')
-        .select('*, profiles(full_name, phone), tasks(title, reward_yer)')
+        .select('*, profiles(full_name, phone), tasks(title, reward_units)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
-      return (data || []).map((s: any) => ({
-        id: s.id,
-        taskId: s.task_id,
-        userId: s.user_id,
-        userFullName: s.profiles?.full_name || 'مستخدم',
-        userPhone: s.profiles?.phone || '',
-        taskTitle: s.tasks?.title || 'مهمة مصغرة',
-        taskRewardYer: Number(s.tasks?.reward_yer || 0),
-        proofText: s.proof_text,
-        proofImages: s.proof_images || [],
-        proofUrl: s.proof_url,
-        status: s.status,
-        rejectionReason: s.rejection_reason,
-        reviewedBy: s.reviewed_by,
-        reviewedAt: s.reviewed_at,
-        rewardTransactionId: s.reward_transaction_id,
-        createdAt: s.created_at,
-      }));
+      return (data || []).map((s: any) => {
+        const parsedProof = typeof s.proof === 'string' ? (() => { try { return JSON.parse(s.proof); } catch { return { text: s.proof }; } })() : (s.proof || {});
+        return {
+          id: s.id,
+          taskId: s.task_id,
+          userId: s.user_id,
+          userFullName: s.profiles?.full_name || 'مستخدم',
+          userPhone: s.profiles?.phone || '',
+          taskTitle: s.tasks?.title || 'مهمة مصغرة',
+          taskRewardYer: Number(s.tasks?.reward_units ?? s.tasks?.reward_yer ?? 0),
+          proofText: parsedProof.text ?? s.proof_text,
+          proofImages: Array.isArray(parsedProof.images) ? parsedProof.images : (s.proof_images || []),
+          proofUrl: parsedProof.url ?? s.proof_url,
+          status: String(s.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
+          rejectionReason: s.review_note ?? s.rejection_reason,
+          reviewedBy: s.reviewed_by,
+          reviewedAt: s.reviewed_at,
+          rewardTransactionId: s.reward_transaction_id,
+          createdAt: s.created_at,
+        };
+      });
     } catch (err: any) {
       console.error('[Supabase GET_ALL_SUBMISSIONS]', err.message);
       return [];

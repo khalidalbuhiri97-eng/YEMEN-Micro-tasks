@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { supabaseDb, generateWalletAddress } from './supabaseDb';
+import { supabaseDb, generateWalletAddress } from './supabaseDb.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
@@ -512,16 +512,19 @@ app.get('/api/system/status', async (_req: Request, res: Response) => {
 app.get('/api/stats', async (_req: Request, res: Response) => {
   try {
     const [tasksRes, usersRes, withsRes, setRes] = await Promise.all([
-      supabaseServer.from('tasks').select('id, budget_spent_yer, completed_quantity, status'),
+      supabaseServer.from('tasks').select('id, reward_units, approved_count, status'),
       supabaseServer.from('profiles').select('id', { count: 'exact', head: true }),
       supabaseServer.from('withdrawal_requests').select('amount').eq('status', 'PAID'),
       supabaseDb.getSettings(),
     ]);
 
     const tasks = tasksRes.data || [];
-    const totalCompletedTasks = tasks.reduce((sum, t) => sum + (Number(t.completed_quantity) || 0), 0);
-    const totalTaskRewardsPaidYer = tasks.reduce((sum, t) => sum + (Number(t.budget_spent_yer) || 0), 0);
-    const activeTasksCount = tasks.filter((t) => t.status === 'ACTIVE').length;
+    const totalCompletedTasks = tasks.reduce((sum, t: any) => sum + (Number(t.approved_count ?? t.completed_quantity ?? 0)), 0);
+    const totalTaskRewardsPaidYer = tasks.reduce(
+      (sum, t: any) => sum + Number(t.approved_count ?? t.completed_quantity ?? 0) * Number(t.reward_units ?? t.reward_yer ?? 0),
+      0
+    );
+    const activeTasksCount = tasks.filter((t: any) => String(t.status || '').toUpperCase() === 'ACTIVE').length;
     const totalWithdrawnYer = (withsRes.data || []).reduce((sum, w) => sum + (Number(w.amount) || 0), 0);
     const totalRegisteredUsers = usersRes.count || 5;
 
@@ -854,7 +857,7 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
   try {
     const [profilesRes, tasksRes, subsRes, withsRes, walletsRes] = await Promise.all([
       supabaseServer.from('profiles').select('id, role, status'),
-      supabaseServer.from('tasks').select('id, status, budget_spent_yer'),
+      supabaseServer.from('tasks').select('id, status, reward_units, approved_count'),
       supabaseServer.from('task_submissions').select('id, status'),
       supabaseServer.from('withdrawal_requests').select('id, amount, status'),
       supabaseServer.from('wallets').select('available_balance, pending_balance'),
@@ -867,10 +870,10 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
 
     const tasks = tasksRes.data || [];
     const totalTasks = tasks.length;
-    const activeTasks = tasks.filter((t) => t.status === 'ACTIVE').length;
+    const activeTasks = tasks.filter((t: any) => String(t.status || '').toUpperCase() === 'ACTIVE').length;
 
     const submissions = subsRes.data || [];
-    const pendingSubmissions = submissions.filter((s) => s.status === 'PENDING').length;
+    const pendingSubmissions = submissions.filter((s: any) => String(s.status || '').toUpperCase() === 'PENDING').length;
 
     const withdrawals = withsRes.data || [];
     const pendingWithdrawals = withdrawals.filter((w) => w.status === 'PENDING').length;
@@ -879,7 +882,10 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
     const wallets = walletsRes.data || [];
     const totalAvailableLiabilities = wallets.reduce((sum, w) => sum + Number(w.available_balance || 0), 0);
     const totalPendingWithdrawalLiabilities = wallets.reduce((sum, w) => sum + Number(w.pending_balance || 0), 0);
-    const totalApprovedRewards = tasks.reduce((sum, t) => sum + Number(t.budget_spent_yer || 0), 0);
+    const totalApprovedRewards = tasks.reduce(
+      (sum, t: any) => sum + Number(t.approved_count ?? t.completed_quantity ?? 0) * Number(t.reward_units ?? t.reward_yer ?? 0),
+      0
+    );
 
     res.json({
       stats: {
@@ -928,15 +934,15 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       }
 
       // 2. Fallback direct atomic SQL transactions in Supabase
-      const { data: subData } = await supabaseServer.from('task_submissions').select('*, tasks(reward_yer, title)').eq('id', submissionId).single();
+      const { data: subData } = await supabaseServer.from('task_submissions').select('*, tasks(reward_units, title)').eq('id', submissionId).single();
       if (!subData) {
         return res.status(404).json({ error: 'إثبات المهمة غير موجود.' });
       }
-      if (subData.status === 'APPROVED') {
+      if (String(subData.status || '').toUpperCase() === 'APPROVED') {
         return res.status(400).json({ error: 'تمت الموافقة على هذه المهمة وصرف المكافأة مسبقاً.' });
       }
 
-      const rewardYer = Number(subData.tasks?.reward_yer || 0);
+      const rewardYer = Number(subData.tasks?.reward_units ?? subData.tasks?.reward_yer ?? 0);
       const userWallet = await supabaseDb.getWallet(subData.user_id);
       const newBal = userWallet.availableBalance + rewardYer;
       const now = new Date().toISOString();
@@ -948,7 +954,7 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
           updated_at: now,
         }).eq('user_id', subData.user_id),
         supabaseServer.from('task_submissions').update({
-          status: 'APPROVED',
+          status: 'approved',
           reviewed_by: req.user.id,
           reviewed_at: now,
         }).eq('id', submissionId),
@@ -985,8 +991,8 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       const now = new Date().toISOString();
       await Promise.all([
         supabaseServer.from('task_submissions').update({
-          status: 'REJECTED',
-          rejection_reason: reason,
+          status: 'rejected',
+          review_note: reason,
           reviewed_by: req.user.id,
           reviewed_at: now,
         }).eq('id', submissionId),
@@ -1175,13 +1181,14 @@ app.get('/api/admin/ledger', adminMiddleware, async (_req: AuthenticatedRequest,
 
 app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, description, status } = req.body;
-    const { error } = await supabaseServer.from('tasks').update({
-      title,
-      description,
-      status,
-      updated_at: new Date().toISOString(),
-    }).eq('id', req.params.id);
+    const { title, description, status, category } = req.body;
+    const updates: Record<string, any> = {};
+    if (title !== undefined) updates.title = title;
+    if (description !== undefined) updates.description = description;
+    if (category !== undefined) updates.category = category;
+    if (status !== undefined) updates.status = String(status).toLowerCase();
+
+    const { error } = await supabaseServer.from('tasks').update(updates).eq('id', req.params.id);
 
     if (error) throw error;
     res.json({ success: true });
@@ -1256,12 +1263,15 @@ app.post('/api/admin/users/:id/status', adminMiddleware, async (req: Authenticat
 app.get('/api/admin/financial-report', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const [tasksRes, withsRes, walletsRes] = await Promise.all([
-      supabaseServer.from('tasks').select('budget_spent_yer'),
+      supabaseServer.from('tasks').select('reward_units, approved_count'),
       supabaseServer.from('withdrawal_requests').select('amount, status, created_at'),
       supabaseServer.from('wallets').select('available_balance'),
     ]);
 
-    const totalTaskExpenses = (tasksRes.data || []).reduce((sum, t) => sum + Number(t.budget_spent_yer || 0), 0);
+    const totalTaskExpenses = (tasksRes.data || []).reduce(
+      (sum, t: any) => sum + Number(t.approved_count ?? t.completed_quantity ?? 0) * Number(t.reward_units ?? t.reward_yer ?? 0),
+      0
+    );
     const withdrawals = withsRes.data || [];
     const totalPaidWithdrawals = withdrawals.filter((w) => w.status === 'PAID').reduce((sum, w) => sum + Number(w.amount || 0), 0);
     const totalPendingWithdrawals = withdrawals.filter((w) => w.status === 'PENDING').reduce((sum, w) => sum + Number(w.amount || 0), 0);

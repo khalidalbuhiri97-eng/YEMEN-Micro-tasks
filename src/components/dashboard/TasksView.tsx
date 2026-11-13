@@ -29,6 +29,12 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
+  useEffect(() => {
+    if (initialCategory) {
+      setSelectedCategory(initialCategory);
+    }
+  }, [initialCategory]);
+
   // Modal state
   const [activeTask, setActiveTask] = useState<TaskItem | null>(null);
   const [proofText, setProofText] = useState('');
@@ -254,10 +260,10 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {tasks.map((task) => {
-            const percentCompleted = Math.min(
-              100,
-              Math.round((task.completedQuantity / task.totalQuantity) * 100)
-            );
+            const percentCompleted =
+              task.totalQuantity > 0
+                ? Math.min(100, Math.round((task.completedQuantity / task.totalQuantity) * 100))
+                : 0;
             const remaining = Math.max(0, task.totalQuantity - task.completedQuantity);
 
             return (
@@ -372,16 +378,22 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-2">
                   خطوات تنفيذ المهمة:
                 </h3>
-                <ul className="space-y-2 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-                  {activeTask.steps.map((step, idx) => (
-                    <li key={idx} className="flex items-start gap-2.5">
-                      <span className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center font-mono text-[11px] font-bold shrink-0 mt-0.5">
-                        {idx + 1}
-                      </span>
-                      <span className="leading-relaxed">{step}</span>
-                    </li>
-                  ))}
-                </ul>
+                {activeTask.steps && activeTask.steps.length > 0 ? (
+                  <ul className="space-y-2 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+                    {activeTask.steps.map((step, idx) => (
+                      <li key={idx} className="flex items-start gap-2.5">
+                        <span className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center font-mono text-[11px] font-bold shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <span className="leading-relaxed">{step}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                    {activeTask.description}
+                  </p>
+                )}
               </div>
 
               {/* Submission Form */}
