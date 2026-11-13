@@ -1377,6 +1377,23 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
   }
 });
 
+app.delete('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const adminClient = getSupabaseAdminClient();
+    const taskId = req.params.id;
+
+    // Delete associated task submissions first to avoid foreign key violation constraint
+    await adminClient.from('task_submissions').delete().eq('task_id', taskId);
+
+    const { error } = await adminClient.from('tasks').delete().eq('id', taskId);
+    if (error) throw error;
+    res.json({ success: true });
+  } catch (err: any) {
+    console.error('Task deletion error:', err);
+    res.status(400).json({ error: err.message || 'فشل حذف المهمة' });
+  }
+});
+
 app.get('/api/admin/users', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const users = await supabaseDb.getAllUsers();

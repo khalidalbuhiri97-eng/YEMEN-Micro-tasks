@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   Check,
   Database,
+  Trash2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -212,6 +213,17 @@ export const AdminDashboard: React.FC = () => {
       await loadAllAdminData();
     } catch (err: any) {
       showToast(err.message || 'فشل في تعديل الرصيد', 'error');
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    if (!window.confirm('هل أنت متأكد من حذف هذه المهمة نهائياً من المنصة؟')) return;
+    try {
+      await api.deleteAdminTask(taskId);
+      showToast('تم حذف المهمة بنجاح', 'success');
+      await loadAllAdminData();
+    } catch (err: any) {
+      showToast(err.message || 'فشل حذف المهمة', 'error');
     }
   };
 
@@ -1022,6 +1034,13 @@ export const AdminDashboard: React.FC = () => {
                 <div className="flex items-center justify-between font-mono text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800">
                   <span>المكافأة: {t.rewardYer.toLocaleString()} ر.ي</span>
                   <span>المكتمل: {t.completedQuantity} / {t.totalQuantity}</span>
+                  <button
+                    onClick={() => handleDeleteTask(t.id)}
+                    className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
+                    title="حذف المهمة نهائياً"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))}

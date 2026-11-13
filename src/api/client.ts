@@ -228,6 +228,7 @@ export const api = {
   createAdminTask: (payload: any) => request<any>('/admin/tasks', { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminTask: (id: string, payload: any) =>
     request<any>(`/admin/tasks/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteAdminTask: (id: string) => request<any>(`/admin/tasks/${id}`, { method: 'DELETE' }),
   getAdminSubmissions: () => request<any>('/admin/submissions'),
   reviewSubmission: (id: string, action: 'APPROVE' | 'REJECT', reason?: string) =>
     request<any>(`/admin/submissions/${id}/review`, { method: 'POST', body: JSON.stringify({ action, reason }) }),
