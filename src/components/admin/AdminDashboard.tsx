@@ -664,7 +664,7 @@ export const AdminDashboard: React.FC = () => {
                           {sub.taskRewardYer?.toLocaleString()} ر.ي
                         </td>
                         <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             {sub.proofImages && sub.proofImages.length > 0 && (
                               <button
                                 onClick={() => setPreviewImage(sub.proofImages[0])}
@@ -678,6 +678,16 @@ export const AdminDashboard: React.FC = () => {
                               <span className="text-slate-500 max-w-[160px] truncate block" title={sub.proofText}>
                                 {sub.proofText}
                               </span>
+                            )}
+                            {sub.proofUrl && /^https?:\/\//i.test(sub.proofUrl) && (
+                              <a
+                                href={sub.proofUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2 py-1 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded font-semibold text-[11px] hover:underline"
+                              >
+                                رابط
+                              </a>
                             )}
                           </div>
                         </td>

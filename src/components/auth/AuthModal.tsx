@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { X, Lock, Phone, User, MapPin, Mail, ArrowRight, Shield } from 'lucide-react';
+import { X, Lock, Phone, User, MapPin, Mail, ArrowRight, Shield, Eye, EyeOff } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -13,6 +13,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
   const [mode, setMode] = useState<'login' | 'register' | 'owner'>(defaultMode);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -207,13 +208,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             <div className="relative">
               <Lock className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full pr-9 pl-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100 font-mono"
+                className="w-full pr-9 pl-10 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100 font-mono"
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute left-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 focus:outline-none"
+                aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
             </div>
           </div>
 

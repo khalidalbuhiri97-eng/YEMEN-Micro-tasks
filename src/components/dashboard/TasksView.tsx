@@ -109,15 +109,20 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
       return;
     }
 
+    if (activeTask.proofRequirements.requireUrl && !proofUrl.trim()) {
+      setSubmitError('هذه المهمة تتطلب إدخال رابط الإثبات (URL).');
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitError('');
 
     try {
       await api.submitTaskProof({
         taskId: activeTask.id,
-        proofText,
+        proofText: proofText.trim() || undefined,
         proofImages,
-        proofUrl,
+        proofUrl: proofUrl.trim() || undefined,
       });
 
       // Launch reward celebration confetti

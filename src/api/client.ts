@@ -1,5 +1,5 @@
 /**
- * Kasb Yemen - Frontend API Client (Connected to Real Backend)
+ * Kasb Yemen - Frontend API Client (Connected to Real Backend with Session Refresh & Persistence)
  */
 
 const BASE_URL = '/api';
@@ -8,16 +8,65 @@ export function getAuthToken(): string | null {
   return localStorage.getItem('kasb_auth_token');
 }
 
-export function setAuthToken(token: string): void {
+export function getRefreshToken(): string | null {
+  return localStorage.getItem('kasb_refresh_token');
+}
+
+export function setAuthTokens(token: string, refreshToken?: string): void {
   localStorage.setItem('kasb_auth_token', token);
+  if (refreshToken) {
+    localStorage.setItem('kasb_refresh_token', refreshToken);
+  }
+}
+
+export function setAuthToken(token: string): void {
+  setAuthTokens(token);
 }
 
 export function clearAuthToken(): void {
   localStorage.removeItem('kasb_auth_token');
+  localStorage.removeItem('kasb_refresh_token');
+}
+
+let isRefreshing = false;
+let refreshSubscribers: Array<(token: string) => void> = [];
+
+function subscribeTokenRefresh(cb: (token: string) => void) {
+  refreshSubscribers.push(cb);
+}
+
+function onRefreshed(token: string) {
+  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers = [];
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  try {
+    const response = await fetch(`${BASE_URL}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.token) {
+      clearAuthToken();
+      return null;
+    }
+
+    setAuthTokens(data.token, data.refreshToken || refreshToken);
+    return data.token;
+  } catch {
+    clearAuthToken();
+    return null;
+  }
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
-  const token = getAuthToken();
+  let token = getAuthToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
@@ -31,8 +80,53 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retries =
     try {
       const response = await fetch(`${BASE_URL}${endpoint}`, {
         ...options,
-        headers,
+        headers: token ? { ...headers, Authorization: `Bearer ${token}` } : headers,
       });
+
+      // Handle 401 unauthorized with single token refresh attempt (prevent infinite loop)
+      if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/refresh') && !endpoint.includes('/auth/register')) {
+        if (!isRefreshing) {
+          isRefreshing = true;
+          const newToken = await refreshAccessToken();
+          isRefreshing = false;
+
+          if (newToken) {
+            token = newToken;
+            onRefreshed(newToken);
+            // Retry request with fresh token
+            const retryResponse = await fetch(`${BASE_URL}${endpoint}`, {
+              ...options,
+              headers: { ...headers, Authorization: `Bearer ${newToken}` },
+            });
+            const retryData = await retryResponse.json().catch(() => ({}));
+            if (!retryResponse.ok) {
+              throw new Error(retryData.error || `خطأ في الخادم (رمز ${retryResponse.status}): تعذر إكمال العملية.`);
+            }
+            return retryData as T;
+          } else {
+            clearAuthToken();
+            window.dispatchEvent(new CustomEvent('kasb:auth_expired'));
+            throw new Error('انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً.');
+          }
+        } else {
+          // Wait for ongoing refresh
+          return new Promise((resolve, reject) => {
+            subscribeTokenRefresh(async (newToken) => {
+              try {
+                const retryResponse = await fetch(`${BASE_URL}${endpoint}`, {
+                  ...options,
+                  headers: { ...headers, Authorization: `Bearer ${newToken}` },
+                });
+                const retryData = await retryResponse.json().catch(() => ({}));
+                if (!retryResponse.ok) reject(new Error(retryData.error));
+                else resolve(retryData as T);
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+        }
+      }
 
       const data = await response.json().catch(() => ({}));
 
@@ -55,7 +149,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retries =
         throw err;
       }
 
-      // Exponential backoff before retry (300ms, 600ms)
       await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
     }
   }

@@ -1,28 +1,32 @@
 /**
  * Kasb Yemen - Supabase Database Unified Service Layer
- * Replaces local database.json with direct, persistent Supabase PostgreSQL operations.
- * Enforces atomic transactions, ACID guarantees, idempotency, and comprehensive error logging.
+ * Direct, persistent Supabase PostgreSQL operations aligned with live double-entry
+ * financial ledger (financial_accounts, ledger_transactions, ledger_entries, wallets),
+ * escrow-backed tasks, and atomic RPC workflows.
  */
 
 import crypto from 'node:crypto';
-import { supabaseServer, getSupabaseAdminClient, logSupabaseError } from './app.js';
+import {
+  supabaseServer,
+  getSupabaseAdminClient,
+  getSupabaseUserClient,
+  logSupabaseError,
+} from './app.js';
 import type {
   UserProfile,
   UserRole,
   AccountStatus,
   UserWallet,
   WalletTransaction,
+  TransactionType,
   TaskItem,
   TaskSubmission,
   WithdrawalRequest,
   PayoutMethod,
   AppNotification,
   PlatformSettings,
-  SupportTicket,
-  WalletTransfer,
   TreasurySummary,
   LedgerTransaction,
-  LedgerEntry,
 } from '../src/types/index';
 
 const AUTHORIZED_OWNER_EMAIL = (process.env.ADMIN_EMAIL || 'khalidalbuhiri97@gmail.com').trim().toLowerCase();
@@ -31,6 +35,88 @@ const AUTHORIZED_OWNER_ID = '00000000-0000-4000-8000-000000000001';
 export function generateWalletAddress(userId: string): string {
   const hash = crypto.createHash('sha256').update(userId + '_kasb_wallet_salt_yemen_v1').digest('hex').toUpperCase();
   return `KY-${hash.slice(0, 12)}`;
+}
+
+function getDbClient() {
+  try {
+    return getSupabaseAdminClient();
+  } catch {
+    return supabaseServer;
+  }
+}
+
+function mapLedgerTxType(rawType: string, entrySide: 'debit' | 'credit'): TransactionType {
+  const upper = String(rawType || '').trim().toUpperCase();
+  switch (upper) {
+    case 'TASK_REWARD_PAYOUT':
+    case 'TASK_REWARD':
+      return 'TASK_REWARD';
+    case 'WALLET_TRANSFER':
+    case 'WALLET_TRANSFER_SENT':
+    case 'WALLET_TRANSFER_RECEIVED':
+      return entrySide === 'credit' ? 'WALLET_TRANSFER_RECEIVED' : 'WALLET_TRANSFER_SENT';
+    case 'ADMIN_ADJUSTMENT':
+      return 'ADMIN_ADJUSTMENT';
+    case 'TREASURY_ISSUANCE':
+      return 'TREASURY_ISSUANCE';
+    case 'TASK_BUDGET_RESERVATION':
+    case 'TASK_BUDGET_RESERVE':
+      return 'TASK_BUDGET_RESERVE';
+    case 'TASK_BUDGET_REFUND':
+    case 'TASK_BUDGET_RETURN':
+      return 'TASK_BUDGET_RETURN';
+    case 'WITHDRAWAL_REQUEST':
+      return 'WITHDRAWAL_REQUEST';
+    case 'WITHDRAWAL_REFUND':
+      return 'WITHDRAWAL_REFUND';
+    case 'REFERRAL_REWARD':
+      return 'REFERRAL_REWARD';
+    case 'PROMOTIONAL_BONUS':
+      return 'PROMOTIONAL_BONUS';
+    default:
+      return (entrySide === 'credit' ? 'TASK_REWARD' : 'ADMIN_ADJUSTMENT') as TransactionType;
+  }
+}
+
+function mapTaskRow(t: any): TaskItem {
+  const rewardYer = Number(t.reward_units ?? t.reward_yer ?? 0);
+  const totalQuantity = Number(t.slots ?? t.total_quantity ?? 0);
+  const completedQuantity = Number(t.approved_count ?? t.completed_quantity ?? 0);
+  const budgetYer = Number(t.total_budget_units ?? t.budget_yer ?? rewardYer * totalQuantity);
+  const budgetSpentYer = Number(t.budget_spent_yer ?? completedQuantity * rewardYer);
+  const rawStatus = String(t.status || 'ACTIVE').toUpperCase();
+  const status: TaskItem['status'] =
+    rawStatus === 'PAUSED' || rawStatus === 'COMPLETED' || rawStatus === 'ARCHIVED'
+      ? rawStatus
+      : 'ACTIVE';
+
+  const rawReqs = t.proof_requirements || {};
+  const proofRequirements = {
+    requireImage: rawReqs.requireImage ?? rawReqs.require_image ?? false,
+    requireText: rawReqs.requireText ?? rawReqs.require_text ?? true,
+    requireUrl: rawReqs.requireUrl ?? rawReqs.require_url ?? false,
+    instructions: rawReqs.instructions,
+  };
+
+  return {
+    id: t.id,
+    title: t.title || '',
+    description: t.description || '',
+    category: (t.category || 'app_testing') as TaskItem['category'],
+    rewardYer,
+    steps: Array.isArray(t.steps) ? t.steps : [],
+    proofRequirements,
+    timeEstimateMinutes: Number(t.time_estimate_minutes ?? 10),
+    totalQuantity,
+    completedQuantity,
+    maxPerUser: Number(t.max_per_user ?? 1),
+    budgetYer,
+    budgetSpentYer,
+    deadline: t.deadline_at ?? t.deadline ?? undefined,
+    status,
+    createdBy: t.created_by,
+    createdAt: t.created_at,
+  };
 }
 
 export const supabaseDb = {
@@ -53,9 +139,9 @@ export const supabaseDb = {
    */
   async findUserById(id: string): Promise<UserProfile | null> {
     const startTime = Date.now();
+    const db = getDbClient();
     try {
-      // 1. Query 'profiles' table selecting only actual existing columns
-      const { data: profileData, error: profileErr } = await supabaseServer
+      const { data: profileData, error: profileErr } = await db
         .from('profiles')
         .select('id, full_name, phone, city, area_name, avatar_url, account_status, created_at, updated_at')
         .eq('id', id)
@@ -73,8 +159,7 @@ export const supabaseDb = {
 
       if (!profileData) return null;
 
-      // 2. Query 'user_roles' table and check error explicitly
-      const { data: roleData, error: roleErr } = await supabaseServer
+      const { data: roleData, error: roleErr } = await db
         .from('user_roles')
         .select('role')
         .eq('user_id', id)
@@ -90,10 +175,8 @@ export const supabaseDb = {
         throw roleErr;
       }
 
-      // Default role to lowest safe privilege 'user' if no role record exists (never grant admin by default)
       const userRole: UserRole = roleData?.role === 'admin' ? 'admin' : 'user';
 
-      // 3. Fetch Email safely using getSupabaseAdminClient() with explicit error handling
       let userEmail = '';
       try {
         const adminClient = getSupabaseAdminClient();
@@ -109,7 +192,6 @@ export const supabaseDb = {
           userEmail = authUserData.user.email;
         }
       } catch (keyErr: any) {
-        // If SERVICE_ROLE_KEY is unconfigured, log error safely without leaking secrets
         await logSupabaseError({
           err: keyErr,
           operation: 'FIND_USER_BY_ID_ADMIN_CLIENT_CHECK',
@@ -117,10 +199,8 @@ export const supabaseDb = {
         });
       }
 
-      // 4. Map account_status column to UserProfile status
       const accountStatus: AccountStatus = (profileData.account_status as AccountStatus) || 'active';
 
-      // 5. Construct UserProfile cleanly without assuming non-existent profile columns or inventing data
       return {
         id: profileData.id,
         fullName: profileData.full_name || '',
@@ -144,15 +224,29 @@ export const supabaseDb = {
   async findUserByPhoneOrEmail(identifier: string): Promise<UserProfile | null> {
     const startTime = Date.now();
     const clean = identifier.trim().toLowerCase();
+    const db = getDbClient();
     try {
-      let query = supabaseServer.from('profiles').select('*');
       if (clean.includes('@')) {
-        query = query.eq('email', clean);
-      } else {
-        query = query.eq('phone', identifier.trim());
+        try {
+          const adminClient = getSupabaseAdminClient();
+          const { data: authList } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+          const authUsers: any[] = (authList?.users as any[]) || [];
+          const matchedUser = authUsers.find((u) => String(u.email || '').trim().toLowerCase() === clean);
+          if (matchedUser?.id) {
+            return this.findUserById(matchedUser.id);
+          }
+          return null;
+        } catch {
+          return null;
+        }
       }
 
-      const { data, error } = await query.maybeSingle();
+      const { data, error } = await db
+        .from('profiles')
+        .select('id')
+        .eq('phone', identifier.trim())
+        .maybeSingle();
+
       if (error) {
         await logSupabaseError({
           err: error,
@@ -164,20 +258,7 @@ export const supabaseDb = {
       }
 
       if (!data) return null;
-      return {
-        id: data.id,
-        fullName: data.full_name,
-        phone: data.phone,
-        email: data.email,
-        avatarUrl: data.avatar_url || '',
-        role: data.role,
-        status: data.status,
-        referralCode: data.referral_code,
-        referredBy: data.referred_by,
-        city: data.city || 'صنعاء',
-        createdAt: data.created_at,
-        updatedAt: data.updated_at,
-      };
+      return this.findUserById(data.id);
     } catch (err: any) {
       console.error('[Supabase FIND_USER_BY_PHONE_OR_EMAIL]', err.message);
       throw new Error(`فشل البحث عن المستخدم في Supabase: ${err.message}`);
@@ -186,35 +267,56 @@ export const supabaseDb = {
 
   async getAllUsers(): Promise<UserProfile[]> {
     const startTime = Date.now();
+    const db = getDbClient();
     try {
-      const { data, error } = await supabaseServer
-        .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const [profilesRes, rolesRes] = await Promise.all([
+        db
+          .from('profiles')
+          .select('id, full_name, phone, city, area_name, avatar_url, account_status, created_at, updated_at')
+          .order('created_at', { ascending: false }),
+        db.from('user_roles').select('user_id, role'),
+      ]);
 
-      if (error) {
+      if (profilesRes.error) {
         await logSupabaseError({
-          err: error,
+          err: profilesRes.error,
           operation: 'GET_ALL_USERS',
           sourceTable: 'profiles',
           executionDurationMs: Date.now() - startTime,
         });
-        throw error;
+        throw profilesRes.error;
       }
 
-      return (data || []).map((p: any) => ({
+      const roleMap = new Map<string, UserRole>();
+      for (const r of rolesRes.data || []) {
+        roleMap.set(r.user_id, r.role === 'admin' ? 'admin' : 'user');
+      }
+
+      const emailMap = new Map<string, string>();
+      try {
+        const adminClient = getSupabaseAdminClient();
+        const { data: authList } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+        const authUsers: any[] = (authList?.users as any[]) || [];
+        for (const u of authUsers) {
+          if (u.email && u.id) emailMap.set(u.id, u.email);
+        }
+      } catch {
+        // Ignore if service role key is unavailable
+      }
+
+      return (profilesRes.data || []).map((p: any) => ({
         id: p.id,
-        fullName: p.full_name,
-        phone: p.phone,
-        email: p.email,
+        fullName: p.full_name || '',
+        phone: p.phone || '',
+        email: emailMap.get(p.id) || '',
         avatarUrl: p.avatar_url || '',
-        role: p.role,
-        status: p.status,
-        referralCode: p.referral_code,
-        referredBy: p.referred_by,
-        city: p.city || 'صنعاء',
-        createdAt: p.created_at,
-        updatedAt: p.updated_at,
+        role: roleMap.get(p.id) || 'user',
+        status: (p.account_status as AccountStatus) || 'active',
+        referralCode: '',
+        referredBy: undefined,
+        city: p.city || p.area_name || 'صنعاء',
+        createdAt: p.created_at || new Date().toISOString(),
+        updatedAt: p.updated_at || new Date().toISOString(),
       }));
     } catch (err: any) {
       console.error('[Supabase GET_ALL_USERS]', err.message);
@@ -224,10 +326,11 @@ export const supabaseDb = {
 
   async updateUserStatus(userId: string, status: 'active' | 'suspended' | 'under_review'): Promise<void> {
     const startTime = Date.now();
+    const db = getDbClient();
     try {
-      const { error } = await supabaseServer
+      const { error } = await db
         .from('profiles')
-        .update({ status, updated_at: new Date().toISOString() })
+        .update({ account_status: status, updated_at: new Date().toISOString() })
         .eq('id', userId);
 
       if (error) {
@@ -245,158 +348,210 @@ export const supabaseDb = {
   },
 
   /**
-   * 2. WALLETS & TRANSACTIONS
+   * 2. WALLETS & FINANCIAL ACCOUNTS (Double-Entry Ledger Backed)
    */
-  async getWallet(userId: string): Promise<UserWallet> {
+  async ensureUserFinancialAccount(userId: string): Promise<{
+    walletRow: any;
+    accountRow: any;
+  }> {
     const startTime = Date.now();
+    const cleanUserId = userId.trim();
+    const db = getDbClient();
 
-    // 1. Validate userId input
+    // 1. Fetch or create wallets row (live schema: id, user_id, wallet_address, status, created_at)
+    const { data: walletList, error: walletFetchErr } = await db
+      .from('wallets')
+      .select('id, user_id, wallet_address, status, created_at')
+      .eq('user_id', cleanUserId)
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    if (walletFetchErr) {
+      await logSupabaseError({
+        err: walletFetchErr,
+        operation: 'GET_WALLETS_FETCH',
+        sourceTable: 'wallets',
+        executionDurationMs: Date.now() - startTime,
+      });
+      throw walletFetchErr;
+    }
+
+    let walletRow = walletList && walletList.length > 0 ? walletList[0] : null;
+    if (!walletRow) {
+      const now = new Date().toISOString();
+      const newWallet = {
+        id: crypto.randomUUID(),
+        user_id: cleanUserId,
+        wallet_address: generateWalletAddress(cleanUserId),
+        status: 'active',
+        created_at: now,
+      };
+      const { data: insertedWallet, error: insertWalletErr } = await db
+        .from('wallets')
+        .insert(newWallet)
+        .select('id, user_id, wallet_address, status, created_at')
+        .maybeSingle();
+
+      if (insertWalletErr) {
+        const isDuplicate =
+          insertWalletErr.code === '23505' ||
+          String(insertWalletErr.message || '').toLowerCase().includes('duplicate');
+        if (isDuplicate) {
+          const { data: retryList } = await db
+            .from('wallets')
+            .select('id, user_id, wallet_address, status, created_at')
+            .eq('user_id', cleanUserId)
+            .order('created_at', { ascending: true })
+            .limit(1);
+          walletRow = retryList?.[0] || null;
+        } else {
+          await logSupabaseError({
+            err: insertWalletErr,
+            operation: 'CREATE_INITIAL_WALLET',
+            sourceTable: 'wallets',
+            executionDurationMs: Date.now() - startTime,
+          });
+          throw insertWalletErr;
+        }
+      } else {
+        walletRow = insertedWallet;
+      }
+    }
+
+    if (!walletRow) {
+      throw new Error('تعذر تهيئة سجل المحفظة في قاعدة البيانات.');
+    }
+
+    // 2. Fetch or create matching financial_accounts row (WALLET-<wallet.id>)
+    const { data: faList, error: faErr } = await db
+      .from('financial_accounts')
+      .select('id, account_code, account_type, owner_user_id, wallet_id, normal_side, balance_units, status, created_at')
+      .eq('account_type', 'wallet')
+      .or(`wallet_id.eq.${walletRow.id},owner_user_id.eq.${cleanUserId}`)
+      .limit(1);
+
+    if (faErr) {
+      await logSupabaseError({
+        err: faErr,
+        operation: 'GET_FINANCIAL_ACCOUNT_FETCH',
+        sourceTable: 'financial_accounts',
+        executionDurationMs: Date.now() - startTime,
+      });
+      throw faErr;
+    }
+
+    let accountRow = faList && faList.length > 0 ? faList[0] : null;
+    if (!accountRow) {
+      const now = new Date().toISOString();
+      const newFa = {
+        id: crypto.randomUUID(),
+        account_code: `WALLET-${walletRow.id}`,
+        account_type: 'wallet',
+        owner_user_id: cleanUserId,
+        wallet_id: walletRow.id,
+        normal_side: 'credit',
+        balance_units: 0,
+        status: 'active',
+        created_at: now,
+      };
+      const { data: insertedFa, error: insertFaErr } = await db
+        .from('financial_accounts')
+        .insert(newFa)
+        .select('id, account_code, account_type, owner_user_id, wallet_id, normal_side, balance_units, status, created_at')
+        .maybeSingle();
+
+      if (insertFaErr) {
+        const isDuplicate =
+          insertFaErr.code === '23505' ||
+          String(insertFaErr.message || '').toLowerCase().includes('duplicate');
+        if (isDuplicate) {
+          const { data: retryFa } = await db
+            .from('financial_accounts')
+            .select('id, account_code, account_type, owner_user_id, wallet_id, normal_side, balance_units, status, created_at')
+            .eq('account_type', 'wallet')
+            .eq('wallet_id', walletRow.id)
+            .limit(1);
+          accountRow = retryFa?.[0] || null;
+        } else {
+          await logSupabaseError({
+            err: insertFaErr,
+            operation: 'CREATE_FINANCIAL_ACCOUNT',
+            sourceTable: 'financial_accounts',
+            executionDurationMs: Date.now() - startTime,
+          });
+          throw insertFaErr;
+        }
+      } else {
+        accountRow = insertedFa;
+      }
+    }
+
+    if (!accountRow) {
+      throw new Error('تعذر تهيئة الحساب المالي المرتبط بالمحفظة.');
+    }
+
+    return { walletRow, accountRow };
+  },
+
+  async getWallet(userId: string): Promise<UserWallet> {
     if (!userId || typeof userId !== 'string' || !userId.trim()) {
       throw new Error('معرف المستخدم غير صالح للجلب من المحفظة.');
     }
     const cleanUserId = userId.trim();
+    const db = getDbClient();
 
     try {
-      // 2. Fetch existing wallet (limit 1 ordered by creation to prevent PGRST116 if duplicates exist prior to migration)
-      const { data: existingList, error: fetchErr } = await supabaseServer
-        .from('wallets')
-        .select('*')
-        .eq('user_id', cleanUserId)
-        .order('created_at', { ascending: true })
-        .limit(1);
+      const { walletRow, accountRow } = await this.ensureUserFinancialAccount(cleanUserId);
+      const availableBalance = Number(accountRow.balance_units || 0);
 
-      if (fetchErr) {
-        await logSupabaseError({
-          err: fetchErr,
-          operation: 'GET_WALLETS_FETCH',
-          sourceTable: 'wallets',
-          executionDurationMs: Date.now() - startTime,
-        });
-        throw fetchErr;
-      }
+      // Compute real earned & transferred totals from posted ledger_entries
+      let totalEarned = 0;
+      let totalTransferred = 0;
+      let totalWithdrawn = 0;
 
-      // 3. Return existing wallet if found
-      if (existingList && existingList.length > 0) {
-        const data = existingList[0];
-        return {
-          id: data.id,
-          userId: data.user_id,
-          walletAddress: data.wallet_address || generateWalletAddress(cleanUserId),
-          availableBalance: Number(data.available_balance ?? data.balance ?? 0),
-          pendingBalance: Number(data.pending_balance || 0),
-          reservedBalance: Number(data.reserved_balance || 0),
-          totalEarned: Number(data.total_earned || 0),
-          totalTransferred: Number(data.total_transferred || 0),
-          totalWithdrawn: Number(data.total_withdrawn || 0),
-          status: data.status || 'ACTIVE',
-          currency: 'YER',
-          createdAt: data.created_at,
-          updatedAt: data.updated_at,
-        };
-      }
+      const { data: entries } = await db
+        .from('ledger_entries')
+        .select('entry_side, amount_units, ledger_transactions(transaction_type)')
+        .eq('account_id', accountRow.id);
 
-      // 4. Attempt to create initial 0 YER wallet if none exists
-      const now = new Date().toISOString();
-      const newWalletAddress = generateWalletAddress(cleanUserId);
-      const newWallet: Record<string, any> = {
-        id: crypto.randomUUID(),
-        user_id: cleanUserId,
-        wallet_address: newWalletAddress,
-        balance: 0,
-        available_balance: 0,
-        pending_balance: 0,
-        reserved_balance: 0,
-        total_earned: 0,
-        total_transferred: 0,
-        total_withdrawn: 0,
-        currency: 'YER',
-        status: 'ACTIVE',
-        created_at: now,
-        updated_at: now,
-      };
-
-      let { data: created, error: insertError } = await supabaseServer
-        .from('wallets')
-        .insert(newWallet)
-        .select('*')
-        .maybeSingle();
-
-      // Gracefully handle column variation (available_balance vs balance)
-      if (insertError && (insertError.message?.includes('available_balance') || insertError.message?.includes('balance'))) {
-        delete newWallet.available_balance;
-        const fallback = await supabaseServer
-          .from('wallets')
-          .insert(newWallet)
-          .select('*')
-          .maybeSingle();
-        created = fallback.data;
-        insertError = fallback.error;
-      }
-
-      // 5. Concurrency Collision Handling (Duplicate Key 23505 / UNIQUE Constraint)
-      if (insertError) {
-        const isDuplicateCollision =
-          insertError.code === '23505' ||
-          insertError.message?.includes('duplicate key') ||
-          insertError.message?.includes('unique constraint') ||
-          insertError.message?.includes('wallets_user_id_key');
-
-        if (isDuplicateCollision) {
-          // Re-fetch existing wallet created by concurrent request
-          const { data: refetchedList, error: refetchErr } = await supabaseServer
-            .from('wallets')
-            .select('*')
-            .eq('user_id', cleanUserId)
-            .order('created_at', { ascending: true })
-            .limit(1);
-
-          if (!refetchErr && refetchedList && refetchedList.length > 0) {
-            const row = refetchedList[0];
-            return {
-              id: row.id,
-              userId: row.user_id,
-              walletAddress: row.wallet_address || newWalletAddress,
-              availableBalance: Number(row.available_balance ?? row.balance ?? 0),
-              pendingBalance: Number(row.pending_balance || 0),
-              reservedBalance: Number(row.reserved_balance || 0),
-              totalEarned: Number(row.total_earned || 0),
-              totalTransferred: Number(row.total_transferred || 0),
-              totalWithdrawn: Number(row.total_withdrawn || 0),
-              status: row.status || 'ACTIVE',
-              currency: 'YER',
-              createdAt: row.created_at,
-              updatedAt: row.updated_at,
-            };
-          }
+      for (const e of entries || []) {
+        const txType = String((e as any).ledger_transactions?.transaction_type || '').toUpperCase();
+        const amt = Number(e.amount_units || 0);
+        if (
+          e.entry_side === 'credit' &&
+          (txType === 'TASK_REWARD_PAYOUT' ||
+            txType === 'TASK_REWARD' ||
+            txType === 'REFERRAL_REWARD' ||
+            txType === 'PROMOTIONAL_BONUS')
+        ) {
+          totalEarned += amt;
         }
-
-        await logSupabaseError({
-          err: insertError,
-          operation: 'CREATE_INITIAL_WALLET',
-          sourceTable: 'wallets',
-          executionDurationMs: Date.now() - startTime,
-        });
-        throw insertError;
+        if (
+          e.entry_side === 'debit' &&
+          (txType === 'WALLET_TRANSFER' || txType === 'WALLET_TRANSFER_SENT')
+        ) {
+          totalTransferred += amt;
+        }
+        if (e.entry_side === 'debit' && txType === 'WITHDRAWAL_REQUEST') {
+          totalWithdrawn += amt;
+        }
       }
 
-      if (!created) {
-        throw new Error('لم يتم إرجاع بيانات المحفظة المنشأة حديثاً من خادم قاعدة البيانات.');
-      }
-
+      const rawStatus = String(walletRow.status || 'active').toUpperCase();
       return {
-        id: created.id,
-        userId: created.user_id,
-        walletAddress: created.wallet_address || newWalletAddress,
-        availableBalance: Number(created.available_balance ?? created.balance ?? 0),
-        pendingBalance: Number(created.pending_balance || 0),
-        reservedBalance: Number(created.reserved_balance || 0),
-        totalEarned: Number(created.total_earned || 0),
-        totalTransferred: Number(created.total_transferred || 0),
-        totalWithdrawn: Number(created.total_withdrawn || 0),
-        status: created.status || 'ACTIVE',
+        id: walletRow.id,
+        userId: walletRow.user_id,
+        walletAddress: walletRow.wallet_address || generateWalletAddress(cleanUserId),
+        availableBalance,
+        pendingBalance: 0,
+        reservedBalance: 0,
+        totalEarned,
+        totalTransferred,
+        totalWithdrawn,
+        status: rawStatus === 'SUSPENDED' ? 'SUSPENDED' : 'ACTIVE',
         currency: 'YER',
-        createdAt: created.created_at,
-        updatedAt: created.updated_at,
+        createdAt: walletRow.created_at,
+        updatedAt: walletRow.created_at,
       };
     } catch (err: any) {
       console.error('[Supabase GET_WALLET Error]', err.message);
@@ -406,38 +561,107 @@ export const supabaseDb = {
 
   async getTransactions(userId?: string): Promise<WalletTransaction[]> {
     const startTime = Date.now();
+    const db = getDbClient();
+
     try {
-      let query = supabaseServer.from('wallet_transactions').select('*').order('created_at', { ascending: false });
-      if (userId) {
-        query = query.eq('user_id', userId);
+      if (!userId) {
+        const { data: entries, error } = await db
+          .from('ledger_entries')
+          .select('id, transaction_id, account_id, entry_side, amount_units, memo, created_at, ledger_transactions(*), financial_accounts(owner_user_id)')
+          .order('created_at', { ascending: false })
+          .limit(200);
+
+        if (error) {
+          await logSupabaseError({
+            err: error,
+            operation: 'GET_ALL_TRANSACTIONS',
+            sourceTable: 'ledger_entries',
+            executionDurationMs: Date.now() - startTime,
+          });
+          return [];
+        }
+
+        return (entries || []).map((e: any) => {
+          const tx = e.ledger_transactions || {};
+          const amt = Number(e.amount_units || 0);
+          const signedAmount = e.entry_side === 'credit' ? amt : -amt;
+          return {
+            id: e.id,
+            userId: e.financial_accounts?.owner_user_id || '',
+            type: mapLedgerTxType(tx.transaction_type, e.entry_side),
+            amount: signedAmount,
+            previousBalance: 0,
+            newBalance: 0,
+            status: 'COMPLETED',
+            referenceId: tx.reference || tx.id,
+            idempotencyKey: tx.idempotency_key,
+            description:
+              e.memo ||
+              tx.metadata?.description ||
+              tx.metadata?.task_title ||
+              tx.metadata?.note ||
+              tx.transaction_type ||
+              'عملية مالية',
+            adminId: tx.created_by || undefined,
+            createdAt: e.created_at || tx.created_at,
+          };
+        });
       }
 
-      const { data, error } = await query;
+      const { accountRow } = await this.ensureUserFinancialAccount(userId);
+      const currentBalance = Number(accountRow.balance_units || 0);
+
+      const { data: entries, error } = await db
+        .from('ledger_entries')
+        .select('id, transaction_id, account_id, entry_side, amount_units, memo, created_at, ledger_transactions(*)')
+        .eq('account_id', accountRow.id)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
       if (error) {
         await logSupabaseError({
           err: error,
-          operation: 'GET_TRANSACTIONS',
-          sourceTable: 'wallet_transactions',
+          operation: 'GET_USER_TRANSACTIONS',
+          sourceTable: 'ledger_entries',
           executionDurationMs: Date.now() - startTime,
         });
-        // If table is missing or empty, return empty list gracefully
         return [];
       }
 
-      return (data || []).map((t: any) => ({
-        id: t.id,
-        userId: t.user_id,
-        type: t.type,
-        amount: Number(t.amount || 0),
-        previousBalance: Number(t.previous_balance || 0),
-        newBalance: Number(t.new_balance || 0),
-        status: t.status,
-        referenceId: t.reference_id,
-        idempotencyKey: t.idempotency_key,
-        description: t.description,
-        adminId: t.admin_id,
-        createdAt: t.created_at,
-      }));
+      // Compute exact running previousBalance & newBalance backwards from current balance_units
+      let runningBalance = currentBalance;
+      return (entries || []).map((e: any) => {
+        const tx = e.ledger_transactions || {};
+        const amt = Number(e.amount_units || 0);
+        const signedAmount = e.entry_side === 'credit' ? amt : -amt;
+        const newBal = runningBalance;
+        const prevBal = Math.max(0, runningBalance - signedAmount);
+        runningBalance = prevBal;
+
+        const mappedType = mapLedgerTxType(tx.transaction_type, e.entry_side);
+        const desc =
+          e.memo ||
+          (tx.metadata?.task_title ? `مكافأة إنجاز مهمة: ${tx.metadata.task_title}` : undefined) ||
+          tx.metadata?.description ||
+          tx.metadata?.note ||
+          tx.reference ||
+          mappedType;
+
+        return {
+          id: e.id,
+          userId,
+          type: mappedType,
+          amount: signedAmount,
+          previousBalance: prevBal,
+          newBalance: newBal,
+          status: 'COMPLETED',
+          referenceId: tx.reference || tx.metadata?.submission_id || tx.id,
+          idempotencyKey: tx.idempotency_key,
+          description: desc,
+          adminId: tx.created_by || undefined,
+          createdAt: e.created_at || tx.created_at,
+        };
+      });
     } catch (err: any) {
       console.error('[Supabase GET_TRANSACTIONS]', err.message);
       return [];
@@ -445,45 +669,14 @@ export const supabaseDb = {
   },
 
   /**
-   * 3. TASKS
+   * 3. TASKS (Escrow-Backed Creation via create_funded_task)
    */
   async getTasks(params?: { category?: string; search?: string }): Promise<TaskItem[]> {
     const startTime = Date.now();
-    const mapRow = (t: any): TaskItem => {
-      const rewardYer = Number(t.reward_units ?? t.reward_yer ?? 0);
-      const totalQuantity = Number(t.slots ?? t.total_quantity ?? 0);
-      const completedQuantity = Number(t.approved_count ?? t.completed_quantity ?? 0);
-      const budgetYer = Number(t.total_budget_units ?? t.budget_yer ?? rewardYer * totalQuantity);
-      const budgetSpentYer = Number(t.budget_spent_yer ?? completedQuantity * rewardYer);
-      const rawStatus = String(t.status || 'ACTIVE').toUpperCase();
-      const status: TaskItem['status'] =
-        rawStatus === 'PAUSED' || rawStatus === 'COMPLETED' || rawStatus === 'ARCHIVED'
-          ? rawStatus
-          : 'ACTIVE';
-
-      return {
-        id: t.id,
-        title: t.title || '',
-        description: t.description || '',
-        category: (t.category || 'app_testing') as TaskItem['category'],
-        rewardYer,
-        steps: Array.isArray(t.steps) ? t.steps : [],
-        proofRequirements: t.proof_requirements || { requireImage: true, requireText: true },
-        timeEstimateMinutes: Number(t.time_estimate_minutes ?? 10),
-        totalQuantity,
-        completedQuantity,
-        maxPerUser: Number(t.max_per_user ?? 1),
-        budgetYer,
-        budgetSpentYer,
-        deadline: t.deadline_at ?? t.deadline ?? undefined,
-        status,
-        createdBy: t.created_by,
-        createdAt: t.created_at,
-      };
-    };
+    const db = getDbClient();
 
     const buildQuery = (applyCategoryFilter: boolean) => {
-      let query = supabaseServer
+      let query = db
         .from('tasks')
         .select('*')
         .in('status', ['active', 'ACTIVE']);
@@ -501,7 +694,6 @@ export const supabaseDb = {
       const shouldFilterCategoryInSql = Boolean(params?.category && params.category !== 'all');
       let { data, error } = await buildQuery(shouldFilterCategoryInSql);
 
-      // Graceful fallback if tasks.category column does not exist in the target schema
       if (
         error &&
         shouldFilterCategoryInSql &&
@@ -524,7 +716,7 @@ export const supabaseDb = {
         throw error;
       }
 
-      let mapped = (data || []).map(mapRow);
+      let mapped = (data || []).map(mapTaskRow);
       if (params?.category && params.category !== 'all') {
         mapped = mapped.filter((t) => t.category === params.category);
       }
@@ -537,8 +729,9 @@ export const supabaseDb = {
 
   async getAllAdminTasks(): Promise<TaskItem[]> {
     const startTime = Date.now();
+    const db = getDbClient();
     try {
-      const { data, error } = await supabaseServer
+      const { data, error } = await db
         .from('tasks')
         .select('*')
         .order('created_at', { ascending: false });
@@ -553,44 +746,16 @@ export const supabaseDb = {
         throw error;
       }
 
-      return (data || []).map((t: any) => {
-        const rewardYer = Number(t.reward_units ?? t.reward_yer ?? 0);
-        const totalQuantity = Number(t.slots ?? t.total_quantity ?? 0);
-        const completedQuantity = Number(t.approved_count ?? t.completed_quantity ?? 0);
-        const rawStatus = String(t.status || 'ACTIVE').toUpperCase();
-        const status: TaskItem['status'] =
-          rawStatus === 'PAUSED' || rawStatus === 'COMPLETED' || rawStatus === 'ARCHIVED'
-            ? rawStatus
-            : 'ACTIVE';
-
-        return {
-          id: t.id,
-          title: t.title || '',
-          description: t.description || '',
-          category: (t.category || 'app_testing') as TaskItem['category'],
-          rewardYer,
-          steps: Array.isArray(t.steps) ? t.steps : [],
-          proofRequirements: t.proof_requirements || { requireImage: true, requireText: true },
-          timeEstimateMinutes: Number(t.time_estimate_minutes ?? 10),
-          totalQuantity,
-          completedQuantity,
-          maxPerUser: Number(t.max_per_user ?? 1),
-          budgetYer: Number(t.total_budget_units ?? t.budget_yer ?? rewardYer * totalQuantity),
-          budgetSpentYer: Number(t.budget_spent_yer ?? completedQuantity * rewardYer),
-          deadline: t.deadline_at ?? t.deadline ?? undefined,
-          status,
-          createdBy: t.created_by,
-          createdAt: t.created_at,
-        };
-      });
+      return (data || []).map(mapTaskRow);
     } catch (err: any) {
       throw new Error(`فشل جلب مهام المدير من Supabase: ${err.message}`);
     }
   },
 
   async getTaskById(id: string): Promise<TaskItem | null> {
+    const db = getDbClient();
     try {
-      const { data, error } = await supabaseServer
+      const { data, error } = await db
         .from('tasks')
         .select('*')
         .eq('id', id)
@@ -599,118 +764,61 @@ export const supabaseDb = {
       if (error) throw error;
       if (!data) return null;
 
-      const rewardYer = Number(data.reward_units ?? data.reward_yer ?? 0);
-      const totalQuantity = Number(data.slots ?? data.total_quantity ?? 0);
-      const completedQuantity = Number(data.approved_count ?? data.completed_quantity ?? 0);
-      const rawStatus = String(data.status || 'ACTIVE').toUpperCase();
-      const status: TaskItem['status'] =
-        rawStatus === 'PAUSED' || rawStatus === 'COMPLETED' || rawStatus === 'ARCHIVED'
-          ? rawStatus
-          : 'ACTIVE';
-
-      return {
-        id: data.id,
-        title: data.title || '',
-        description: data.description || '',
-        category: (data.category || 'app_testing') as TaskItem['category'],
-        rewardYer,
-        steps: Array.isArray(data.steps) ? data.steps : [],
-        proofRequirements: data.proof_requirements || { requireImage: true, requireText: true },
-        timeEstimateMinutes: Number(data.time_estimate_minutes ?? 10),
-        totalQuantity,
-        completedQuantity,
-        maxPerUser: Number(data.max_per_user ?? 1),
-        budgetYer: Number(data.total_budget_units ?? data.budget_yer ?? rewardYer * totalQuantity),
-        budgetSpentYer: Number(data.budget_spent_yer ?? completedQuantity * rewardYer),
-        deadline: data.deadline_at ?? data.deadline ?? undefined,
-        status,
-        createdBy: data.created_by,
-        createdAt: data.created_at,
-      };
+      return mapTaskRow(data);
     } catch (err: any) {
       throw new Error(`فشل جلب تفاصيل المهمة من Supabase: ${err.message}`);
     }
   },
 
-  async createTask(taskData: any): Promise<TaskItem> {
+  async createTask(taskData: {
+    title: string;
+    description: string;
+    category?: string;
+    rewardYer: number;
+    totalQuantity: number;
+    deadline?: string;
+    creationKey?: string;
+    authToken?: string;
+  }): Promise<TaskItem> {
     const startTime = Date.now();
-    const taskId = crypto.randomUUID();
-    const rewardUnits = Number(taskData.rewardYer);
-    const slots = Number(taskData.totalQuantity);
-    const totalBudgetUnits = rewardUnits * slots;
-    const now = new Date().toISOString();
+    if (!taskData.authToken) {
+      throw new Error('جلسة المدير المطلوبة لتمويل المهمة من الخزينة غير متوفرة.');
+    }
 
-    const taskRow: Record<string, any> = {
-      id: taskId,
-      title: taskData.title,
-      description: taskData.description,
-      category: taskData.category || 'app_testing',
-      reward_units: rewardUnits,
-      slots,
-      approved_count: 0,
-      total_budget_units: totalBudgetUnits,
-      refunded_units: 0,
-      deadline_at: taskData.deadline || null,
-      creation_key: `task_${taskId}`,
-      status: 'active',
-      created_by: taskData.createdBy || null,
-      created_at: now,
-    };
+    const rewardUnits = Math.round(Number(taskData.rewardYer));
+    const slots = Math.round(Number(taskData.totalQuantity));
+    if (!Number.isFinite(rewardUnits) || rewardUnits <= 0 || !Number.isFinite(slots) || slots <= 0) {
+      throw new Error('يجب أن تكون مكافأة المهمة وعدد المقاعد أعداداً صحيحة أكبر من صفر.');
+    }
+
+    const creationKey = taskData.creationKey?.trim() || `TASK-${crypto.randomUUID()}`;
 
     try {
-      let { data, error } = await supabaseServer
-        .from('tasks')
-        .insert(taskRow)
-        .select('*')
-        .single();
+      const userClient = getSupabaseUserClient(taskData.authToken);
+      const { data: createdTaskId, error } = await userClient.rpc('create_funded_task', {
+        p_title: taskData.title.trim(),
+        p_description: taskData.description.trim(),
+        p_reward_units: rewardUnits,
+        p_slots: slots,
+        p_creation_key: creationKey,
+        p_deadline_at: taskData.deadline || null,
+      });
 
-      // Fallback if category column is absent
-      if (
-        error &&
-        (error.code === '42703' ||
-          error.code === 'PGRST204' ||
-          String(error.message || '').toLowerCase().includes('category'))
-      ) {
-        const rowWithoutCategory = { ...taskRow };
-        delete rowWithoutCategory.category;
-        const retry = await supabaseServer
-          .from('tasks')
-          .insert(rowWithoutCategory)
-          .select('*')
-          .single();
-        data = retry.data;
-        error = retry.error;
-      }
-
-      if (error) {
+      if (error || !createdTaskId) {
         await logSupabaseError({
-          err: error,
-          operation: 'CREATE_TASK',
+          err: error || 'create_funded_task returned null',
+          operation: 'CREATE_FUNDED_TASK_RPC',
           sourceTable: 'tasks',
           executionDurationMs: Date.now() - startTime,
         });
-        throw error;
+        throw new Error(error?.message || 'فشل إنشاء المهمة وحجز ميزانيتها في حساب الضمان (ESCROW).');
       }
 
-      return {
-        id: data.id,
-        title: data.title,
-        description: data.description,
-        category: (data.category || taskData.category || 'app_testing') as TaskItem['category'],
-        rewardYer: Number(data.reward_units ?? data.reward_yer ?? rewardUnits),
-        steps: Array.isArray(data.steps) ? data.steps : (taskData.steps || []),
-        proofRequirements: data.proof_requirements || taskData.proofRequirements || { requireImage: true, requireText: true },
-        timeEstimateMinutes: Number(data.time_estimate_minutes ?? taskData.timeEstimateMinutes ?? 10),
-        totalQuantity: Number(data.slots ?? data.total_quantity ?? slots),
-        completedQuantity: Number(data.approved_count ?? data.completed_quantity ?? 0),
-        maxPerUser: Number(data.max_per_user ?? taskData.maxPerUser ?? 1),
-        budgetYer: Number(data.total_budget_units ?? data.budget_yer ?? totalBudgetUnits),
-        budgetSpentYer: Number(data.budget_spent_yer ?? 0),
-        deadline: data.deadline_at ?? data.deadline ?? undefined,
-        status: String(data.status || 'ACTIVE').toUpperCase() as TaskItem['status'],
-        createdBy: data.created_by,
-        createdAt: data.created_at,
-      };
+      const task = await this.getTaskById(String(createdTaskId));
+      if (!task) {
+        throw new Error('تم إنشاء المهمة لكن تعذر قراءة بياناتها.');
+      }
+      return task;
     } catch (err: any) {
       throw new Error(`فشل إنشاء المهمة في Supabase: ${err.message}`);
     }
@@ -722,84 +830,206 @@ export const supabaseDb = {
   async submitTaskProof(payload: {
     taskId: string;
     userId: string;
+    authToken?: string;
     proofText?: string;
     proofImages?: string[];
     proofUrl?: string;
   }): Promise<TaskSubmission> {
     const startTime = Date.now();
+    const db = getDbClient();
+
     try {
-      // Check duplicate submissions
-      const { data: existing } = await supabaseServer
+      if (!payload.taskId || !payload.userId) {
+        throw new Error('معرف المهمة ومعرف المستخدم مطلوبان لإرسال الإثبات.');
+      }
+
+      // 1. Verify task exists and is active & available
+      const { data: taskData, error: taskError } = await db
+        .from('tasks')
+        .select('*')
+        .eq('id', payload.taskId)
+        .maybeSingle();
+
+      if (taskError) {
+        await logSupabaseError({
+          err: taskError,
+          operation: 'SUBMIT_TASK_PROOF_CHECK_TASK',
+          sourceTable: 'tasks',
+          executionDurationMs: Date.now() - startTime,
+        });
+        throw taskError;
+      }
+
+      if (!taskData) {
+        throw new Error('المهمة المطلوبة غير موجودة.');
+      }
+
+      const taskStatus = String(taskData.status || '').toUpperCase();
+      if (taskStatus !== 'ACTIVE') {
+        throw new Error('هذه المهمة غير نشطة أو غير متاحة حالياً للتنفيذ.');
+      }
+
+      const totalQty = Number(taskData.total_quantity ?? taskData.slots ?? 0);
+      const completedQty = Number(taskData.completed_quantity ?? taskData.approved_count ?? 0);
+      if (totalQty > 0 && completedQty >= totalQty) {
+        throw new Error('تم استيفاء العدد المطلوب لهذه المهمة ولم تعد متاحة.');
+      }
+
+      const deadline = taskData.deadline ?? taskData.deadline_at;
+      if (deadline && new Date(deadline).getTime() < Date.now()) {
+        throw new Error('انتهت مهلة تنفيذ هذه المهمة.');
+      }
+
+      // 2. Sanitize and validate proof fields
+      const cleanProofText =
+        typeof payload.proofText === 'string' && payload.proofText.trim().length > 0
+          ? payload.proofText.trim()
+          : undefined;
+
+      const cleanProofImages: string[] = Array.isArray(payload.proofImages)
+        ? payload.proofImages
+            .filter((img): img is string => typeof img === 'string' && img.trim().length > 0)
+            .map((img) => img.trim())
+        : [];
+
+      const cleanProofUrl =
+        typeof payload.proofUrl === 'string' && payload.proofUrl.trim().length > 0
+          ? payload.proofUrl.trim()
+          : undefined;
+
+      if (!cleanProofText && cleanProofImages.length === 0 && !cleanProofUrl) {
+        throw new Error('يرجى تقديم نص الإثبات أو صورة أو رابط قبل الإرسال.');
+      }
+
+      // 3. Check duplicate submission (block pending/under_review/approved; allow resubmission if rejected)
+      const { data: existingList, error: existingError } = await db
         .from('task_submissions')
         .select('id, status')
         .eq('task_id', payload.taskId)
         .eq('user_id', payload.userId)
-        .maybeSingle();
+        .order('created_at', { ascending: false });
 
-      if (existing) {
-        const existingStatus = String(existing.status || '').toUpperCase();
-        if (existingStatus === 'APPROVED') {
+      if (existingError) {
+        await logSupabaseError({
+          err: existingError,
+          operation: 'SUBMIT_TASK_PROOF_CHECK_DUPLICATE',
+          sourceTable: 'task_submissions',
+          executionDurationMs: Date.now() - startTime,
+        });
+        throw existingError;
+      }
+
+      if (existingList && existingList.length > 0) {
+        const statuses = existingList.map((row: any) => String(row.status || '').toUpperCase());
+        if (statuses.includes('APPROVED')) {
           throw new Error('لقد أنجزت هذه المهمة بالفعل واستلمت مكافأتها مسبقاً.');
         }
-        if (existingStatus === 'PENDING' || existingStatus === 'UNDER_REVIEW') {
+        if (statuses.includes('PENDING') || statuses.includes('UNDER_REVIEW')) {
           throw new Error('لديك إثبات قيد المراجعة لهذه المهمة بالفعل.');
         }
       }
 
-      const submissionId = crypto.randomUUID();
-      const now = new Date().toISOString();
-      const proofPayload = {
-        text: payload.proofText || null,
-        images: payload.proofImages || [],
-        url: payload.proofUrl || null,
-      };
+      // 4. Build JSONB proof payload matching live task_submissions.proof schema
+      const proofPayload: Record<string, any> = {};
+      if (cleanProofText) proofPayload.text = cleanProofText;
+      if (cleanProofUrl) proofPayload.url = cleanProofUrl;
+      if (cleanProofImages.length > 0) proofPayload.images = cleanProofImages;
 
-      const subRow = {
-        id: submissionId,
-        task_id: payload.taskId,
-        user_id: payload.userId,
-        proof: proofPayload,
-        status: 'pending',
-        created_at: now,
-      };
+      let submissionId: string | null = null;
 
-      let { data, error } = await supabaseServer
+      if (payload.authToken) {
+        const userClient = getSupabaseUserClient(payload.authToken);
+        const { data: rpcId, error: rpcErr } = await userClient.rpc('submit_task_proof', {
+          p_task_id: payload.taskId,
+          p_proof: proofPayload,
+        });
+
+        if (rpcErr) {
+          // Pre-migration 010 live DB rejects `images` key in submit_task_proof RPC;
+          // insert directly into `task_submissions.proof` only for that exact legacy constraint.
+          const msg = String(rpcErr.message || '');
+          if (msg.includes('Unsupported proof field') && cleanProofImages.length > 0) {
+            const { data: insertedSub, error: insertErr } = await db
+              .from('task_submissions')
+              .insert({
+                task_id: payload.taskId,
+                user_id: payload.userId,
+                proof: proofPayload,
+                status: 'pending',
+                created_at: new Date().toISOString(),
+              })
+              .select('id')
+              .single();
+
+            if (insertErr) {
+              await logSupabaseError({
+                err: insertErr,
+                operation: 'SUBMIT_TASK_PROOF_FALLBACK_INSERT',
+                sourceTable: 'task_submissions',
+                executionDurationMs: Date.now() - startTime,
+              });
+              throw insertErr;
+            }
+            submissionId = insertedSub.id;
+          } else {
+            await logSupabaseError({
+              err: rpcErr,
+              operation: 'SUBMIT_TASK_PROOF_RPC',
+              sourceTable: 'task_submissions',
+              executionDurationMs: Date.now() - startTime,
+            });
+            throw rpcErr;
+          }
+        } else {
+          submissionId = String(rpcId);
+        }
+      } else {
+        const { data: insertedSub, error: insertErr } = await db
+          .from('task_submissions')
+          .insert({
+            task_id: payload.taskId,
+            user_id: payload.userId,
+            proof: proofPayload,
+            status: 'pending',
+            created_at: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+
+        if (insertErr) throw insertErr;
+        submissionId = insertedSub.id;
+      }
+
+      const { data: createdRow, error: fetchErr } = await db
         .from('task_submissions')
-        .insert(subRow)
         .select('*')
+        .eq('id', submissionId!)
         .single();
 
-      if (error && String(error.message || '').toLowerCase().includes('status')) {
-        const retry = await supabaseServer
-          .from('task_submissions')
-          .insert({ ...subRow, status: 'PENDING' })
-          .select('*')
-          .single();
-        data = retry.data;
-        error = retry.error;
+      if (fetchErr || !createdRow) {
+        throw fetchErr || new Error('تعذر جلب الإثبات بعد إنشائه.');
       }
 
-      if (error) {
-        await logSupabaseError({
-          err: error,
-          operation: 'SUBMIT_TASK_PROOF',
-          sourceTable: 'task_submissions',
-          executionDurationMs: Date.now() - startTime,
-        });
-        throw error;
-      }
-
-      const parsedProof = typeof data.proof === 'string' ? (() => { try { return JSON.parse(data.proof); } catch { return { text: data.proof }; } })() : (data.proof || {});
-
+      const proofObj = createdRow.proof && typeof createdRow.proof === 'object' ? createdRow.proof : {};
       return {
-        id: data.id,
-        taskId: data.task_id,
-        userId: data.user_id,
-        proofText: parsedProof.text ?? data.proof_text ?? payload.proofText,
-        proofImages: Array.isArray(parsedProof.images) ? parsedProof.images : (data.proof_images || payload.proofImages || []),
-        proofUrl: parsedProof.url ?? data.proof_url ?? payload.proofUrl,
-        status: String(data.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
-        createdAt: data.created_at,
+        id: createdRow.id,
+        taskId: createdRow.task_id,
+        userId: createdRow.user_id,
+        taskTitle: taskData.title || 'مهمة مصغرة',
+        taskRewardYer: Number(taskData.reward_units ?? taskData.reward_yer ?? 0),
+        proofText: proofObj.text ?? createdRow.proof_text ?? undefined,
+        proofImages: Array.isArray(proofObj.images)
+          ? proofObj.images
+          : Array.isArray(createdRow.proof_images)
+            ? createdRow.proof_images
+            : [],
+        proofUrl: proofObj.url ?? createdRow.proof_url ?? undefined,
+        status: String(createdRow.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
+        rejectionReason: createdRow.review_note ?? createdRow.rejection_reason ?? undefined,
+        reviewedBy: createdRow.reviewed_by ?? undefined,
+        reviewedAt: createdRow.reviewed_at ?? undefined,
+        rewardTransactionId: createdRow.reward_transaction_id ?? undefined,
+        createdAt: createdRow.created_at,
       };
     } catch (err: any) {
       throw new Error(`فشل إرسال إثبات المهمة إلى Supabase: ${err.message}`);
@@ -807,31 +1037,36 @@ export const supabaseDb = {
   },
 
   async getMySubmissions(userId: string): Promise<TaskSubmission[]> {
+    const db = getDbClient();
     try {
-      const { data, error } = await supabaseServer
+      const { data, error } = await db
         .from('task_submissions')
-        .select('*, tasks(title, reward_units)')
+        .select('*, tasks(*)')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
       return (data || []).map((s: any) => {
-        const parsedProof = typeof s.proof === 'string' ? (() => { try { return JSON.parse(s.proof); } catch { return { text: s.proof }; } })() : (s.proof || {});
+        const proofObj = s.proof && typeof s.proof === 'object' ? s.proof : {};
         return {
           id: s.id,
           taskId: s.task_id,
           userId: s.user_id,
           taskTitle: s.tasks?.title || 'مهمة مصغرة',
           taskRewardYer: Number(s.tasks?.reward_units ?? s.tasks?.reward_yer ?? 0),
-          proofText: parsedProof.text ?? s.proof_text,
-          proofImages: Array.isArray(parsedProof.images) ? parsedProof.images : (s.proof_images || []),
-          proofUrl: parsedProof.url ?? s.proof_url,
+          proofText: proofObj.text ?? s.proof_text ?? undefined,
+          proofImages: Array.isArray(proofObj.images)
+            ? proofObj.images
+            : Array.isArray(s.proof_images)
+              ? s.proof_images
+              : [],
+          proofUrl: proofObj.url ?? s.proof_url ?? undefined,
           status: String(s.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
-          rejectionReason: s.review_note ?? s.rejection_reason,
-          reviewedBy: s.reviewed_by,
-          reviewedAt: s.reviewed_at,
-          rewardTransactionId: s.reward_transaction_id,
+          rejectionReason: s.review_note ?? s.rejection_reason ?? undefined,
+          reviewedBy: s.reviewed_by ?? undefined,
+          reviewedAt: s.reviewed_at ?? undefined,
+          rewardTransactionId: s.reward_transaction_id ?? undefined,
           createdAt: s.created_at,
         };
       });
@@ -842,32 +1077,49 @@ export const supabaseDb = {
   },
 
   async getAllSubmissions(): Promise<TaskSubmission[]> {
+    const db = getDbClient();
     try {
-      const { data, error } = await supabaseServer
-        .from('task_submissions')
-        .select('*, profiles(full_name, phone), tasks(title, reward_units)')
-        .order('created_at', { ascending: false });
+      const [subsRes, profilesRes] = await Promise.all([
+        db
+          .from('task_submissions')
+          .select('*, tasks(*)')
+          .order('created_at', { ascending: false }),
+        db.from('profiles').select('id, full_name, phone'),
+      ]);
 
-      if (error) throw error;
+      if (subsRes.error) throw subsRes.error;
 
-      return (data || []).map((s: any) => {
-        const parsedProof = typeof s.proof === 'string' ? (() => { try { return JSON.parse(s.proof); } catch { return { text: s.proof }; } })() : (s.proof || {});
+      const profileMap = new Map<string, { fullName: string; phone: string }>();
+      for (const p of profilesRes.data || []) {
+        profileMap.set(p.id, {
+          fullName: p.full_name || 'مستخدم',
+          phone: p.phone || '',
+        });
+      }
+
+      return (subsRes.data || []).map((s: any) => {
+        const proofObj = s.proof && typeof s.proof === 'object' ? s.proof : {};
+        const prof = profileMap.get(s.user_id);
         return {
           id: s.id,
           taskId: s.task_id,
           userId: s.user_id,
-          userFullName: s.profiles?.full_name || 'مستخدم',
-          userPhone: s.profiles?.phone || '',
+          userFullName: prof?.fullName || 'مستخدم',
+          userPhone: prof?.phone || '',
           taskTitle: s.tasks?.title || 'مهمة مصغرة',
           taskRewardYer: Number(s.tasks?.reward_units ?? s.tasks?.reward_yer ?? 0),
-          proofText: parsedProof.text ?? s.proof_text,
-          proofImages: Array.isArray(parsedProof.images) ? parsedProof.images : (s.proof_images || []),
-          proofUrl: parsedProof.url ?? s.proof_url,
+          proofText: proofObj.text ?? s.proof_text ?? undefined,
+          proofImages: Array.isArray(proofObj.images)
+            ? proofObj.images
+            : Array.isArray(s.proof_images)
+              ? s.proof_images
+              : [],
+          proofUrl: proofObj.url ?? s.proof_url ?? undefined,
           status: String(s.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
-          rejectionReason: s.review_note ?? s.rejection_reason,
-          reviewedBy: s.reviewed_by,
-          reviewedAt: s.reviewed_at,
-          rewardTransactionId: s.reward_transaction_id,
+          rejectionReason: s.review_note ?? s.rejection_reason ?? undefined,
+          reviewedBy: s.reviewed_by ?? undefined,
+          reviewedAt: s.reviewed_at ?? undefined,
+          rewardTransactionId: s.reward_transaction_id ?? undefined,
           createdAt: s.created_at,
         };
       });
@@ -878,7 +1130,117 @@ export const supabaseDb = {
   },
 
   /**
-   * 5. PLATFORM SETTINGS
+   * 5. TREASURY & DOUBLE-ENTRY LEDGER (Live financial_accounts & ledger_transactions)
+   */
+  async getTreasurySummary(): Promise<TreasurySummary> {
+    const db = getDbClient();
+    const [accountsRes, tasksRes] = await Promise.all([
+      db
+        .from('financial_accounts')
+        .select('id, account_code, account_type, balance_units, status'),
+      db
+        .from('tasks')
+        .select('status, total_budget_units, approved_count, reward_units, budget_spent_yer'),
+    ]);
+
+    if (accountsRes.error) {
+      throw new Error(`فشل قراءة حسابات الخزينة من Supabase: ${accountsRes.error.message}`);
+    }
+
+    const accounts = accountsRes.data || [];
+    const issuanceAcc = accounts.find((a: any) => a.account_code === 'VIRTUAL-ISSUANCE-CONTROL');
+    const treasuryAcc = accounts.find((a: any) => a.account_code === 'PLATFORM-TREASURY');
+
+    const totalIssuedUnits = Number(issuanceAcc?.balance_units || 0);
+    const treasuryAvailable = Number(treasuryAcc?.balance_units || 0);
+    const taskBudgetReserved = accounts
+      .filter((a: any) => String(a.account_code || '').startsWith('TASK-ESCROW-'))
+      .reduce((sum: number, a: any) => sum + Number(a.balance_units || 0), 0);
+    const userAvailableTotal = accounts
+      .filter((a: any) => a.account_type === 'wallet')
+      .reduce((sum: number, a: any) => sum + Number(a.balance_units || 0), 0);
+
+    const activeTasksBudgetTotal = (tasksRes.data || [])
+      .filter((t: any) => String(t.status || '').toLowerCase() === 'active')
+      .reduce((sum: number, t: any) => {
+        const spent = Number(t.budget_spent_yer ?? Number(t.approved_count || 0) * Number(t.reward_units || 0));
+        return sum + Math.max(0, Number(t.total_budget_units || 0) - spent);
+      }, 0);
+
+    const reconciledSum = treasuryAvailable + taskBudgetReserved + userAvailableTotal;
+
+    return {
+      totalIssuedUnits,
+      treasuryAvailable,
+      taskBudgetReserved,
+      userAvailableTotal,
+      userPendingTotal: 0,
+      withdrawalReservedTotal: 0,
+      isReconciled: totalIssuedUnits > 0 ? reconciledSum === totalIssuedUnits : true,
+      activeTasksBudgetTotal,
+    };
+  },
+
+  async getLedgerTransactions(limit = 100, offset = 0): Promise<LedgerTransaction[]> {
+    const db = getDbClient();
+    const { data: txs, error: txErr } = await db
+      .from('ledger_transactions')
+      .select('id, transaction_type, reference, idempotency_key, status, metadata, created_by, created_at')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (txErr) {
+      throw new Error(`فشل قراءة قيود دفتر الأستاذ من Supabase: ${txErr.message}`);
+    }
+
+    const txIds = (txs || []).map((t: any) => t.id);
+    const entriesByTx = new Map<string, any[]>();
+    if (txIds.length > 0) {
+      const { data: entries } = await db
+        .from('ledger_entries')
+        .select('id, transaction_id, account_id, entry_side, amount_units, memo, created_at')
+        .in('transaction_id', txIds);
+
+      for (const e of entries || []) {
+        const arr = entriesByTx.get(e.transaction_id) || [];
+        arr.push(e);
+        entriesByTx.set(e.transaction_id, arr);
+      }
+    }
+
+    return (txs || []).map((tx: any) => {
+      const txEntries = entriesByTx.get(tx.id) || [];
+      const firstMemo = txEntries.find((e: any) => e.memo)?.memo;
+      const metaDesc =
+        tx.metadata?.description ||
+        (tx.metadata?.task_title ? `${tx.transaction_type}: ${tx.metadata.task_title}` : undefined) ||
+        tx.metadata?.note ||
+        firstMemo ||
+        tx.reference ||
+        tx.transaction_type;
+
+      return {
+        id: tx.id,
+        transactionType: tx.transaction_type,
+        referenceId: tx.reference || tx.id,
+        idempotencyKey: tx.idempotency_key,
+        description: metaDesc,
+        createdBy: tx.created_by,
+        createdAt: tx.created_at,
+        entries: txEntries.map((e: any) => ({
+          id: e.id,
+          transactionId: e.transaction_id,
+          accountId: e.account_id,
+          debitAmount: e.entry_side === 'debit' ? Number(e.amount_units || 0) : 0,
+          creditAmount: e.entry_side === 'credit' ? Number(e.amount_units || 0) : 0,
+          createdAt: e.created_at,
+        })),
+      };
+    });
+  },
+
+  /**
+   * 6. PLATFORM SETTINGS
    */
   async getSettings(): Promise<PlatformSettings> {
     const defaultSettings: PlatformSettings = {
@@ -899,33 +1261,38 @@ export const supabaseDb = {
     };
 
     try {
-      const { data, error } = await supabaseServer
+      const db = getDbClient();
+      const { data, error } = await db
         .from('platform_settings')
-        .select('*')
-        .limit(1)
-        .maybeSingle();
+        .select('setting_key, setting_value, updated_at');
 
-      if (error) {
+      if (error || !data || data.length === 0) {
         return defaultSettings;
       }
 
-      if (!data) return defaultSettings;
+      const map = new Map<string, any>();
+      let latestUpdate = defaultSettings.updatedAt;
+      for (const row of data) {
+        map.set(row.setting_key, row.setting_value);
+        if (row.updated_at && row.updated_at > latestUpdate) {
+          latestUpdate = row.updated_at;
+        }
+      }
 
       return {
-        id: data.id || 'settings-1',
-        platformName: data.platform_name || 'كسب اليمن',
-        currency: 'YER',
-        minWithdrawal: Number(data.min_withdrawal || 1000),
-        maxWithdrawal: Number(data.max_withdrawal || 500000),
-        dailyWithdrawalLimit: Number(data.daily_withdrawal_limit || 1000000),
-        defaultFeePercentage: Number(data.default_fee_percentage || 1.5),
-        referralBonus: Number(data.referral_bonus || 300),
-        taskSubmissionLimit: Number(data.task_submission_limit || 10),
-        isRegistrationOpen: data.is_registration_open !== false,
-        maintenanceMode: Boolean(data.maintenance_mode),
-        contactPhone: data.contact_phone || '+967 739 701 293',
-        contactEmail: data.contact_email || 'khalidalbuhiri@gmail.com',
-        updatedAt: data.updated_at || new Date().toISOString(),
+        ...defaultSettings,
+        platformName: String(map.get('platform_name') || defaultSettings.platformName),
+        minWithdrawal: Number(map.get('min_withdrawal') ?? defaultSettings.minWithdrawal),
+        maxWithdrawal: Number(map.get('max_withdrawal') ?? defaultSettings.maxWithdrawal),
+        dailyWithdrawalLimit: Number(map.get('daily_withdrawal_limit') ?? defaultSettings.dailyWithdrawalLimit),
+        defaultFeePercentage: Number(map.get('default_fee_percentage') ?? defaultSettings.defaultFeePercentage),
+        referralBonus: Number(map.get('referral_bonus') ?? defaultSettings.referralBonus),
+        taskSubmissionLimit: Number(map.get('task_submission_limit') ?? defaultSettings.taskSubmissionLimit),
+        isRegistrationOpen: map.has('is_registration_open') ? Boolean(map.get('is_registration_open')) : true,
+        maintenanceMode: Boolean(map.get('maintenance_mode')),
+        contactPhone: String(map.get('contact_phone') || defaultSettings.contactPhone),
+        contactEmail: String(map.get('contact_email') || defaultSettings.contactEmail),
+        updatedAt: latestUpdate,
       };
     } catch {
       return defaultSettings;
@@ -933,30 +1300,30 @@ export const supabaseDb = {
   },
 
   async updateSettings(payload: any): Promise<PlatformSettings> {
+    const db = getDbClient();
     try {
       const now = new Date().toISOString();
-      const updateData = {
-        platform_name: payload.platformName,
-        min_withdrawal: payload.minWithdrawal,
-        max_withdrawal: payload.maxWithdrawal,
-        daily_withdrawal_limit: payload.dailyWithdrawalLimit,
-        default_fee_percentage: payload.defaultFeePercentage,
-        referral_bonus: payload.referralBonus,
-        is_registration_open: payload.isRegistrationOpen,
-        maintenance_mode: payload.maintenanceMode,
-        contact_phone: payload.contactPhone,
-        contact_email: payload.contactEmail,
-        updated_at: now,
-      };
+      const pairs: Array<[string, any]> = [
+        ['platform_name', payload.platformName],
+        ['min_withdrawal', payload.minWithdrawal],
+        ['max_withdrawal', payload.maxWithdrawal],
+        ['daily_withdrawal_limit', payload.dailyWithdrawalLimit],
+        ['default_fee_percentage', payload.defaultFeePercentage],
+        ['referral_bonus', payload.referralBonus],
+        ['is_registration_open', payload.isRegistrationOpen],
+        ['maintenance_mode', payload.maintenanceMode],
+        ['contact_phone', payload.contactPhone],
+        ['contact_email', payload.contactEmail],
+      ];
 
-      const { data, error } = await supabaseServer
-        .from('platform_settings')
-        .update(updateData)
-        .select('*')
-        .limit(1)
-        .single();
+      for (const [key, val] of pairs) {
+        if (val !== undefined) {
+          await db
+            .from('platform_settings')
+            .upsert({ setting_key: key, setting_value: val, updated_at: now }, { onConflict: 'setting_key' });
+        }
+      }
 
-      if (error) throw error;
       return this.getSettings();
     } catch (err: any) {
       throw new Error(`فشل تحديث إعدادات المنصة في Supabase: ${err.message}`);
@@ -964,7 +1331,7 @@ export const supabaseDb = {
   },
 
   /**
-   * 6. PAYOUT METHODS
+   * 7. PAYOUT METHODS
    */
   async getPayoutMethods(): Promise<PayoutMethod[]> {
     const fallbackMethods: PayoutMethod[] = [
@@ -1019,7 +1386,8 @@ export const supabaseDb = {
     ];
 
     try {
-      const { data, error } = await supabaseServer
+      const db = getDbClient();
+      const { data, error } = await db
         .from('payout_methods')
         .select('*')
         .eq('is_active', true);
@@ -1046,11 +1414,12 @@ export const supabaseDb = {
   },
 
   /**
-   * 7. WITHDRAWALS
+   * 8. WITHDRAWALS (Optional table in live schema)
    */
   async getWithdrawals(userId?: string): Promise<WithdrawalRequest[]> {
     try {
-      let query = supabaseServer.from('withdrawal_requests').select('*, profiles(full_name, phone)').order('created_at', { ascending: false });
+      const db = getDbClient();
+      let query = db.from('withdrawal_requests').select('*').order('created_at', { ascending: false });
       if (userId) {
         query = query.eq('user_id', userId);
       }
@@ -1061,8 +1430,8 @@ export const supabaseDb = {
       return (data || []).map((w: any) => ({
         id: w.id,
         userId: w.user_id,
-        userFullName: w.profiles?.full_name || w.beneficiary_name,
-        userPhone: w.profiles?.phone || w.phone_number,
+        userFullName: w.beneficiary_name,
+        userPhone: w.phone_number,
         method: w.method,
         methodNameAr: w.method,
         amount: Number(w.amount || 0),
@@ -1085,11 +1454,12 @@ export const supabaseDb = {
   },
 
   /**
-   * 8. NOTIFICATIONS
+   * 9. NOTIFICATIONS (Optional table in live schema)
    */
   async getNotifications(userId: string): Promise<AppNotification[]> {
     try {
-      const { data, error } = await supabaseServer
+      const db = getDbClient();
+      const { data, error } = await db
         .from('notifications')
         .select('*')
         .eq('user_id', userId)
@@ -1114,12 +1484,13 @@ export const supabaseDb = {
 
   async markNotificationsRead(userId: string): Promise<void> {
     try {
-      await supabaseServer
+      const db = getDbClient();
+      await db
         .from('notifications')
         .update({ is_read: true })
         .eq('user_id', userId);
-    } catch (err) {
-      console.error('[Supabase MARK_NOTIFICATIONS_READ]', err);
+    } catch {
+      // Optional table
     }
   },
 };

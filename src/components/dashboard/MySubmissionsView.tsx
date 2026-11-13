@@ -165,6 +165,20 @@ export const MySubmissionsView: React.FC<MySubmissionsViewProps> = ({ onBrowseTa
                   </p>
                 )}
 
+                {sub.proofUrl && /^https?:\/\//i.test(sub.proofUrl) && (
+                  <div className="text-xs text-slate-600 dark:text-slate-300">
+                    <strong className="text-slate-800 dark:text-slate-200">رابط الإثبات:</strong>{' '}
+                    <a
+                      href={sub.proofUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-emerald-600 dark:text-emerald-400 hover:underline font-mono break-all"
+                    >
+                      {sub.proofUrl}
+                    </a>
+                  </div>
+                )}
+
                 {sub.rejectionReason && (
                   <div className="p-3 text-xs text-rose-800 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />

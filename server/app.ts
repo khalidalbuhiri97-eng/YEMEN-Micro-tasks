@@ -14,13 +14,32 @@ export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY, {
   },
 });
 
-// Dedicated Service Role Client for Sensitive Financial Operations
+// Dedicated Service Role Client for Sensitive Administrative / Ledger Operations
 export const getSupabaseAdminClient = () => {
   const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
   if (!serviceKey) {
     throw new Error('SERVICE_ROLE_KEY_MISSING: مفتاح صلاحيات الخادم (SUPABASE_SERVICE_ROLE_KEY) غير مهيأ.');
   }
   return createClient(SUPABASE_URL, serviceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+};
+
+// User-Scoped Supabase Client (passes caller's verified JWT so auth.uid() works inside PostgreSQL RPCs)
+export const getSupabaseUserClient = (userToken: string) => {
+  const anonKey = (process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
+  if (!anonKey) {
+    throw new Error('SUPABASE_ANON_KEY_MISSING: مفتاح المصادقة العام غير مهيأ.');
+  }
+  return createClient(SUPABASE_URL, anonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${userToken}`,
+      },
+    },
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -221,6 +240,7 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 export interface AuthenticatedRequest extends Request {
   user?: any;
+  authToken?: string;
 }
 
 // User Authentication Middleware (Validates Real Supabase JWT exclusively)
@@ -230,7 +250,7 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
     return res.status(401).json({ error: 'غير مصرح: يجب تسجيل الدخول للوصول إلى هذه البيانات.' });
   }
 
-  const token = authHeader.replace('Bearer ', '').trim();
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (!token) {
     return res.status(401).json({ error: 'رمز الجلسة غير صالح.' });
   }
@@ -245,16 +265,15 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
 
     let profile = await supabaseDb.findUserById(authData.user.id);
     if (!profile) {
-      // Profile exists in auth.users but not yet in profiles table, construct profile structure from authenticated token
       profile = {
         id: authData.user.id,
         fullName: authData.user.user_metadata?.full_name || 'مستخدم كسب اليمن',
         phone: authData.user.user_metadata?.phone || authData.user.phone || '',
         email: authData.user.email,
         avatarUrl: '',
-        role: authData.user.email === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
+        role: 'user',
         status: 'active',
-        referralCode: 'KY' + Math.floor(100000 + Math.random() * 900000),
+        referralCode: '',
         city: authData.user.user_metadata?.city || 'صنعاء',
         createdAt: authData.user.created_at,
         updatedAt: authData.user.created_at,
@@ -266,6 +285,7 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
     }
 
     req.user = profile;
+    req.authToken = token;
     next();
   } catch (err: any) {
     return res.status(401).json({ error: 'فشل في التحقق من جلسة المصادقة مع قاعدة البيانات.' });
@@ -335,26 +355,30 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 
     const authUserId = supaAuth.user.id;
     const now = new Date().toISOString();
-    const refCode = 'KY' + Math.floor(100000 + Math.random() * 900000);
+    const assignedRole = cleanEmail === supabaseDb.getOwnerEmail() ? 'admin' : 'user';
+    const dbClient = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return supabaseServer;
+      }
+    })();
 
-    // 3. Create/Upsert Profile strictly with authenticated authUserId
+    // 3. Create/Upsert Profile strictly with actual live columns
     const newProfile = {
       id: authUserId,
       full_name: fullName.trim(),
       phone: cleanPhone,
-      email: cleanEmail,
-      role: cleanEmail === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
-      status: 'active',
-      referral_code: refCode,
       city: city?.trim() || 'صنعاء',
+      account_status: 'active',
       created_at: now,
       updated_at: now,
     };
 
-    const { data: profileData, error: profileErr } = await supabaseServer
+    const { data: profileData, error: profileErr } = await dbClient
       .from('profiles')
       .upsert(newProfile, { onConflict: 'id' })
-      .select('*')
+      .select('id, full_name, phone, city, account_status, created_at, updated_at')
       .single();
 
     if (profileErr) {
@@ -367,7 +391,11 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: `فشل في إنشاء الملف الشخصي: ${profileErr.message}` });
     }
 
-    // 4. Create/Get Wallet strictly for authUserId
+    await dbClient
+      .from('user_roles')
+      .upsert({ user_id: authUserId, role: assignedRole }, { onConflict: 'user_id' });
+
+    // 4. Create/Get Wallet & Financial Account strictly for authUserId
     let wallet;
     try {
       wallet = await supabaseDb.getWallet(authUserId);
@@ -386,11 +414,11 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       id: profileData.id,
       fullName: profileData.full_name,
       phone: profileData.phone,
-      email: profileData.email,
-      role: profileData.role,
-      status: profileData.status,
-      referralCode: profileData.referral_code,
-      city: profileData.city,
+      email: cleanEmail,
+      role: assignedRole,
+      status: profileData.account_status || 'active',
+      referralCode: '',
+      city: profileData.city || 'صنعاء',
       createdAt: profileData.created_at,
       updatedAt: profileData.updated_at,
     };
@@ -404,7 +432,6 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       });
     }
 
-    // Email confirmation required or no immediate session
     return res.json({
       success: true,
       requiresEmailConfirmation: true,
@@ -511,26 +538,32 @@ app.get('/api/system/status', async (_req: Request, res: Response) => {
 // Real platform public statistics computed from actual database records
 app.get('/api/stats', async (_req: Request, res: Response) => {
   try {
-    const [tasksRes, usersRes, withsRes, setRes] = await Promise.all([
-      supabaseServer.from('tasks').select('id, reward_units, approved_count, status'),
-      supabaseServer.from('profiles').select('id', { count: 'exact', head: true }),
-      supabaseServer.from('withdrawal_requests').select('amount').eq('status', 'PAID'),
+    const dbClient = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return supabaseServer;
+      }
+    })();
+
+    const [tasksRes, usersRes, setRes] = await Promise.all([
+      dbClient.from('tasks').select('id, reward_units, approved_count, status'),
+      dbClient.from('profiles').select('id', { count: 'exact', head: true }),
       supabaseDb.getSettings(),
     ]);
 
     const tasks = tasksRes.data || [];
-    const totalCompletedTasks = tasks.reduce((sum, t: any) => sum + (Number(t.approved_count ?? t.completed_quantity ?? 0)), 0);
+    const totalCompletedTasks = tasks.reduce((sum, t: any) => sum + Number(t.approved_count ?? 0), 0);
     const totalTaskRewardsPaidYer = tasks.reduce(
-      (sum, t: any) => sum + Number(t.approved_count ?? t.completed_quantity ?? 0) * Number(t.reward_units ?? t.reward_yer ?? 0),
+      (sum, t: any) => sum + Number(t.approved_count ?? 0) * Number(t.reward_units ?? 0),
       0
     );
     const activeTasksCount = tasks.filter((t: any) => String(t.status || '').toUpperCase() === 'ACTIVE').length;
-    const totalWithdrawnYer = (withsRes.data || []).reduce((sum, w) => sum + (Number(w.amount) || 0), 0);
-    const totalRegisteredUsers = usersRes.count || 5;
+    const totalRegisteredUsers = usersRes.count || 0;
 
     res.json({
       totalCompletedTasks,
-      totalWithdrawnYer,
+      totalWithdrawnYer: 0,
       totalTaskRewardsPaidYer,
       activeTasksCount,
       totalRegisteredUsers,
@@ -580,17 +613,18 @@ app.get('/api/tasks/:id', async (req: Request, res: Response) => {
   }
 });
 
-// Task Submission
+// Task Submission (creates pending submission only; zero payout until admin approval)
 app.post('/api/tasks/submit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { taskId, proofText, proofImages, proofUrl } = req.body;
+    const { taskId, proofText, proofImages, proofUrl } = req.body || {};
     if (!taskId) {
       return res.status(400).json({ error: 'معرف المهمة مطلوب.' });
     }
 
     const submission = await supabaseDb.submitTaskProof({
-      taskId,
+      taskId: String(taskId),
       userId: req.user.id,
+      authToken: req.authToken,
       proofText,
       proofImages,
       proofUrl,
@@ -652,27 +686,41 @@ app.get('/api/wallet/lookup', authMiddleware, async (req: AuthenticatedRequest, 
   }
 });
 
+app.get('/api/wallet/transfers', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const txs = await supabaseDb.getTransactions(req.user.id);
+    const transfers = txs
+      .filter((t) => t.type === 'WALLET_TRANSFER_SENT' || t.type === 'WALLET_TRANSFER_RECEIVED')
+      .map((t) => ({
+        id: t.id,
+        senderId: t.type === 'WALLET_TRANSFER_SENT' ? req.user.id : '',
+        senderWalletAddress: '',
+        senderName: t.type === 'WALLET_TRANSFER_SENT' ? req.user.fullName : 'محفظة أخرى',
+        recipientId: t.type === 'WALLET_TRANSFER_RECEIVED' ? req.user.id : '',
+        recipientWalletAddress: '',
+        recipientName: t.type === 'WALLET_TRANSFER_RECEIVED' ? req.user.fullName : 'محفظة أخرى',
+        amount: Math.abs(t.amount),
+        note: t.description,
+        status: 'COMPLETED',
+        createdAt: t.createdAt,
+      }));
+    res.json({ transfers });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب سجل التحويلات.' });
+  }
+});
+
 app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { recipientAddress, amount, note, idempotencyKey } = req.body || {};
 
-    // 1. Enforce Service Role Client exclusively - reject if key is missing
-    let adminClient;
-    try {
-      adminClient = getSupabaseAdminClient();
-    } catch (keyErr: any) {
-      await logSupabaseError({
-        err: keyErr,
-        operation: 'SERVICE_ROLE_KEY_CHECK_FAIL',
-        apiRoute: '/api/wallet/transfer',
-      });
-      return res.status(500).json({ error: 'تعذر تنفيذ التحويل المالي: مفتاح صلاحيات الخادم (Service Role Key) غير مهيأ.' });
+    if (!req.authToken) {
+      return res.status(401).json({ error: 'رمز الجلسة غير صالح.' });
     }
 
-    // 2. Strict input validation
-    const numAmount = Number(amount);
-    if (typeof numAmount !== 'number' || !Number.isFinite(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح ومحدد أكبر من صفر للتحويل.' });
+    const numAmount = Math.round(Number(amount));
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ error: 'يرجى تحديد مبلغ صحيح ومحدد أكبر من صفر للتحويل.' });
     }
 
     if (!recipientAddress || typeof recipientAddress !== 'string' || !recipientAddress.trim()) {
@@ -680,36 +728,34 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
     }
 
     const cleanRecipientAddress = recipientAddress.trim().toUpperCase();
-    const cleanIdempotencyKey = idempotencyKey ? String(idempotencyKey).trim() : undefined;
-    const cleanNote = note ? String(note).trim() : undefined;
+    const cleanIdempotencyKey = idempotencyKey ? String(idempotencyKey).trim() : `TX-${crypto.randomUUID()}`;
+    const cleanNote = note ? String(note).trim() : null;
 
-    // 3. Invoke Atomic Stored Procedure transfer_wallet_balance strictly via adminClient (Service Role)
-    const { data: rpcResult, error: rpcErr } = await adminClient.rpc('transfer_wallet_balance', {
-      p_sender_id: req.user.id,
-      p_recipient_address_or_id: cleanRecipientAddress,
-      p_amount: numAmount,
-      p_idempotency_key: cleanIdempotencyKey || null,
-      p_notes: cleanNote || null,
+    const userClient = getSupabaseUserClient(req.authToken);
+    const { data: rpcResult, error: rpcErr } = await userClient.rpc('transfer_wallet_units', {
+      p_recipient_wallet_address: cleanRecipientAddress,
+      p_amount_units: numAmount,
+      p_idempotency_key: cleanIdempotencyKey,
+      p_note: cleanNote,
     });
 
     if (rpcErr) {
       await logSupabaseError({
         err: rpcErr,
         operation: 'ATOMIC_WALLET_TRANSFER_RPC',
-        sourceTable: 'wallets',
+        sourceTable: 'financial_accounts',
         apiRoute: '/api/wallet/transfer',
         details: { senderId: req.user.id, recipientAddress: cleanRecipientAddress, amount: numAmount, idempotencyKey: cleanIdempotencyKey },
       });
       return res.status(400).json({ error: rpcErr.message || 'فشلت عملية التحويل المالي.' });
     }
 
-    // 4. Re-fetch sender wallet for updated UI state
     const updatedSenderWallet = await supabaseDb.getWallet(req.user.id);
 
     return res.json({
       success: true,
-      transferId: rpcResult?.transferId || rpcResult?.id,
-      newAvailableBalance: rpcResult?.newAvailableBalance ?? updatedSenderWallet.availableBalance,
+      transferId: typeof rpcResult === 'string' ? rpcResult : (rpcResult?.transferId || rpcResult?.id),
+      newAvailableBalance: updatedSenderWallet.availableBalance,
       wallet: updatedSenderWallet,
       details: rpcResult,
     });
@@ -822,21 +868,26 @@ app.post('/api/notifications/read-all', authMiddleware, async (req: Authenticate
 // Referrals
 app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { data: referredUsers } = await supabaseServer
+    const settings = await supabaseDb.getSettings();
+    let referredUsers: any[] = [];
+    const { data, error } = await supabaseServer
       .from('profiles')
       .select('id, full_name, created_at')
       .eq('referred_by', req.user.id);
 
-    const count = referredUsers?.length || 0;
-    const settings = await supabaseDb.getSettings();
+    if (!error && Array.isArray(data)) {
+      referredUsers = data;
+    }
+
+    const count = referredUsers.length;
     const totalEarnedYer = count * (settings.referralBonus || 300);
 
     res.json({
-      code: req.user.referralCode,
-      shareUrl: `https://kasbyemen.com/register?ref=${req.user.referralCode}`,
+      code: req.user.referralCode || `KY-${req.user.id.slice(0, 8).toUpperCase()}`,
+      shareUrl: `https://kasbyemen.com/register?ref=${req.user.referralCode || req.user.id.slice(0, 8).toUpperCase()}`,
       totalReferred: count,
       totalEarnedYer,
-      referredUsers: (referredUsers || []).map((u) => ({
+      referredUsers: referredUsers.map((u) => ({
         id: u.id,
         fullName: u.full_name,
         createdAt: u.created_at,
@@ -855,18 +906,24 @@ app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, r
 
 app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const [profilesRes, tasksRes, subsRes, withsRes, walletsRes] = await Promise.all([
-      supabaseServer.from('profiles').select('id, role, status'),
-      supabaseServer.from('tasks').select('id, status, reward_units, approved_count'),
-      supabaseServer.from('task_submissions').select('id, status'),
-      supabaseServer.from('withdrawal_requests').select('id, amount, status'),
-      supabaseServer.from('wallets').select('available_balance, pending_balance'),
+    const dbClient = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return supabaseServer;
+      }
+    })();
+
+    const [usersList, tasksRes, subsRes, treasury] = await Promise.all([
+      supabaseDb.getAllUsers(),
+      dbClient.from('tasks').select('id, status, reward_units, approved_count'),
+      dbClient.from('task_submissions').select('id, status'),
+      supabaseDb.getTreasurySummary(),
     ]);
 
-    const profiles = profilesRes.data || [];
-    const totalUsers = profiles.filter((p) => p.role === 'user').length;
-    const activeUsers = profiles.filter((p) => p.role === 'user' && p.status === 'active').length;
-    const suspendedUsers = profiles.filter((p) => p.status === 'suspended').length;
+    const totalUsers = usersList.filter((u) => u.role === 'user').length;
+    const activeUsers = usersList.filter((u) => u.role === 'user' && u.status === 'active').length;
+    const suspendedUsers = usersList.filter((u) => u.status === 'suspended').length;
 
     const tasks = tasksRes.data || [];
     const totalTasks = tasks.length;
@@ -875,15 +932,8 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
     const submissions = subsRes.data || [];
     const pendingSubmissions = submissions.filter((s: any) => String(s.status || '').toUpperCase() === 'PENDING').length;
 
-    const withdrawals = withsRes.data || [];
-    const pendingWithdrawals = withdrawals.filter((w) => w.status === 'PENDING').length;
-    const totalCompletedWithdrawals = withdrawals.filter((w) => w.status === 'PAID').reduce((sum, w) => sum + Number(w.amount || 0), 0);
-
-    const wallets = walletsRes.data || [];
-    const totalAvailableLiabilities = wallets.reduce((sum, w) => sum + Number(w.available_balance || 0), 0);
-    const totalPendingWithdrawalLiabilities = wallets.reduce((sum, w) => sum + Number(w.pending_balance || 0), 0);
     const totalApprovedRewards = tasks.reduce(
-      (sum, t: any) => sum + Number(t.approved_count ?? t.completed_quantity ?? 0) * Number(t.reward_units ?? t.reward_yer ?? 0),
+      (sum, t: any) => sum + Number(t.approved_count ?? 0) * Number(t.reward_units ?? 0),
       0
     );
 
@@ -895,12 +945,12 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
         totalTasks,
         activeTasks,
         pendingSubmissions,
-        pendingWithdrawals,
-        totalAvailableLiabilities,
-        totalPendingWithdrawalLiabilities,
-        totalCompletedWithdrawals,
+        pendingWithdrawals: 0,
+        totalAvailableLiabilities: treasury.userAvailableTotal,
+        totalPendingWithdrawalLiabilities: treasury.userPendingTotal,
+        totalCompletedWithdrawals: 0,
         totalApprovedRewards,
-        platformRevenue: Math.round(totalCompletedWithdrawals * 0.015),
+        platformRevenue: 0,
       },
     });
   } catch (err: any) {
@@ -919,90 +969,123 @@ app.get('/api/admin/submissions', adminMiddleware, async (_req: AuthenticatedReq
 
 app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, reason } = req.body;
+    const { action, reason } = req.body || {};
     const submissionId = req.params.id;
 
-    if (action === 'APPROVE') {
-      // 1. Try atomic RPC in Supabase
-      const { data: rpcRes, error: rpcErr } = await supabaseServer.rpc('credit_task_reward', {
-        p_submission_id: submissionId,
-        p_admin_id: req.user.id,
+    if (!req.authToken || !req.user?.id) {
+      return res.status(401).json({ error: 'جلسة المدير غير صالحة.' });
+    }
+
+    if (action !== 'APPROVE' && action !== 'REJECT') {
+      return res.status(400).json({ error: 'إجراء غير معروف. يجب أن يكون APPROVE أو REJECT.' });
+    }
+
+    if (action === 'REJECT' && (!reason || !String(reason).trim())) {
+      return res.status(400).json({ error: 'يجب ذكر سبب الرفض للتوضيح للمستخدم.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data: existingSub, error: subErr } = await adminClient
+      .from('task_submissions')
+      .select('id, task_id, user_id, status, reward_transaction_id')
+      .eq('id', submissionId)
+      .maybeSingle();
+
+    if (subErr) {
+      await logSupabaseError({
+        err: subErr,
+        operation: 'REVIEW_SUBMISSION_PRECHECK',
+        sourceTable: 'task_submissions',
+        apiRoute: `/api/admin/submissions/${submissionId}/review`,
+      });
+      return res.status(400).json({ error: subErr.message || 'فشل قراءة بيانات الإثبات.' });
+    }
+
+    if (!existingSub) {
+      return res.status(404).json({ error: 'إثبات المهمة غير موجود.' });
+    }
+
+    // Strict idempotency guard for already-approved submissions
+    if (action === 'APPROVE' && String(existingSub.status || '').toLowerCase() === 'approved') {
+      if (existingSub.reward_transaction_id) {
+        const wallet = await supabaseDb.getWallet(existingSub.user_id);
+        return res.json({
+          success: true,
+          idempotent: true,
+          submissionId,
+          transactionId: existingSub.reward_transaction_id,
+          newBalance: wallet.availableBalance,
+        });
+      }
+      return res.status(400).json({
+        error: 'تمت الموافقة على هذا الإثبات تاريخياً بدون ربط معاملة صرف مالية. يرجى تنفيذ ترحيل 010 في Supabase SQL Editor لمطابقة الرصيد.',
+      });
+    }
+
+    const decision = action === 'APPROVE' ? 'approve' : 'reject';
+    const userClient = getSupabaseUserClient(req.authToken);
+    const { data: rpcRes, error: rpcErr } = await userClient.rpc('review_task_submission', {
+      p_submission_id: submissionId,
+      p_decision: decision,
+      p_review_note: reason ? String(reason).trim() : null,
+    });
+
+    if (rpcErr) {
+      await logSupabaseError({
+        err: rpcErr,
+        operation: 'ATOMIC_REVIEW_TASK_SUBMISSION_RPC',
+        sourceTable: 'task_submissions',
+        apiRoute: `/api/admin/submissions/${submissionId}/review`,
+        details: { submissionId, action, adminId: req.user.id },
       });
 
-      if (!rpcErr && rpcRes?.success) {
-        return res.json({ success: true, result: rpcRes });
+      const msg = String(rpcErr.message || 'فشل في مراجعة الإثبات.');
+      if (rpcErr.code === '42501' || msg.toLowerCase().includes('administrator permission')) {
+        return res.status(403).json({ error: msg });
       }
-
-      // 2. Fallback direct atomic SQL transactions in Supabase
-      const { data: subData } = await supabaseServer.from('task_submissions').select('*, tasks(reward_units, title)').eq('id', submissionId).single();
-      if (!subData) {
-        return res.status(404).json({ error: 'إثبات المهمة غير موجود.' });
+      if (msg.toLowerCase().includes('not found')) {
+        return res.status(404).json({ error: msg });
       }
-      if (String(subData.status || '').toUpperCase() === 'APPROVED') {
-        return res.status(400).json({ error: 'تمت الموافقة على هذه المهمة وصرف المكافأة مسبقاً.' });
-      }
-
-      const rewardYer = Number(subData.tasks?.reward_units ?? subData.tasks?.reward_yer ?? 0);
-      const userWallet = await supabaseDb.getWallet(subData.user_id);
-      const newBal = userWallet.availableBalance + rewardYer;
-      const now = new Date().toISOString();
-
-      await Promise.all([
-        supabaseServer.from('wallets').update({
-          available_balance: newBal,
-          total_earned: userWallet.totalEarned + rewardYer,
-          updated_at: now,
-        }).eq('user_id', subData.user_id),
-        supabaseServer.from('task_submissions').update({
-          status: 'approved',
-          reviewed_by: req.user.id,
-          reviewed_at: now,
-        }).eq('id', submissionId),
-        supabaseServer.from('wallet_transactions').insert({
-          id: crypto.randomUUID(),
-          user_id: subData.user_id,
-          type: 'TASK_REWARD',
-          amount: rewardYer,
-          previous_balance: userWallet.availableBalance,
-          new_balance: newBal,
-          status: 'COMPLETED',
-          reference_id: submissionId,
-          description: `مكافأة إنجاز مهمة: ${subData.tasks?.title || ''}`,
-          admin_id: req.user.id,
-          created_at: now,
-        }),
-        supabaseServer.from('notifications').insert({
-          id: crypto.randomUUID(),
-          user_id: subData.user_id,
-          title: 'تم اعتماد إثبات المهمة وإيداع المكافأة!',
-          message: `تم اعتماد إثباتك لمهمة "${subData.tasks?.title || ''}" وإيداع ${rewardYer.toLocaleString()} ر.ي في محفظتك.`,
-          type: 'TASK_APPROVED',
-          link: '/dashboard/wallet',
-          created_at: now,
-        }),
-      ]);
-
-      return res.json({ success: true, newBalance: newBal });
-    } else if (action === 'REJECT') {
-      if (!reason) {
-        return res.status(400).json({ error: 'يجب ذكر سبب الرفض للتوضيح للمستخدم.' });
-      }
-
-      const now = new Date().toISOString();
-      await Promise.all([
-        supabaseServer.from('task_submissions').update({
-          status: 'rejected',
-          review_note: reason,
-          reviewed_by: req.user.id,
-          reviewed_at: now,
-        }).eq('id', submissionId),
-      ]);
-
-      return res.json({ success: true });
-    } else {
-      return res.status(400).json({ error: 'إجراء غير معروف.' });
+      return res.status(400).json({ error: msg });
     }
+
+    if (action === 'REJECT') {
+      return res.json({
+        success: true,
+        idempotent: Boolean(typeof rpcRes === 'object' && rpcRes?.idempotent),
+        submissionId,
+        status: 'REJECTED',
+        result: rpcRes,
+      });
+    }
+
+    // Re-read authoritative submission & performer wallet after atomic commit
+    const { data: updatedSub } = await adminClient
+      .from('task_submissions')
+      .select('id, status, reward_transaction_id, reviewed_by, reviewed_at')
+      .eq('id', submissionId)
+      .maybeSingle();
+
+    const wallet = await supabaseDb.getWallet(existingSub.user_id);
+    const transactionId =
+      (typeof rpcRes === 'object' && rpcRes !== null ? rpcRes.transaction_id : null) ||
+      updatedSub?.reward_transaction_id ||
+      null;
+
+    return res.json({
+      success: true,
+      idempotent: Boolean(typeof rpcRes === 'object' && rpcRes?.idempotent),
+      submissionId,
+      transactionId,
+      newBalance: wallet.availableBalance,
+      result: rpcRes,
+    });
   } catch (err: any) {
+    await logSupabaseError({
+      err,
+      operation: 'REVIEW_SUBMISSION_ROUTE_FAIL',
+      apiRoute: `/api/admin/submissions/${req.params.id}/review`,
+    });
     res.status(400).json({ error: err.message || 'فشل في مراجعة الإثبات.' });
   }
 });
@@ -1126,7 +1209,7 @@ app.get('/api/admin/tasks', adminMiddleware, async (_req: AuthenticatedRequest, 
 
 app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, description, category, rewardYer, steps, timeEstimateMinutes, totalQuantity, proofRequirements } = req.body;
+    const { title, description, category, rewardYer, totalQuantity, deadline, creationKey } = req.body || {};
     if (!title || !description || rewardYer === undefined || totalQuantity === undefined) {
       return res.status(400).json({ error: 'يرجى استكمال بيانات المهمة الأساسية.' });
     }
@@ -1136,11 +1219,10 @@ app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, 
       description,
       category,
       rewardYer,
-      steps,
-      timeEstimateMinutes,
       totalQuantity,
-      proofRequirements,
-      createdBy: req.user.id,
+      deadline,
+      creationKey,
+      authToken: req.authToken,
     });
 
     res.json({ success: true, task });
@@ -1151,44 +1233,102 @@ app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, 
 
 app.get('/api/admin/treasury', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const summary = {
-      totalIssuedUnits: 10000000,
-      treasuryAvailable: 10000000,
-      taskBudgetReserved: 0,
-      userAvailableTotal: 0,
-      userPendingTotal: 0,
-      withdrawalReservedTotal: 0,
-      isReconciled: true,
-      activeTasksBudgetTotal: 0,
-    };
-    res.json({ summary, recentTransactions: [] });
+    const [summary, recentTransactions] = await Promise.all([
+      supabaseDb.getTreasurySummary(),
+      supabaseDb.getLedgerTransactions(20, 0),
+    ]);
+    res.json({ treasury: summary, summary, recentTransactions });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message || 'فشل جلب بيانات الخزينة.' });
   }
 });
 
 app.post('/api/admin/treasury/issue', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    res.json({ success: true });
+    const { amount, reason, idempotencyKey } = req.body || {};
+    const numAmount = Math.round(Number(amount));
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ error: 'يرجى تحديد مبلغ إصدار صحيح أكبر من صفر.' });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ error: 'سبب الإصدار مطلوب للتدقيق المحاسبي.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data: accounts, error: accErr } = await adminClient
+      .from('financial_accounts')
+      .select('id, account_code')
+      .in('account_code', ['VIRTUAL-ISSUANCE-CONTROL', 'PLATFORM-TREASURY']);
+
+    if (accErr || !accounts || accounts.length < 2) {
+      return res.status(500).json({ error: 'حسابات الخزينة السيادية غير مكتملة في قاعدة البيانات.' });
+    }
+
+    const issuanceAcc = accounts.find((a) => a.account_code === 'VIRTUAL-ISSUANCE-CONTROL');
+    const treasuryAcc = accounts.find((a) => a.account_code === 'PLATFORM-TREASURY');
+    if (!issuanceAcc || !treasuryAcc) {
+      return res.status(500).json({ error: 'تعذر العثور على حساب الإصدار أو خزينة المنصة.' });
+    }
+
+    const cleanKey = idempotencyKey ? String(idempotencyKey).trim() : `TREASURY-ISSUE:${crypto.randomUUID()}`;
+    const cleanReason = String(reason).trim();
+
+    const { data: txId, error: rpcErr } = await adminClient.rpc('post_ledger_transaction', {
+      p_transaction_type: 'TREASURY_ISSUANCE',
+      p_idempotency_key: cleanKey,
+      p_reference: 'TREASURY-ISSUE',
+      p_metadata: {
+        description: cleanReason,
+        issued_by: req.user.id,
+        amount_units: numAmount,
+      },
+      p_entries: [
+        { account_id: issuanceAcc.id, side: 'debit', amount_units: numAmount, memo: cleanReason },
+        { account_id: treasuryAcc.id, side: 'credit', amount_units: numAmount, memo: cleanReason },
+      ],
+    });
+
+    if (rpcErr) {
+      await logSupabaseError({
+        err: rpcErr,
+        operation: 'TREASURY_ISSUE_RPC',
+        sourceTable: 'ledger_transactions',
+        apiRoute: '/api/admin/treasury/issue',
+      });
+      return res.status(400).json({ error: rpcErr.message || 'فشل تسجيل قيد الإصدار.' });
+    }
+
+    const summary = await supabaseDb.getTreasurySummary();
+    res.json({ success: true, transactionId: txId, treasury: summary, summary });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.get('/api/admin/ledger', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
-  res.json({ transactions: [], summary: {} });
+app.get('/api/admin/ledger', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const [transactions, summary] = await Promise.all([
+      supabaseDb.getLedgerTransactions(limit, offset),
+      supabaseDb.getTreasurySummary(),
+    ]);
+    res.json({ transactions, summary });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب دفتر الأستاذ.' });
+  }
 });
 
 app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, description, status, category } = req.body;
+    const adminClient = getSupabaseAdminClient();
+    const { title, description, status } = req.body || {};
     const updates: Record<string, any> = {};
     if (title !== undefined) updates.title = title;
     if (description !== undefined) updates.description = description;
-    if (category !== undefined) updates.category = category;
     if (status !== undefined) updates.status = String(status).toLowerCase();
 
-    const { error } = await supabaseServer.from('tasks').update(updates).eq('id', req.params.id);
+    const { error } = await adminClient.from('tasks').update(updates).eq('id', req.params.id);
 
     if (error) throw error;
     res.json({ success: true });
@@ -1219,32 +1359,64 @@ app.get('/api/admin/users', adminMiddleware, async (_req: AuthenticatedRequest, 
 
 app.post('/api/admin/users/:id/adjust', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { amount, reason } = req.body;
-    const numAmount = Number(amount);
-    const userWallet = await supabaseDb.getWallet(req.params.id);
-    const newBal = userWallet.availableBalance + numAmount;
-    if (newBal < 0) {
+    const { amount, reason, idempotencyKey } = req.body || {};
+    const numAmount = Math.round(Number(amount));
+    if (!Number.isFinite(numAmount) || numAmount === 0) {
+      return res.status(400).json({ error: 'يرجى تحديد قيمة تسوية صحيحة غير صفرية.' });
+    }
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ error: 'سبب التسوية مطلوب للتدقيق المحاسبي.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { accountRow: userAcc } = await supabaseDb.ensureUserFinancialAccount(req.params.id);
+    const currentBal = Number(userAcc.balance_units || 0);
+    if (currentBal + numAmount < 0) {
       return res.status(400).json({ error: 'لا يمكن أن ينتج عن العملية رصيد سالب.' });
     }
 
-    const now = new Date().toISOString();
-    await Promise.all([
-      supabaseServer.from('wallets').update({ available_balance: newBal, updated_at: now }).eq('user_id', req.params.id),
-      supabaseServer.from('wallet_transactions').insert({
-        id: crypto.randomUUID(),
-        user_id: req.params.id,
-        type: 'ADMIN_ADJUSTMENT',
-        amount: numAmount,
-        previous_balance: userWallet.availableBalance,
-        new_balance: newBal,
-        status: 'COMPLETED',
-        description: `تسوية رصيد إدارية مدققة: ${reason}`,
-        admin_id: req.user.id,
-        created_at: now,
-      }),
-    ]);
+    const { data: treasuryAcc, error: treasuryErr } = await adminClient
+      .from('financial_accounts')
+      .select('id')
+      .eq('account_code', 'PLATFORM-TREASURY')
+      .single();
 
-    res.json({ success: true, newBalance: newBal });
+    if (treasuryErr || !treasuryAcc) {
+      return res.status(500).json({ error: 'تعذر العثور على حساب خزينة المنصة.' });
+    }
+
+    const absAmount = Math.abs(numAmount);
+    const cleanReason = `تسوية رصيد إدارية مدققة: ${String(reason).trim()}`;
+    const entries =
+      numAmount > 0
+        ? [
+            { account_id: treasuryAcc.id, side: 'debit', amount_units: absAmount, memo: cleanReason },
+            { account_id: userAcc.id, side: 'credit', amount_units: absAmount, memo: cleanReason },
+          ]
+        : [
+            { account_id: userAcc.id, side: 'debit', amount_units: absAmount, memo: cleanReason },
+            { account_id: treasuryAcc.id, side: 'credit', amount_units: absAmount, memo: cleanReason },
+          ];
+
+    const { data: txId, error: rpcErr } = await adminClient.rpc('post_ledger_transaction', {
+      p_transaction_type: 'ADMIN_ADJUSTMENT',
+      p_idempotency_key: idempotencyKey ? String(idempotencyKey).trim() : `ADMIN-ADJ:${crypto.randomUUID()}`,
+      p_reference: `USER:${req.params.id}`,
+      p_metadata: {
+        description: cleanReason,
+        target_user_id: req.params.id,
+        admin_id: req.user.id,
+        signed_amount: numAmount,
+      },
+      p_entries: entries,
+    });
+
+    if (rpcErr) {
+      return res.status(400).json({ error: rpcErr.message || 'فشل تسجيل التسوية الإدارية.' });
+    }
+
+    const updatedWallet = await supabaseDb.getWallet(req.params.id);
+    res.json({ success: true, transactionId: txId, newBalance: updatedWallet.availableBalance });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -1262,29 +1434,25 @@ app.post('/api/admin/users/:id/status', adminMiddleware, async (req: Authenticat
 
 app.get('/api/admin/financial-report', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
-    const [tasksRes, withsRes, walletsRes] = await Promise.all([
-      supabaseServer.from('tasks').select('reward_units, approved_count'),
-      supabaseServer.from('withdrawal_requests').select('amount, status, created_at'),
-      supabaseServer.from('wallets').select('available_balance'),
+    const adminClient = getSupabaseAdminClient();
+    const [tasksRes, treasury] = await Promise.all([
+      adminClient.from('tasks').select('reward_units, approved_count'),
+      supabaseDb.getTreasurySummary(),
     ]);
 
     const totalTaskExpenses = (tasksRes.data || []).reduce(
-      (sum, t: any) => sum + Number(t.approved_count ?? t.completed_quantity ?? 0) * Number(t.reward_units ?? t.reward_yer ?? 0),
+      (sum, t: any) => sum + Number(t.approved_count ?? 0) * Number(t.reward_units ?? 0),
       0
     );
-    const withdrawals = withsRes.data || [];
-    const totalPaidWithdrawals = withdrawals.filter((w) => w.status === 'PAID').reduce((sum, w) => sum + Number(w.amount || 0), 0);
-    const totalPendingWithdrawals = withdrawals.filter((w) => w.status === 'PENDING').reduce((sum, w) => sum + Number(w.amount || 0), 0);
-    const totalAvailableLiabilities = (walletsRes.data || []).reduce((sum, w) => sum + Number(w.available_balance || 0), 0);
 
     res.json({
       report: {
         totalTaskExpenses,
-        totalPaidWithdrawals,
-        totalPendingWithdrawals,
-        totalAvailableLiabilities,
+        totalPaidWithdrawals: 0,
+        totalPendingWithdrawals: 0,
+        totalAvailableLiabilities: treasury.userAvailableTotal,
         totalReferralExpenses: 0,
-        netPlatformVolume: totalTaskExpenses + totalPaidWithdrawals,
+        netPlatformVolume: totalTaskExpenses,
         dailyBreakdown: [],
       },
     });
