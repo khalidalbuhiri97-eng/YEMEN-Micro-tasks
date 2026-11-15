@@ -4,17 +4,36 @@
 
 const BASE_URL = '/api';
 
+export class SessionExpiredError extends Error {
+  constructor(message = 'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً.') {
+    super(message);
+    this.name = 'SessionExpiredError';
+  }
+}
+
 export function getAuthToken(): string | null {
-  return localStorage.getItem('kasb_auth_token');
+  const token = localStorage.getItem('kasb_auth_token');
+  if (!token || token === 'null' || token === 'undefined') {
+    if (token) localStorage.removeItem('kasb_auth_token');
+    return null;
+  }
+  return token;
 }
 
 export function getRefreshToken(): string | null {
-  return localStorage.getItem('kasb_refresh_token');
+  const token = localStorage.getItem('kasb_refresh_token');
+  if (!token || token === 'null' || token === 'undefined') {
+    if (token) localStorage.removeItem('kasb_refresh_token');
+    return null;
+  }
+  return token;
 }
 
-export function setAuthTokens(token: string, refreshToken?: string): void {
-  localStorage.setItem('kasb_auth_token', token);
-  if (refreshToken) {
+export function setAuthTokens(token?: string | null, refreshToken?: string | null): void {
+  if (token && token !== 'null' && token !== 'undefined') {
+    localStorage.setItem('kasb_auth_token', token);
+  }
+  if (refreshToken && refreshToken !== 'null' && refreshToken !== 'undefined') {
     localStorage.setItem('kasb_refresh_token', refreshToken);
   }
 }
@@ -28,19 +47,21 @@ export function clearAuthToken(): void {
   localStorage.removeItem('kasb_refresh_token');
 }
 
-let isRefreshing = false;
-let refreshSubscribers: Array<(token: string) => void> = [];
+let activeRefreshPromise: Promise<string | null> | null = null;
+let authExpiredDispatched = false;
 
-function subscribeTokenRefresh(cb: (token: string) => void) {
-  refreshSubscribers.push(cb);
+function dispatchSessionExpiredOnce(): void {
+  clearAuthToken();
+  if (!authExpiredDispatched && typeof window !== 'undefined') {
+    authExpiredDispatched = true;
+    window.dispatchEvent(new CustomEvent('kasb:auth_expired'));
+    setTimeout(() => {
+      authExpiredDispatched = false;
+    }, 1000);
+  }
 }
 
-function onRefreshed(token: string) {
-  refreshSubscribers.forEach((cb) => cb(token));
-  refreshSubscribers = [];
-}
-
-async function refreshAccessToken(): Promise<string | null> {
+async function performTokenRefresh(): Promise<string | null> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
 
@@ -53,16 +74,23 @@ async function refreshAccessToken(): Promise<string | null> {
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.token) {
-      clearAuthToken();
       return null;
     }
 
     setAuthTokens(data.token, data.refreshToken || refreshToken);
     return data.token;
   } catch {
-    clearAuthToken();
     return null;
   }
+}
+
+async function getOrRefreshAccessToken(): Promise<string | null> {
+  if (!activeRefreshPromise) {
+    activeRefreshPromise = performTokenRefresh().finally(() => {
+      activeRefreshPromise = null;
+    });
+  }
+  return activeRefreshPromise;
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
@@ -83,49 +111,28 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retries =
         headers: token ? { ...headers, Authorization: `Bearer ${token}` } : headers,
       });
 
-      // Handle 401 unauthorized with single token refresh attempt (prevent infinite loop)
+      // Handle 401 unauthorized with single-flight shared token refresh attempt
       if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/refresh') && !endpoint.includes('/auth/register')) {
-        if (!isRefreshing) {
-          isRefreshing = true;
-          const newToken = await refreshAccessToken();
-          isRefreshing = false;
-
-          if (newToken) {
-            token = newToken;
-            onRefreshed(newToken);
-            // Retry request with fresh token
-            const retryResponse = await fetch(`${BASE_URL}${endpoint}`, {
-              ...options,
-              headers: { ...headers, Authorization: `Bearer ${newToken}` },
-            });
-            const retryData = await retryResponse.json().catch(() => ({}));
-            if (!retryResponse.ok) {
-              throw new Error(retryData.error || `خطأ في الخادم (رمز ${retryResponse.status}): تعذر إكمال العملية.`);
-            }
-            return retryData as T;
-          } else {
-            clearAuthToken();
-            window.dispatchEvent(new CustomEvent('kasb:auth_expired'));
-            throw new Error('انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً.');
-          }
-        } else {
-          // Wait for ongoing refresh
-          return new Promise((resolve, reject) => {
-            subscribeTokenRefresh(async (newToken) => {
-              try {
-                const retryResponse = await fetch(`${BASE_URL}${endpoint}`, {
-                  ...options,
-                  headers: { ...headers, Authorization: `Bearer ${newToken}` },
-                });
-                const retryData = await retryResponse.json().catch(() => ({}));
-                if (!retryResponse.ok) reject(new Error(retryData.error));
-                else resolve(retryData as T);
-              } catch (e) {
-                reject(e);
-              }
-            });
+        const newToken = await getOrRefreshAccessToken();
+        if (newToken) {
+          token = newToken;
+          const retryResponse = await fetch(`${BASE_URL}${endpoint}`, {
+            ...options,
+            headers: { ...headers, Authorization: `Bearer ${newToken}` },
           });
+          const retryData = await retryResponse.json().catch(() => ({}));
+          if (retryResponse.status === 401) {
+            dispatchSessionExpiredOnce();
+            throw new SessionExpiredError();
+          }
+          if (!retryResponse.ok) {
+            throw new Error(retryData.error || `خطأ في الخادم (رمز ${retryResponse.status}): تعذر إكمال العملية.`);
+          }
+          return retryData as T;
         }
+
+        dispatchSessionExpiredOnce();
+        throw new SessionExpiredError();
       }
 
       const data = await response.json().catch(() => ({}));
@@ -299,12 +306,15 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (res.status === 401) {
-      const refreshed = await refreshAccessToken();
+      const refreshed = await getOrRefreshAccessToken();
       if (refreshed) {
         token = refreshed;
         res = await fetch(`${BASE_URL}/admin/financial-report/export?${q.toString()}`, {
           headers: { Authorization: `Bearer ${refreshed}` },
         });
+      } else {
+        dispatchSessionExpiredOnce();
+        throw new SessionExpiredError();
       }
     }
     if (!res.ok) {

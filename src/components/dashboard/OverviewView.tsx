@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { api } from '../../api/client.ts';
+import { api, SessionExpiredError } from '../../api/client.ts';
 import type { TaskItem, TaskSubmission, WalletTransaction } from '../../types/index.ts';
 import {
   Wallet,
@@ -28,9 +28,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
     const loadOverviewData = async () => {
       try {
         const tasksRes = await api.getTasks();
+        if (!isMounted) return;
         setRecentTasks((tasksRes.tasks || []).slice(0, 3));
 
         if (user) {
@@ -38,6 +40,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
             api.getMySubmissions(),
             api.getMyWallet(),
           ]);
+          if (!isMounted) return;
           setRecentSubmissions((subsRes.submissions || []).slice(0, 3));
           setRecentTransactions((walletRes.transactions || []).slice(0, 5));
         } else {
@@ -45,12 +48,21 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
           setRecentTransactions([]);
         }
       } catch (err) {
-        console.error('Error loading dashboard overview', err);
+        if (!isMounted) return;
+        if (err instanceof SessionExpiredError) {
+          setRecentSubmissions([]);
+          setRecentTransactions([]);
+        } else {
+          console.error('Error loading dashboard overview', err);
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) setIsLoading(false);
       }
     };
     loadOverviewData();
+    return () => {
+      isMounted = false;
+    };
   }, [user]);
 
   return (

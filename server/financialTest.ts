@@ -273,7 +273,15 @@ async function runHttpRouteAuthAndReferralIntegrationTests() {
     const apiBonus = Number(settingsJson.settings?.referralBonus ?? settingsJson.referralBonus);
     assert.strictEqual(apiBonus, 30, `referralBonus must stay 30, got ${apiBonus}`);
 
-    console.log(`  - Verified 401 protection on ${protectedEndpoints.length} routes, 400 rejection on invalid referral codes & referralBonus=30.`);
+    // Auth refresh endpoint rejects missing refreshToken with 401
+    const refreshResp = await fetch(`${baseUrl}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.strictEqual(refreshResp.status, 401, 'Missing refreshToken must return 401');
+
+    console.log(`  - Verified 401 protection on ${protectedEndpoints.length} routes, /api/auth/refresh 401 guard, 400 rejection on invalid referral codes & referralBonus=30.`);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

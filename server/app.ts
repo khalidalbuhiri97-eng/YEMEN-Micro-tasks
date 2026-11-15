@@ -516,6 +516,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.json({
         success: true,
         token: supaAuth.session.access_token,
+        refreshToken: supaAuth.session.refresh_token,
         user: userPayload,
         wallet,
       });
@@ -526,6 +527,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       requiresEmailConfirmation: true,
       message: 'تم إنشاء الحساب بنجاح. يرجى مراجعة بريدك الإلكتروني لتأكيد الحساب قبل تسجيل الدخول.',
       token: null,
+      refreshToken: null,
       user: userPayload,
       wallet,
     });
@@ -587,12 +589,40 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       token: authRes.session.access_token,
+      refreshToken: authRes.session.refresh_token,
       user: profile,
       wallet,
     });
   } catch (err: any) {
     console.error('[AUTH_LOGIN_ERROR]', err?.message || err);
     return res.status(401).json({ error: 'بيانات الدخول غير صحيحة أو تعذر التحقق.' });
+  }
+});
+
+app.post('/api/auth/refresh', async (req: Request, res: Response) => {
+  try {
+    const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
+    if (!refreshToken) {
+      return res.status(401).json({ error: 'رمز تحديث الجلسة مفقود.' });
+    }
+
+    const { data, error } = await supabaseServer.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data?.session?.access_token || !data?.user) {
+      return res.status(401).json({ error: 'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً.' });
+    }
+
+    const profile = await supabaseDb.findUserById(data.user.id);
+    if (profile?.status === 'suspended') {
+      return res.status(403).json({ error: 'تم تجميد هذا الحساب لمخالفة شروط الاستخدام.' });
+    }
+
+    return res.json({
+      success: true,
+      token: data.session.access_token,
+      refreshToken: data.session.refresh_token || refreshToken,
+    });
+  } catch {
+    return res.status(401).json({ error: 'تعذر تجديد الجلسة، يرجى تسجيل الدخول مجدداً.' });
   }
 });
 

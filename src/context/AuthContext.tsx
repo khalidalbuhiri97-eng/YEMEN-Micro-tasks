@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { api, setAuthToken, clearAuthToken, getAuthToken } from '../api/client.ts';
+import { api, setAuthTokens, clearAuthToken, getAuthToken } from '../api/client.ts';
 import type { UserProfile, UserWallet } from '../types/index.ts';
 import { AuthModal } from '../components/auth/AuthModal.tsx';
 import { ConfirmModal, type ConfirmModalVariant } from '../components/common/ConfirmModal.tsx';
@@ -107,9 +107,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadCurrentUser();
   }, []);
 
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      clearAuthToken();
+      setUser((prevUser) => {
+        if (prevUser) {
+          showToast('انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً.', 'error');
+          setAuthMode('login');
+          setIsAuthOpen(true);
+        }
+        return null;
+      });
+      setWallet(null);
+    };
+
+    window.addEventListener('kasb:auth_expired', handleAuthExpired);
+    return () => window.removeEventListener('kasb:auth_expired', handleAuthExpired);
+  }, [showToast]);
+
   const login = async (identifier: string, pass: string) => {
     const res = await api.login({ identifier, password: pass });
-    setAuthToken(res.token);
+    setAuthTokens(res.token, res.refreshToken);
     setUser(res.user);
     setWallet(res.wallet);
     showToast(`مرحباً بك، ${res.user.fullName}`, 'success');
@@ -117,10 +135,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const register = async (payload: any) => {
     const res = await api.register(payload);
-    setAuthToken(res.token);
-    setUser(res.user);
-    setWallet(res.wallet);
-    showToast('تم إنشاء وتفعيل حسابك بنجاح!', 'success');
+    if (res.token) {
+      setAuthTokens(res.token, res.refreshToken);
+      setUser(res.user);
+      setWallet(res.wallet);
+      showToast('تم إنشاء وتفعيل حسابك بنجاح!', 'success');
+    } else {
+      clearAuthToken();
+      showToast(res.message || 'تم إنشاء الحساب بنجاح. يرجى تأكيد بريدك الإلكتروني قبل تسجيل الدخول.', 'info');
+    }
   };
 
   const logout = async () => {
