@@ -20,7 +20,7 @@ interface WithdrawViewProps {
 }
 
 export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
-  const { user, wallet, refreshWallet, showToast, openAuthModal } = useAuth();
+  const { user, wallet, refreshWallet, showToast, openAuthModal, openConfirmModal } = useAuth();
   const [methods, setMethods] = useState<PayoutMethod[]>([]);
   const [selectedMethod, setSelectedMethod] = useState<string>('KURAIMI');
   const [amount, setAmount] = useState<string>('2000');
@@ -92,25 +92,37 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const res = await api.requestWithdrawal({
-        method: selectedMethod,
-        amount: numAmount,
-        beneficiaryName,
-        phoneNumber,
-        accountNumber: accountNumber || undefined,
-      });
+    const methodLabel = activeMethod?.nameAr || selectedMethod;
+    openConfirmModal({
+      title: 'تأكيد طلب السحب المالي',
+      message: `هل تريد تأكيد سحب مبلغ ${numAmount.toLocaleString()} ر.ي (الصافي ${netAmount.toLocaleString()} ر.ي) عبر ${methodLabel}؟`,
+      confirmLabel: 'تأكيد السحب',
+      cancelLabel: 'إلغاء',
+      variant: 'primary',
+      onConfirm: async () => {
+        setIsSubmitting(true);
+        try {
+          await api.requestWithdrawal({
+            method: selectedMethod,
+            amount: numAmount,
+            beneficiaryName,
+            phoneNumber,
+            accountNumber: accountNumber || undefined,
+          });
 
-      showToast('تم تقديم طلب السحب بنجاح وحجز الرصيد!', 'success');
-      await refreshWallet();
-      await loadMethodsAndHistory();
-      setAmount('1000');
-    } catch (err: any) {
-      setError(err.message || 'فشل في إرسال طلب السحب.');
-    } finally {
-      setIsSubmitting(false);
-    }
+          showToast('تم تقديم طلب السحب بنجاح وحجز الرصيد!', 'success');
+          await refreshWallet();
+          await loadMethodsAndHistory();
+          setAmount('1000');
+        } catch (err: any) {
+          const msg = err.message || 'فشل في إرسال طلب السحب.';
+          setError(msg);
+          showToast(msg, 'error');
+        } finally {
+          setIsSubmitting(false);
+        }
+      },
+    });
   };
 
   const getStatusBadge = (status: string) => {

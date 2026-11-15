@@ -1,7 +1,24 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { api, setAuthToken, clearAuthToken, getAuthToken } from '../api/client.ts';
 import type { UserProfile, UserWallet } from '../types/index.ts';
 import { AuthModal } from '../components/auth/AuthModal.tsx';
+import { ConfirmModal, type ConfirmModalVariant } from '../components/common/ConfirmModal.tsx';
+import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+
+export interface ConfirmActionOptions {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  variant?: ConfirmModalVariant;
+  onConfirm: () => Promise<void> | void;
+}
+
+interface ToastItem {
+  id: string;
+  message: string;
+  type: 'success' | 'error' | 'info';
+}
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -16,6 +33,7 @@ interface AuthContextType {
   toast: { message: string; type: 'success' | 'error' | 'info' } | null;
   openAuthModal: (mode?: 'login' | 'register' | 'owner') => void;
   closeAuthModal: () => void;
+  openConfirmModal: (options: ConfirmActionOptions) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -24,14 +42,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<UserProfile | null>(null);
   const [wallet, setWallet] = useState<UserWallet | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [confirmOptions, setConfirmOptions] = useState<ConfirmActionOptions | null>(null);
+  const [isConfirmLoading, setIsConfirmLoading] = useState(false);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    setToast({ message, type });
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    setToasts((prev) => [...prev.slice(-3), { id, message, type }]);
     setTimeout(() => {
-      setToast((prev) => (prev?.message === message ? null : prev));
-    }, 4000);
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
+
+  const openConfirmModal = useCallback((options: ConfirmActionOptions) => {
+    setConfirmOptions(options);
+  }, []);
+
+  const handleConfirmExecute = async () => {
+    if (!confirmOptions || isConfirmLoading) return;
+    setIsConfirmLoading(true);
+    try {
+      await confirmOptions.onConfirm();
+      setConfirmOptions(null);
+    } catch (err: any) {
+      setConfirmOptions(null);
+      showToast(err?.message || 'تعذر إتمام العملية، يرجى المحاولة مجدداً.', 'error');
+    } finally {
+      setIsConfirmLoading(false);
+    }
   };
+
+  const handleConfirmCancel = useCallback(() => {
+    if (isConfirmLoading) return;
+    setConfirmOptions(null);
+  }, [isConfirmLoading]);
 
   const loadCurrentUser = async () => {
     const token = getAuthToken();
@@ -105,6 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const isAdmin = Boolean(user && user.role === 'admin');
+  const latestToast = toasts.length > 0 ? toasts[toasts.length - 1] : null;
 
   return (
     <AuthContext.Provider
@@ -118,9 +167,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         refreshWallet,
         showToast,
-        toast,
+        toast: latestToast ? { message: latestToast.message, type: latestToast.type } : null,
         openAuthModal,
         closeAuthModal,
+        openConfirmModal,
       }}
     >
       {children}
@@ -129,18 +179,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         defaultMode={authMode}
         onClose={closeAuthModal}
       />
-      {toast && (
-        <div
-          role="alert"
-          className={`fixed bottom-6 left-6 z-50 flex items-center gap-3 px-5 py-3 rounded-xl shadow-xl text-xs font-semibold border transition-all ${
-            toast.type === 'success'
-              ? 'bg-slate-900 text-emerald-400 border-emerald-500/40'
-              : toast.type === 'error'
-              ? 'bg-slate-900 text-rose-400 border-rose-500/40'
-              : 'bg-slate-900 text-slate-100 border-slate-700'
-          }`}
-        >
-          <span>{toast.message}</span>
+      <ConfirmModal
+        isOpen={Boolean(confirmOptions)}
+        title={confirmOptions?.title || ''}
+        message={confirmOptions?.message || ''}
+        confirmLabel={confirmOptions?.confirmLabel}
+        cancelLabel={confirmOptions?.cancelLabel}
+        variant={confirmOptions?.variant}
+        isLoading={isConfirmLoading}
+        onConfirm={handleConfirmExecute}
+        onCancel={handleConfirmCancel}
+      />
+      {toasts.length > 0 && (
+        <div className="fixed bottom-6 left-6 z-[100] flex flex-col gap-2 max-w-sm w-full sm:w-auto pointer-events-none">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              role="alert"
+              className={`pointer-events-auto flex items-center justify-between gap-3 px-4 py-3 rounded-xl shadow-2xl text-xs font-semibold border transition-all animate-in fade-in slide-in-from-bottom-2 ${
+                t.type === 'success'
+                  ? 'bg-slate-900 text-emerald-400 border-emerald-500/40'
+                  : t.type === 'error'
+                  ? 'bg-slate-900 text-rose-400 border-rose-500/40'
+                  : 'bg-slate-900 text-slate-100 border-slate-700'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                {t.type === 'success' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : t.type === 'error' ? (
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                ) : (
+                  <Info className="w-4 h-4 text-blue-400 shrink-0" />
+                )}
+                <span className="leading-relaxed">{t.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => dismissToast(t.id)}
+                aria-label="إغلاق الإشعار"
+                className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors shrink-0"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </AuthContext.Provider>

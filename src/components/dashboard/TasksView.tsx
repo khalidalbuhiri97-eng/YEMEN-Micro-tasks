@@ -15,6 +15,7 @@ import {
   Eye,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { SecureImageView } from '../common/SecureImageView.tsx';
 
 function renderTextWithSafeLinks(text: string) {
   if (!text) return null;
@@ -104,7 +105,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
     setActiveTask(null);
   };
 
-  // Real upload to Supabase Storage bucket "task-proofs"
+  // Direct browser-to-storage upload via Signed Upload URL
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -114,25 +115,41 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
       return;
     }
 
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (file.type && !allowedTypes.includes(file.type.toLowerCase())) {
+      setSubmitError('صيغة الملف غير مدعومة. يرجى اختيار صورة JPEG أو PNG أو WEBP.');
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitError('');
 
     try {
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve, reject) => {
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+      const signRes = await api.getUploadSignedUrl({
+        taskId: activeTask!.id,
+        fileName: file.name,
+        contentType: file.type || 'image/jpeg',
+        fileSize: file.size,
       });
-      const base64Data = await base64Promise;
 
-      const uploadRes = await api.uploadImage(base64Data, file.name, file.type || 'image/jpeg');
-      if (uploadRes?.url) {
-        setProofImages([uploadRes.url]);
-        showToast('تم رفع الصورة بنجاح إلى التخزين السحابي', 'success');
-      } else {
-        throw new Error('فشل رفع الصورة');
+      if (!signRes?.signedUrl || !signRes?.path) {
+        throw new Error('تعذر الحصول على رابط الرفع المؤقت.');
       }
+
+      const uploadRes = await fetch(signRes.signedUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type || 'image/jpeg',
+        },
+        body: file,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error('فشل رفع الصورة مباشرة إلى التخزين السحابي.');
+      }
+
+      setProofImages([signRes.path]);
+      showToast('تم رفع الصورة بنجاح إلى التخزين السحابي الآمن', 'success');
     } catch (err: any) {
       setSubmitError(err.message || 'فشل رفع الصورة إلى التخزين السحابي، يرجى المحاولة مجدداً.');
     } finally {
@@ -503,10 +520,10 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                   <div className="mt-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 hover:border-emerald-500 transition-colors bg-slate-50/50 dark:bg-slate-800/30">
                     {proofImages.length > 0 ? (
                       <div className="relative w-full max-h-48 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
-                        <img
-                          src={proofImages[0]}
+                        <SecureImageView
+                          storagePathOrUrl={proofImages[0]}
                           alt="إثبات المهمة المرفوع"
-                          className="w-full h-40 object-cover"
+                          className="w-full h-40 object-cover rounded-lg"
                         />
                         <button
                           type="button"

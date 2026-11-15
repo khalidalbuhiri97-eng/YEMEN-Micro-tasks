@@ -3,6 +3,7 @@ import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import type { TaskSubmission } from '../../types/index.ts';
 import { Clock, CheckCircle2, XCircle, AlertCircle, Image as ImageIcon, Eye, RefreshCw, X, FileCheck } from 'lucide-react';
+import { SecureImageView } from '../common/SecureImageView.tsx';
 
 interface MySubmissionsViewProps {
   onBrowseTasks: () => void;
@@ -230,8 +231,8 @@ export const MySubmissionsView: React.FC<MySubmissionsViewProps> = ({ onBrowseTa
             >
               <X className="w-5 h-5" />
             </button>
-            <img
-              src={selectedImage}
+            <SecureImageView
+              storagePathOrUrl={selectedImage}
               alt="صورة الإثبات"
               className="w-full max-h-[80vh] object-contain rounded-xl"
             />

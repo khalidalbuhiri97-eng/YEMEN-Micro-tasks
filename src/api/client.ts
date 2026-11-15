@@ -177,8 +177,10 @@ export const api = {
   getTaskById: (id: string) => request<any>(`/tasks/${id}`),
   submitTaskProof: (payload: { taskId: string; proofText?: string; proofImages?: string[]; proofUrl?: string }) =>
     request<any>('/tasks/submit', { method: 'POST', body: JSON.stringify(payload) }),
-  uploadImage: (fileBase64: string, fileName: string, contentType: string) =>
-    request<{ url: string }>('/upload', { method: 'POST', body: JSON.stringify({ fileBase64, fileName, contentType }) }),
+  getUploadSignedUrl: (payload: { taskId: string; fileName: string; contentType: string; fileSize: number }) =>
+    request<{ signedUrl: string; token: string; path: string }>('/upload/signed-url', { method: 'POST', body: JSON.stringify(payload) }),
+  getViewSignedUrl: (storagePath: string) =>
+    request<{ signedUrl: string }>('/storage/signed-url', { method: 'POST', body: JSON.stringify({ storagePath }) }),
   getMySubmissions: () => request<any>('/submissions/my'),
 
   // Wallet & Withdrawals

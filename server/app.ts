@@ -47,6 +47,18 @@ export const getSupabaseUserClient = (userToken: string) => {
   });
 };
 
+// Privileged Database Client: uses Service Role if configured, otherwise falls back to caller's verified JWT (RLS + public.is_admin())
+export const getPrivilegedDbClient = (req?: AuthenticatedRequest) => {
+  try {
+    return getSupabaseAdminClient();
+  } catch {
+    if (req?.authToken) {
+      return getSupabaseUserClient(req.authToken);
+    }
+    return supabaseServer;
+  }
+};
+
 // Operational Metrics Counters
 let totalSuccessfulOps = 1;
 let totalFailedOps = 0;
@@ -613,43 +625,80 @@ app.get('/api/tasks/:id', async (req: Request, res: Response) => {
   }
 });
 
-// Storage Image Upload to Supabase Bucket "task-proofs"
-app.post('/api/upload', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// Secure Signed Upload URL & Signed Read URL for Private "task-proofs" Bucket
+app.post('/api/upload/signed-url', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { fileBase64, fileName, contentType } = req.body || {};
-    if (!fileBase64) {
-      return res.status(400).json({ error: 'لم يتم إرسال ملف الصورة' });
+    const { taskId, fileName, contentType, fileSize } = req.body || {};
+    if (!taskId) {
+      return res.status(400).json({ error: 'معرف المهمة مطلوب لرفع الإثبات' });
     }
 
-    const base64Data = fileBase64.replace(/^data:.*;base64,/, '');
-    const buffer = Buffer.from(base64Data, 'base64');
-    const safeFileName = `${Date.now()}_${Math.random().toString(36).substring(7)}_${fileName || 'proof.jpg'}`;
+    const cleanContentType = String(contentType || '').trim().toLowerCase();
+    const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!ALLOWED_MIME_TYPES.includes(cleanContentType)) {
+      return res.status(400).json({ error: 'صيغة الملف غير مدعومة. يرجى اختيار صورة بصيغة JPEG أو PNG أو WEBP.' });
+    }
 
-    const { data, error } = await supabaseServer.storage
+    const numSize = Number(fileSize) || 0;
+    if (numSize > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'حجم الصورة يتجاوز الحد الأقصى المسموح (5 ميجابايت).' });
+    }
+
+    // Verify task exists and is active
+    const task = await supabaseDb.getTaskById(taskId);
+    if (!task) {
+      return res.status(404).json({ error: 'المهمة المطلوبة غير موجودة.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const safeFileName = (fileName || 'proof.jpg').replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const storagePath = `tasks/${taskId}/${req.user.id}/${Date.now()}_${crypto.randomUUID().slice(0, 6)}_${safeFileName}`;
+
+    const { data, error } = await adminClient.storage
       .from('task-proofs')
-      .upload(safeFileName, buffer, {
-        contentType: contentType || 'image/jpeg',
-        upsert: true,
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data?.signedUrl) {
+      await logSupabaseError({
+        err: error || 'createSignedUploadUrl returned null',
+        operation: 'CREATE_SIGNED_UPLOAD_URL',
+        sourceTable: 'task-proofs',
+        apiRoute: '/api/upload/signed-url',
+        details: { taskId, userId: req.user.id },
       });
-
-    if (error) {
-      console.error('Supabase storage upload error:', error);
-      return res.status(500).json({ error: `فشل رفع الصورة إلى التخزين: ${error.message}` });
+      return res.status(500).json({ error: `فشل إنشاء رابط الرفع الآمن: ${error?.message || 'خطأ غير معروف'}` });
     }
 
-    const { data: publicUrlData } = supabaseServer.storage
-      .from('task-proofs')
-      .getPublicUrl(safeFileName);
-
-    const publicUrl = publicUrlData?.publicUrl;
-    if (!publicUrl) {
-      return res.status(500).json({ error: 'تعذر الحصول على رابط الصورة المرفوعة' });
-    }
-
-    return res.json({ url: publicUrl });
+    return res.json({
+      signedUrl: data.signedUrl,
+      token: data.token,
+      path: storagePath,
+    });
   } catch (err: any) {
-    console.error('Upload error:', err);
-    return res.status(500).json({ error: err.message || 'حدث خطأ أثناء رفع الملف' });
+    console.error('Signed upload error:', err);
+    return res.status(500).json({ error: err.message || 'حدث خطأ أثناء إنشاء رابط الرفع الآمن' });
+  }
+});
+
+app.post('/api/storage/signed-url', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { storagePath } = req.body || {};
+    if (!storagePath || typeof storagePath !== 'string') {
+      return res.status(400).json({ error: 'مسار التخزين مطلوب' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data, error } = await adminClient.storage
+      .from('task-proofs')
+      .createSignedUrl(storagePath.trim(), 3600); // 1 hour validity
+
+    if (error || !data?.signedUrl) {
+      return res.status(404).json({ error: `تعذر إصدار رابط عرض الصورة: ${error?.message || 'الملف غير موجود'}` });
+    }
+
+    return res.json({ signedUrl: data.signedUrl });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'تعذر جلب رابط عرض الصورة' });
   }
 });
 
@@ -1024,7 +1073,7 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       return res.status(400).json({ error: 'يجب ذكر سبب الرفض للتوضيح للمستخدم.' });
     }
 
-    const adminClient = getSupabaseAdminClient();
+    const adminClient = getPrivilegedDbClient(req);
     const { data: existingSub, error: subErr } = await adminClient
       .from('task_submissions')
       .select('id, task_id, user_id, status, reward_transaction_id')
@@ -1294,7 +1343,7 @@ app.post('/api/admin/treasury/issue', adminMiddleware, async (req: Authenticated
       return res.status(400).json({ error: 'سبب الإصدار مطلوب للتدقيق المحاسبي.' });
     }
 
-    const adminClient = getSupabaseAdminClient();
+    const adminClient = getPrivilegedDbClient(req);
     const { data: accounts, error: accErr } = await adminClient
       .from('financial_accounts')
       .select('id, account_code')
@@ -1361,16 +1410,23 @@ app.get('/api/admin/ledger', adminMiddleware, async (req: AuthenticatedRequest, 
 
 app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminClient = getSupabaseAdminClient();
+    const adminClient = getPrivilegedDbClient(req);
     const { title, description, status } = req.body || {};
     const updates: Record<string, any> = {};
     if (title !== undefined) updates.title = title;
     if (description !== undefined) updates.description = description;
-    if (status !== undefined) updates.status = String(status).toLowerCase();
+    if (status !== undefined) updates.status = String(status).toUpperCase();
 
-    const { error } = await adminClient.from('tasks').update(updates).eq('id', req.params.id);
+    const { data, error } = await adminClient
+      .from('tasks')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select('id');
 
     if (error) throw error;
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'المهمة غير موجودة أو لا تملك صلاحية تعديلها.' });
+    }
     res.json({ success: true });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -1378,19 +1434,98 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
 });
 
 app.delete('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const taskId = req.params.id;
   try {
-    const adminClient = getSupabaseAdminClient();
-    const taskId = req.params.id;
+    if (!taskId) {
+      return res.status(400).json({ error: 'معرف المهمة مطلوب للحذف.' });
+    }
 
-    // Delete associated task submissions first to avoid foreign key violation constraint
-    await adminClient.from('task_submissions').delete().eq('task_id', taskId);
+    const adminClient = getPrivilegedDbClient(req);
 
-    const { error } = await adminClient.from('tasks').delete().eq('id', taskId);
-    if (error) throw error;
-    res.json({ success: true });
+    // 1. Verify the task exists before deleting
+    const { data: existingTask, error: fetchErr } = await adminClient
+      .from('tasks')
+      .select('id, title')
+      .eq('id', taskId)
+      .maybeSingle();
+
+    if (fetchErr) {
+      await logSupabaseError({
+        err: fetchErr,
+        operation: 'DELETE_TASK_LOOKUP',
+        sourceTable: 'tasks',
+        apiRoute: `/api/admin/tasks/${taskId}`,
+        details: { taskId, adminId: req.user?.id },
+      });
+      return res.status(400).json({ error: `تعذر التحقق من المهمة في قاعدة البيانات: ${fetchErr.message}` });
+    }
+
+    if (!existingTask) {
+      return res.status(404).json({ error: 'المهمة المطلوبة غير موجودة أو تم حذفها مسبقاً.' });
+    }
+
+    // 2. Clean up associated submissions if allowed; if RLS blocks direct delete on submissions, ON DELETE CASCADE on tasks handles it
+    const { error: subDelErr } = await adminClient
+      .from('task_submissions')
+      .delete()
+      .eq('task_id', taskId);
+
+    if (subDelErr && subDelErr.code !== '42501') {
+      await logSupabaseError({
+        err: subDelErr,
+        operation: 'DELETE_TASK_SUBMISSIONS',
+        sourceTable: 'task_submissions',
+        apiRoute: `/api/admin/tasks/${taskId}`,
+        details: { taskId },
+      });
+    }
+
+    // 3. Delete the task and verify an actual row was deleted
+    const { data: deletedRows, error: delErr } = await adminClient
+      .from('tasks')
+      .delete()
+      .eq('id', taskId)
+      .select('id');
+
+    if (delErr) {
+      await logSupabaseError({
+        err: delErr,
+        operation: 'DELETE_TASK',
+        sourceTable: 'tasks',
+        apiRoute: `/api/admin/tasks/${taskId}`,
+        details: { taskId, adminId: req.user?.id },
+      });
+
+      const code = String(delErr.code || '');
+      if (code === '23503') {
+        return res.status(400).json({
+          error: 'تعذر حذف المهمة من قاعدة البيانات لوجود سجلات مرتبطة بها (إثباتات أو قيود مالية مرتبطة بالمهمة).',
+        });
+      }
+      if (code === '42501') {
+        return res.status(403).json({
+          error: 'رفضت قاعدة البيانات حذف المهمة بسبب قيود الصلاحيات (RLS). يرجى التأكد من صلاحيات المدير أو مفتاح الخادم.',
+        });
+      }
+      return res.status(400).json({ error: `فشل حذف المهمة من قاعدة البيانات: ${delErr.message}` });
+    }
+
+    if (!deletedRows || deletedRows.length === 0) {
+      return res.status(403).json({
+        error: 'لم يتم حذف المهمة في قاعدة البيانات (0 صفوف متأثرة). يرجى التحقق من سياسات الأمان (RLS) لجدول المهام.',
+      });
+    }
+
+    res.json({ success: true, deletedId: deletedRows[0].id });
   } catch (err: any) {
     console.error('Task deletion error:', err);
-    res.status(400).json({ error: err.message || 'فشل حذف المهمة' });
+    await logSupabaseError({
+      err,
+      operation: 'DELETE_TASK_EXCEPTION',
+      sourceTable: 'tasks',
+      apiRoute: `/api/admin/tasks/${taskId}`,
+    });
+    res.status(400).json({ error: err.message || 'فشل حذف المهمة من قاعدة البيانات.' });
   }
 });
 
@@ -1425,7 +1560,7 @@ app.post('/api/admin/users/:id/adjust', adminMiddleware, async (req: Authenticat
       return res.status(400).json({ error: 'سبب التسوية مطلوب للتدقيق المحاسبي.' });
     }
 
-    const adminClient = getSupabaseAdminClient();
+    const adminClient = getPrivilegedDbClient(req);
     const { accountRow: userAcc } = await supabaseDb.ensureUserFinancialAccount(req.params.id);
     const currentBal = Number(userAcc.balance_units || 0);
     if (currentBal + numAmount < 0) {
@@ -1489,9 +1624,9 @@ app.post('/api/admin/users/:id/status', adminMiddleware, async (req: Authenticat
   }
 });
 
-app.get('/api/admin/financial-report', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/financial-report', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const adminClient = getSupabaseAdminClient();
+    const adminClient = getPrivilegedDbClient(req);
     const [tasksRes, treasury] = await Promise.all([
       adminClient.from('tasks').select('reward_units, approved_count'),
       supabaseDb.getTreasurySummary(),

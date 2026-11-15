@@ -32,9 +32,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { SecureImageView } from '../common/SecureImageView.tsx';
 
 export const AdminDashboard: React.FC = () => {
-  const { user, showToast } = useAuth();
+  const { user, showToast, openConfirmModal } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'users' | 'reports' | 'settings'>('overview');
   
   // Data state
@@ -114,72 +115,128 @@ export const AdminDashboard: React.FC = () => {
   }, []);
 
   // --- SUBMISSION ACTIONS ---
-  const handleApproveSubmission = async (sub: TaskSubmission) => {
-    try {
-      await api.reviewSubmission(sub.id, 'APPROVE');
-      try {
-        confetti({ particleCount: 50, spread: 40 });
-      } catch {}
-      showToast(`تمت الموافقة على إثبات "${sub.taskTitle}" وإيداع المكافأة آلياً!`, 'success');
-      setReviewingSubmission(null);
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل في اعتماد الإثبات', 'error');
+  const handleApproveSubmission = (sub: TaskSubmission) => {
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية تنفيذ هذا الإجراء.', 'error');
+      return;
     }
+    openConfirmModal({
+      title: 'اعتماد إثبات المهمة وصرف المكافأة',
+      message: `هل تريد اعتماد إثبات "${sub.taskTitle}" وإيداع ${sub.taskRewardYer?.toLocaleString() || 0} ر.ي في محفظة ${sub.userFullName}؟`,
+      confirmLabel: 'تأكيد الاعتماد',
+      cancelLabel: 'إلغاء',
+      variant: 'primary',
+      onConfirm: async () => {
+        try {
+          await api.reviewSubmission(sub.id, 'APPROVE');
+          try {
+            confetti({ particleCount: 50, spread: 40 });
+          } catch {}
+          showToast(`تمت الموافقة على إثبات "${sub.taskTitle}" وإيداع المكافأة آلياً!`, 'success');
+          setReviewingSubmission(null);
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل في اعتماد الإثبات', 'error');
+        }
+      },
+    });
   };
 
-  const handleRejectSubmission = async (sub: TaskSubmission) => {
+  const handleRejectSubmission = (sub: TaskSubmission) => {
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية تنفيذ هذا الإجراء.', 'error');
+      return;
+    }
     if (!rejectReason.trim()) {
       showToast('يرجى كتابة سبب رفض الإثبات للتوضيح للمستخدم', 'error');
       return;
     }
-    try {
-      await api.reviewSubmission(sub.id, 'REJECT', rejectReason);
-      showToast('تم رفض الإثبات وإشعار المستخدم بالسبب.', 'info');
-      setReviewingSubmission(null);
-      setRejectReason('');
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل في رفض الإثبات', 'error');
-    }
+    openConfirmModal({
+      title: 'رفض إثبات المهمة',
+      message: `هل أنت متأكد من رفض إثبات "${sub.taskTitle}" المقدم من ${sub.userFullName}؟`,
+      confirmLabel: 'تأكيد الرفض',
+      cancelLabel: 'إلغاء',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await api.reviewSubmission(sub.id, 'REJECT', rejectReason);
+          showToast('تم رفض الإثبات وإشعار المستخدم بالسبب.', 'info');
+          setReviewingSubmission(null);
+          setRejectReason('');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل في رفض الإثبات', 'error');
+        }
+      },
+    });
   };
 
   // --- WITHDRAWAL ACTIONS ---
-  const handleConfirmPayout = async (w: WithdrawalRequest) => {
+  const handleConfirmPayout = (w: WithdrawalRequest) => {
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية تنفيذ هذا الإجراء.', 'error');
+      return;
+    }
     if (!transferRef.trim()) {
       showToast('يرجى إدخال رقم مرجع الحوالة البنكية أو إشعار الإرسال', 'error');
       return;
     }
-    try {
-      await api.reviewWithdrawal(w.id, 'PAY', { transferReference: transferRef });
-      showToast(`تم تأكيد إرسال الحوالة برقم ${transferRef}!`, 'success');
-      setPayingWithdrawal(null);
-      setTransferRef('');
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل في تأكيد الحوالة', 'error');
-    }
+    openConfirmModal({
+      title: 'تأكيد إرسال الحوالة المالية',
+      message: `هل تم تحويل مبلغ ${w.netAmount.toLocaleString()} ر.ي للمستفيد ${w.beneficiaryName} برقم مرجع ${transferRef.trim()}؟`,
+      confirmLabel: 'تأكيد الصرف',
+      cancelLabel: 'إلغاء',
+      variant: 'primary',
+      onConfirm: async () => {
+        try {
+          await api.reviewWithdrawal(w.id, 'PAY', { transferReference: transferRef.trim() });
+          showToast(`تم تأكيد إرسال الحوالة برقم ${transferRef.trim()}!`, 'success');
+          setPayingWithdrawal(null);
+          setTransferRef('');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل في تأكيد الحوالة', 'error');
+        }
+      },
+    });
   };
 
-  const handleRejectWithdrawal = async (w: WithdrawalRequest) => {
+  const handleRejectWithdrawal = (w: WithdrawalRequest) => {
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية تنفيذ هذا الإجراء.', 'error');
+      return;
+    }
     if (!withdrawingRejectReason.trim()) {
       showToast('يرجى ذكر سبب رفض طلب السحب واسترجاع الرصيد للمستخدم', 'error');
       return;
     }
-    try {
-      await api.reviewWithdrawal(w.id, 'REJECT', { reason: withdrawingRejectReason });
-      showToast('تم رفض السحب وإرجاع الرصيد المحجوز إلى محفظة المستخدم فوراً.', 'info');
-      setPayingWithdrawal(null);
-      setWithdrawingRejectReason('');
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل في رفض طلب السحب', 'error');
-    }
+    openConfirmModal({
+      title: 'رفض السحب واسترجاع الرصيد',
+      message: `هل تريد رفض طلب السحب بمبلغ ${w.amount.toLocaleString()} ر.ي وإعادة الرصيد لمحفظة ${w.beneficiaryName}؟`,
+      confirmLabel: 'تأكيد الرفض',
+      cancelLabel: 'إلغاء',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          await api.reviewWithdrawal(w.id, 'REJECT', { reason: withdrawingRejectReason.trim() });
+          showToast('تم رفض السحب وإرجاع الرصيد المحجوز إلى محفظة المستخدم فوراً.', 'info');
+          setPayingWithdrawal(null);
+          setWithdrawingRejectReason('');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل في رفض طلب السحب', 'error');
+        }
+      },
+    });
   };
 
   // --- CREATE NEW TASK ---
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية تنفيذ هذا الإجراء.', 'error');
+      return;
+    }
     try {
       await api.createAdminTask({
         title: newTaskTitle,
@@ -201,47 +258,104 @@ export const AdminDashboard: React.FC = () => {
   };
 
   // --- ADJUST BALANCE AUDITED ---
-  const handleAdjustBalance = async (e: React.FormEvent) => {
+  const handleAdjustBalance = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!adjustingUser || !adjustAmount || !adjustReason) return;
-    try {
-      await api.adjustUserBalance(adjustingUser.id, Number(adjustAmount), adjustReason);
-      showToast('تم تنفيذ التعديل المالي وتوثيقه في السجل المالي بنجاح.', 'success');
-      setAdjustingUser(null);
-      setAdjustAmount('');
-      setAdjustReason('');
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل في تعديل الرصيد', 'error');
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية تنفيذ هذا الإجراء.', 'error');
+      return;
     }
+    if (!adjustingUser || !adjustAmount || !adjustReason.trim()) {
+      showToast('يرجى إدخال المبلغ وسبب التعديل الإداري.', 'error');
+      return;
+    }
+    const numAdjust = Number(adjustAmount);
+    if (!Number.isFinite(numAdjust) || numAdjust === 0) {
+      showToast('يرجى إدخال قيمة تسوية صحيحة غير صفرية.', 'error');
+      return;
+    }
+    openConfirmModal({
+      title: 'تأكيد تسوية الرصيد المالي',
+      message: `هل أنت متأكد من ${numAdjust > 0 ? 'إضافة' : 'خصم'} ${Math.abs(numAdjust).toLocaleString()} ر.ي لحساب ${adjustingUser.fullName}؟`,
+      confirmLabel: 'تأكيد التسوية',
+      cancelLabel: 'إلغاء',
+      variant: numAdjust < 0 ? 'danger' : 'warning',
+      onConfirm: async () => {
+        try {
+          await api.adjustUserBalance(adjustingUser.id, numAdjust, adjustReason.trim());
+          showToast('تم تنفيذ التعديل المالي وتوثيقه في السجل المالي بنجاح.', 'success');
+          setAdjustingUser(null);
+          setAdjustAmount('');
+          setAdjustReason('');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل في تعديل الرصيد', 'error');
+        }
+      },
+    });
   };
 
-  const handleDeleteTask = async (taskId: string) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذه المهمة نهائياً من المنصة؟')) return;
-    try {
-      await api.deleteAdminTask(taskId);
-      showToast('تم حذف المهمة بنجاح', 'success');
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل حذف المهمة', 'error');
+  const handleDeleteTask = (task: TaskItem) => {
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية حذف المهام.', 'error');
+      return;
     }
+    openConfirmModal({
+      title: 'حذف المهمة',
+      message: `هل أنت متأكد من حذف المهمة "${task.title}" نهائياً؟`,
+      confirmLabel: 'تأكيد الحذف',
+      cancelLabel: 'إلغاء',
+      variant: 'danger',
+      onConfirm: async () => {
+        if (!user || user.role !== 'admin') {
+          showToast('غير مصرح لك بتنفيذ هذا الإجراء.', 'error');
+          return;
+        }
+        try {
+          await api.deleteAdminTask(task.id);
+          showToast('تم حذف المهمة بنجاح', 'success');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل حذف المهمة', 'error');
+        }
+      },
+    });
   };
 
   // --- TOGGLE USER STATUS ---
-  const handleToggleUserStatus = async (targetUser: any) => {
-    const nextStatus = targetUser.status === 'active' ? 'suspended' : 'active';
-    try {
-      await api.updateUserStatus(targetUser.id, nextStatus);
-      showToast(`تم ${nextStatus === 'suspended' ? 'تجميد' : 'إلغاء تجميد'} حساب المستخدم بنجاح.`, 'info');
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل في تحديث حالة المستخدم', 'error');
+  const handleToggleUserStatus = (targetUser: any) => {
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية تعديل حالة الحسابات.', 'error');
+      return;
     }
+    const nextStatus = targetUser.status === 'active' ? 'suspended' : 'active';
+    const isSuspending = nextStatus === 'suspended';
+    openConfirmModal({
+      title: isSuspending ? 'تجميد حساب المستخدم' : 'تفعيل حساب المستخدم',
+      message: isSuspending
+        ? `هل أنت متأكد من تجميد حساب "${targetUser.fullName}" ومنعه من الدخول؟`
+        : `هل تريد إعادة تفعيل حساب "${targetUser.fullName}"؟`,
+      confirmLabel: isSuspending ? 'تأكيد التجميد' : 'تأكيد التفعيل',
+      cancelLabel: 'إلغاء',
+      variant: isSuspending ? 'danger' : 'primary',
+      onConfirm: async () => {
+        try {
+          await api.updateUserStatus(targetUser.id, nextStatus);
+          showToast(`تم ${isSuspending ? 'تجميد' : 'إلغاء تجميد'} حساب المستخدم بنجاح.`, 'info');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل في تحديث حالة المستخدم', 'error');
+        }
+      },
+    });
   };
 
   // --- ISSUE TREASURY UNITS ---
-  const handleIssueTreasuryUnits = async (e: React.FormEvent) => {
+  const handleIssueTreasuryUnits = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user || user.role !== 'admin') {
+      showToast('ليس لديك صلاحية إصدار وحدات الخزينة.', 'error');
+      return;
+    }
     const amountNum = Number(issueAmount);
     if (isNaN(amountNum) || amountNum <= 0) {
       showToast('يرجى إدخال مبلغ صحيح أكبر من الصفر', 'error');
@@ -252,21 +366,30 @@ export const AdminDashboard: React.FC = () => {
       return;
     }
 
-    setIsIssuing(true);
-    try {
-      await api.issueTreasuryUnits({
-        amount: amountNum,
-        reason: issueReason.trim(),
-      });
-      showToast(`تم إصدار ${amountNum.toLocaleString()} وحدة افتراضية جديدة للخزينة بنجاح!`, 'success');
-      setIssueAmount('');
-      setIssueReason('');
-      await loadAllAdminData();
-    } catch (err: any) {
-      showToast(err.message || 'فشل في إصدار الوحدات النقدية للخزينة', 'error');
-    } finally {
-      setIsIssuing(false);
-    }
+    openConfirmModal({
+      title: 'إصدار وحدات نقدية للخزينة',
+      message: `هل تريد تأكيد إصدار ${amountNum.toLocaleString()} ر.ي وتقييدها في دفتر الأستاذ السيادي؟`,
+      confirmLabel: 'تأكيد الإصدار',
+      cancelLabel: 'إلغاء',
+      variant: 'warning',
+      onConfirm: async () => {
+        setIsIssuing(true);
+        try {
+          await api.issueTreasuryUnits({
+            amount: amountNum,
+            reason: issueReason.trim(),
+          });
+          showToast(`تم إصدار ${amountNum.toLocaleString()} وحدة افتراضية جديدة للخزينة بنجاح!`, 'success');
+          setIssueAmount('');
+          setIssueReason('');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل في إصدار الوحدات النقدية للخزينة', 'error');
+        } finally {
+          setIsIssuing(false);
+        }
+      },
+    });
   };
 
   const pendingSubmissionsCount = submissions.filter((s) => s.status === 'PENDING').length;
@@ -1035,7 +1158,8 @@ export const AdminDashboard: React.FC = () => {
                   <span>المكافأة: {t.rewardYer.toLocaleString()} ر.ي</span>
                   <span>المكتمل: {t.completedQuantity} / {t.totalQuantity}</span>
                   <button
-                    onClick={() => handleDeleteTask(t.id)}
+                    type="button"
+                    onClick={() => handleDeleteTask(t)}
                     className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
                     title="حذف المهمة نهائياً"
                   >
@@ -1253,9 +1377,27 @@ export const AdminDashboard: React.FC = () => {
           </div>
 
           <button
-            onClick={async () => {
-              await api.updateAdminSettings(settings);
-              showToast('تم حفظ الإعدادات بنجاح.', 'success');
+            type="button"
+            onClick={() => {
+              if (!user || user.role !== 'admin') {
+                showToast('ليس لديك صلاحية تعديل إعدادات النظام.', 'error');
+                return;
+              }
+              openConfirmModal({
+                title: 'حفظ إعدادات المنصة',
+                message: 'هل تريد حفظ التعديلات على حدود السحب والرسوم ومكافأة الإحالة؟',
+                confirmLabel: 'تأكيد الحفظ',
+                cancelLabel: 'إلغاء',
+                variant: 'primary',
+                onConfirm: async () => {
+                  try {
+                    await api.updateAdminSettings(settings);
+                    showToast('تم حفظ الإعدادات بنجاح.', 'success');
+                  } catch (err: any) {
+                    showToast(err.message || 'فشل حفظ الإعدادات', 'error');
+                  }
+                },
+              });
             }}
             className="px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow transition-colors"
           >
@@ -1439,8 +1581,8 @@ export const AdminDashboard: React.FC = () => {
             >
               <X className="w-5 h-5" />
             </button>
-            <img
-              src={previewImage}
+            <SecureImageView
+              storagePathOrUrl={previewImage}
               alt="صورة الإثبات"
               className="w-full max-h-[80vh] object-contain rounded-xl"
             />
