@@ -8,7 +8,9 @@
 
 import assert from 'node:assert';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import app, { supabaseServer } from './app.js';
 import {
   buildDoubleEntryForOperation,
@@ -399,12 +401,172 @@ function runEndToEndAccountingFlowTests() {
   console.log('  - Full closed-loop reconciliation, reversals, tax accrual/settlement & idempotency passed with 0 discrepancy.');
 }
 
+function runAtomicitySegregationAndImmutabilityTests() {
+  console.log('\n[5/6] Atomicity, Zero-Partial-Deduction, Fund Segregation & Immutability Verification...');
+  const v = new LedgerConsistencyVerifier();
+  const ids = v.accountIdsMap();
+  const escrow = v.createAccount('TASK-ESCROW-T2', 'escrow', 'credit');
+  const wallet = v.createAccount('WALLET-U2', 'wallet', 'credit');
+
+  // Fund treasury via owner capital (200,000) and fund task (50,000)
+  v.post(
+    'OWNER_CAPITAL_DEPOSIT',
+    'CAP-ATOM-1',
+    buildDoubleEntryForOperation({
+      operationType: 'OWNER_CAPITAL_DEPOSIT',
+      amountUnits: 200000,
+      description: 'رأس مال اختبار الذرية',
+      accountIds: ids,
+    })
+  );
+  v.post('task_budget_reservation', 'TASK-FUND-ATOM:T2', [
+    { account_id: ids['PLATFORM-TREASURY'], side: 'debit', amount_units: 50000, memo: 'Fund T2' },
+    { account_id: escrow.id, side: 'credit', amount_units: 50000, memo: 'Fund T2' },
+  ]);
+
+  // A. Simulated atomic failure on task approval when escrow < reward + commission -> zero partial deduction
+  const approveTaskAtomic = (rewardUnits: number, commissionUnits: number, revenueAccountId: string | undefined, key: string) => {
+    if (commissionUnits > 0 && !revenueAccountId) {
+      throw new Error('PLATFORM-REVENUE-TASKS missing — aborting without partial debit');
+    }
+    if (v.bal('TASK-ESCROW-T2') < rewardUnits + commissionUnits) {
+      throw new Error('Insufficient escrow for reward + commission — aborting without partial debit');
+    }
+    const entries: LedgerEntryDraft[] = [
+      { account_id: escrow.id, side: 'debit', amount_units: rewardUnits, memo: 'Reward' },
+      { account_id: wallet.id, side: 'credit', amount_units: rewardUnits, memo: 'Reward' },
+    ];
+    if (commissionUnits > 0 && revenueAccountId) {
+      entries.push(
+        { account_id: escrow.id, side: 'debit', amount_units: commissionUnits, memo: 'Commission' },
+        { account_id: revenueAccountId, side: 'credit', amount_units: commissionUnits, memo: 'Commission' }
+      );
+    }
+    return v.post('TASK_REWARD_PAYOUT', key, entries);
+  };
+
+  assert.throws(() => approveTaskAtomic(20000, 2000, undefined, 'FAIL-NO-REV'));
+  assert.strictEqual(v.bal('TASK-ESCROW-T2'), 50000, 'Escrow must remain untouched on missing revenue account');
+  assert.strictEqual(v.bal('WALLET-U2'), 0, 'Wallet must remain untouched on missing revenue account');
+
+  assert.throws(() => approveTaskAtomic(45000, 10000, ids['PLATFORM-REVENUE-TASKS'], 'FAIL-SHORT-ESCROW'));
+  assert.strictEqual(v.bal('TASK-ESCROW-T2'), 50000, 'Escrow must remain untouched on insufficient balance for reward+commission');
+  assert.strictEqual(v.bal('WALLET-U2'), 0, 'Wallet must remain untouched when commission fails');
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-TASKS'), 0, 'Revenue must remain 0');
+
+  // Valid atomic approval: 30,000 reward + 3,000 commission
+  approveTaskAtomic(30000, 3000, ids['PLATFORM-REVENUE-TASKS'], 'OK-APPROVE-S2');
+  assert.strictEqual(v.bal('TASK-ESCROW-T2'), 17000);
+  assert.strictEqual(v.bal('WALLET-U2'), 30000);
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-TASKS'), 3000);
+
+  // Fund segregation check: user wallet + withdrawal reserved NEVER enter platform revenue or cash vault
+  const userLiabilitiesBefore = v.bal('WALLET-U2') + v.bal('WITHDRAWAL-RESERVED');
+  assert.strictEqual(userLiabilitiesBefore, 30000);
+  assert.strictEqual(v.bal('PLATFORM-CASH-VAULT'), 200000, 'User wallet rewards do not inflate cash vault');
+
+  // B. Reserve withdrawal (10,000, fee 150, net 9,850) and test zero-partial-settlement if provider fee fails
+  v.post('WITHDRAWAL_REQUEST', 'WD-RES-ATOM:1', [
+    { account_id: wallet.id, side: 'debit', amount_units: 10000, memo: 'Reserve' },
+    { account_id: ids['WITHDRAWAL-RESERVED'], side: 'credit', amount_units: 10000, memo: 'Reserve' },
+  ]);
+
+  const settleWithdrawalAtomic = (amount: number, fee: number, providerFee: number) => {
+    const net = amount - fee;
+    if (providerFee < 0) throw new Error('Negative provider fee');
+    if (providerFee > 0 && (v.bal('PLATFORM-TREASURY') < providerFee || v.bal('VIRTUAL-ISSUANCE-CONTROL') < providerFee)) {
+      throw new Error('Insufficient treasury for provider fee — aborting entire settlement');
+    }
+    const entries: LedgerEntryDraft[] = [
+      { account_id: ids['WITHDRAWAL-RESERVED'], side: 'debit', amount_units: amount, memo: 'Settle' },
+      { account_id: ids['WITHDRAWAL-SETTLED'], side: 'credit', amount_units: net, memo: 'Net' },
+    ];
+    if (fee > 0) {
+      entries.push({ account_id: ids['PLATFORM-REVENUE-SERVICES'], side: 'credit', amount_units: fee, memo: 'Fee' });
+    }
+    if (providerFee > 0) {
+      entries.push(
+        { account_id: ids['PLATFORM-TREASURY'], side: 'debit', amount_units: providerFee, memo: 'Provider fee treasury' },
+        { account_id: ids['VIRTUAL-ISSUANCE-CONTROL'], side: 'credit', amount_units: providerFee, memo: 'Provider fee control' },
+        { account_id: ids['PAYMENT-PROVIDER-FEES'], side: 'debit', amount_units: providerFee, memo: 'Provider fee expense' },
+        { account_id: ids['PLATFORM-EXPENSE-CLEARING'], side: 'credit', amount_units: providerFee, memo: 'Provider fee clearing' }
+      );
+    }
+    return v.post('WITHDRAWAL_PAYOUT', `WD-PAY-ATOM:${providerFee}`, entries);
+  };
+
+  // Attempt settlement with providerFee exceeding treasury (treasury = 150,000, try 999,999)
+  assert.throws(() => settleWithdrawalAtomic(10000, 150, 999999));
+  assert.strictEqual(v.bal('WITHDRAWAL-RESERVED'), 10000, 'Reserved withdrawal must remain untouched when provider fee fails');
+  assert.strictEqual(v.bal('WITHDRAWAL-SETTLED'), 0, 'Settled account must remain 0 on failed provider fee');
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-SERVICES'), 0, 'Service fee revenue must remain 0 on failed settlement');
+  assert.strictEqual(v.bal('PAYMENT-PROVIDER-FEES'), 0, 'Provider fee expense must remain 0');
+
+  // Valid atomic settlement with provider fee = 250 (classified strictly as expense, never tax/revenue)
+  const settleTx = settleWithdrawalAtomic(10000, 150, 250);
+  assert.strictEqual(v.bal('WITHDRAWAL-RESERVED'), 0);
+  assert.strictEqual(v.bal('WITHDRAWAL-SETTLED'), 9850);
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-SERVICES'), 150);
+  assert.strictEqual(v.bal('PAYMENT-PROVIDER-FEES'), 250);
+  assert.strictEqual(v.bal('TAX-PAYABLE'), 0, 'Provider fees must never be classified as taxes');
+  v.assertReconciled([escrow.code], [wallet.code], 150);
+
+  // C. Historical immutability: reversal is append-only and idempotent
+  const entryCountBeforeReversal = v.allEntries.length;
+  const rev1 = v.reverse(settleTx.txId, 'تصحيح تسوية تجريبية');
+  assert.strictEqual(rev1.idempotent, false);
+  assert.ok(v.allEntries.length > entryCountBeforeReversal, 'Reversal must append new entries without deleting history');
+  const rev2 = v.reverse(settleTx.txId, 'محاولة تكرار العكس');
+  assert.strictEqual(rev2.idempotent, true, 'Duplicate reversal must be idempotent');
+  v.assertReconciled([escrow.code], [wallet.code], 0);
+
+  console.log('  - Atomicity, zero-partial-deduction, fund segregation & immutability verified.');
+}
+
+function runMigration012StaticAuditTests() {
+  console.log('\n[6/6] Migration 012 Compatibility, Safety & Security SQL Audit...');
+  const sqlPath = path.resolve(process.cwd(), 'supabase/migrations/012_financial_schema_compatibility_fixes.sql');
+  const sql = fs.readFileSync(sqlPath, 'utf8');
+
+  // 1. All 18 core accounts seeded idempotently with ON CONFLICT DO NOTHING
+  for (const code of MIGRATION_011_CORE_ACCOUNTS) {
+    assert.ok(sql.includes(`'${code}'`), `Migration 012 must verify/seed core account ${code}`);
+  }
+  assert.ok(sql.includes('ON CONFLICT (account_code) DO NOTHING'), 'Core accounts insert must be idempotent');
+
+  // 2. Single account source check & halt on wallet_accounts FK conflict
+  assert.ok(sql.includes('ledger_entries'), 'Migration 012 must inspect ledger_entries FK');
+  assert.ok(sql.includes('wallet_accounts'), 'Migration 012 must check wallet_accounts conflict');
+  assert.ok(sql.includes('MIGRATION_012_HALTED'), 'Migration 012 must halt safely on structural conflict');
+
+  // 3. Preserves legacy withdrawal_requests FKs (never drops them!) & adds ledger_* + settlement_transaction_id
+  assert.ok(!/DROP\s+CONSTRAINT.*reservation_transaction_id/i.test(sql), 'Must NOT drop legacy reservation_transaction_id FK');
+  assert.ok(!/DROP\s+CONSTRAINT.*refund_transaction_id/i.test(sql), 'Must NOT drop legacy refund_transaction_id FK');
+  assert.ok(sql.includes('settlement_transaction_id'), 'Must inspect/add settlement_transaction_id');
+  assert.ok(sql.includes('ledger_reservation_transaction_id'), 'Must add non-breaking ledger_reservation_transaction_id');
+  assert.ok(sql.includes('ledger_refund_transaction_id'), 'Must add non-breaking ledger_refund_transaction_id');
+
+  // 4. Protects multi-column CHECK constraints containing account_type
+  assert.ok(sql.includes('array_length(c.conkey, 1) = 1'), 'Must restrict CHECK constraint drop to single-column account_type constraints');
+  assert.ok(!/ILIKE\s+'%account_type%'/i.test(sql), 'Must NOT drop arbitrary CHECK constraints via ILIKE %account_type%');
+
+  // 5. Security hardening: REVOKE, DEFAULT PRIVILEGES, append-only triggers
+  assert.ok(sql.includes('REVOKE ALL ON public.ledger_transactions FROM PUBLIC, anon'), 'Must revoke anon/public on ledger_transactions');
+  assert.ok(sql.includes('REVOKE UPDATE, DELETE, TRUNCATE ON public.ledger_transactions, public.ledger_entries FROM authenticated'), 'Must block UPDATE/DELETE on ledger');
+  assert.ok(sql.includes('ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon'), 'Must harden default privileges');
+  assert.ok(sql.includes('trg_prevent_ledger_transactions_mutation'), 'Must enforce ledger immutability trigger');
+
+  console.log('  - Migration 012 SQL compatibility, atomicity & security assertions passed.');
+}
+
 async function main() {
   console.log('=== YEMEN MICRO-TASKS FINANCIAL INTEGRATION VERIFICATION ===');
   await runLiveReadOnlyProbe();
   await runHttpRouteAuthGuardTests();
   runServerBuilderTests();
   runEndToEndAccountingFlowTests();
+  runAtomicitySegregationAndImmutabilityTests();
+  runMigration012StaticAuditTests();
   console.log('\n=== VERIFICATION COMPLETED SUCCESSFULLY ===');
 }
 
