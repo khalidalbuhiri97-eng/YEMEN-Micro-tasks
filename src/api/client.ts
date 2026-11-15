@@ -217,11 +217,109 @@ export const api = {
   getTreasury: () => request<any>('/admin/treasury'),
   issueTreasuryUnits: (payload: { amount: number; reason: string; idempotencyKey?: string }) =>
     request<any>('/admin/treasury/issue', { method: 'POST', body: JSON.stringify(payload) }),
-  getLedger: (params?: { limit?: number; offset?: number }) => {
+  getLedger: (params?: {
+    limit?: number;
+    offset?: number;
+    transactionType?: string;
+    accountCode?: string;
+    from?: string;
+    to?: string;
+    search?: string;
+  }) => {
     const q = new URLSearchParams();
     if (params?.limit) q.append('limit', params.limit.toString());
     if (params?.offset) q.append('offset', params.offset.toString());
+    if (params?.transactionType && params.transactionType !== 'ALL') q.append('transactionType', params.transactionType);
+    if (params?.accountCode && params.accountCode !== 'ALL') q.append('accountCode', params.accountCode);
+    if (params?.from) q.append('from', params.from);
+    if (params?.to) q.append('to', params.to);
+    if (params?.search) q.append('search', params.search);
     return request<any>(`/admin/ledger?${q.toString()}`);
+  },
+  getFinancialAccounts: () => request<any>('/admin/finance/accounts'),
+  postOwnerCapital: (payload: { amount: number; reason: string; idempotencyKey?: string }) =>
+    request<any>('/admin/finance/capital', { method: 'POST', body: JSON.stringify(payload) }),
+  postOperationalExpense: (payload: { amount: number; reason: string; category?: string; idempotencyKey?: string }) =>
+    request<any>('/admin/finance/expense', { method: 'POST', body: JSON.stringify(payload) }),
+  postOwnerWithdrawal: (payload: { amount: number; reason: string; idempotencyKey?: string }) =>
+    request<any>('/admin/finance/owner-withdrawal', { method: 'POST', body: JSON.stringify(payload) }),
+  postPlatformRevenue: (payload: {
+    source: 'ADS' | 'SUBSCRIPTIONS' | 'SERVICES';
+    amount: number;
+    reason: string;
+    creditToTreasury?: boolean;
+    idempotencyKey?: string;
+  }) => request<any>('/admin/finance/revenue', { method: 'POST', body: JSON.stringify(payload) }),
+  reverseLedgerTransaction: (payload: { transactionId: string; reason: string }) =>
+    request<any>('/admin/finance/reverse', { method: 'POST', body: JSON.stringify(payload) }),
+  getTreasuryMovements: (limit = 60) => request<any>(`/admin/finance/treasury-movements?limit=${limit}`),
+  getComprehensiveFinancialReports: (params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.from) q.append('from', params.from);
+    if (params?.to) q.append('to', params.to);
+    return request<{ report: any }>(`/admin/finance/reports?${q.toString()}`);
+  },
+  getFinancialAuditLogs: (limit = 100) => request<any>(`/admin/finance/audit-logs?limit=${limit}`),
+  getTaxesOverview: () => request<any>('/admin/finance/taxes'),
+  createTaxDefinition: (payload: {
+    taxType: string;
+    taxAuthority: string;
+    region?: string;
+    taxBase: string;
+    ratePercentage: number;
+    flatAmount?: number;
+    validFrom?: string;
+    validTo?: string | null;
+    isActive?: boolean;
+  }) => request<any>('/admin/finance/taxes', { method: 'POST', body: JSON.stringify(payload) }),
+  updateTaxDefinition: (
+    id: string,
+    payload: {
+      ratePercentage?: number;
+      flatAmount?: number;
+      isActive?: boolean;
+      validTo?: string | null;
+      taxAuthority?: string;
+    }
+  ) => request<any>(`/admin/finance/taxes/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  accrueTaxObligation: (payload: {
+    taxDefinitionId: string;
+    taxableAmount: number;
+    referenceId?: string;
+    note?: string;
+  }) => request<any>('/admin/finance/taxes/accrue', { method: 'POST', body: JSON.stringify(payload) }),
+  settleTaxObligation: (payload: { settlementId: string; referenceId: string }) =>
+    request<any>('/admin/finance/taxes/settle', { method: 'POST', body: JSON.stringify(payload) }),
+  downloadFinancialCsv: async (reportType: string, params?: { from?: string; to?: string }) => {
+    const q = new URLSearchParams({ reportType });
+    if (params?.from) q.append('from', params.from);
+    if (params?.to) q.append('to', params.to);
+    let token = getAuthToken();
+    let res = await fetch(`${BASE_URL}/admin/financial-report/export?${q.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (res.status === 401) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        token = refreshed;
+        res = await fetch(`${BASE_URL}/admin/financial-report/export?${q.toString()}`, {
+          headers: { Authorization: `Bearer ${refreshed}` },
+        });
+      }
+    }
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'فشل تصدير التقرير المالي.');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kasb-finance-${reportType}-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 
   // Single Authorized Owner Admin APIs

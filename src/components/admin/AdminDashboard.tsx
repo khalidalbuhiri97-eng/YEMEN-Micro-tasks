@@ -1,34 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary, LedgerTransaction } from '../../types/index.ts';
+import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary } from '../../types/index.ts';
 import { DatabaseErrorsView } from './DatabaseErrorsView.tsx';
+import { OwnerOverviewMetrics } from './finance/OwnerOverviewMetrics.tsx';
+import { TreasuryControlView } from './finance/TreasuryControlView.tsx';
+import { LedgerAuditView } from './finance/LedgerAuditView.tsx';
+import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
+import { TaxManagementView } from './finance/TaxManagementView.tsx';
 import {
   ShieldAlert,
-  Users,
   CheckCircle,
-  XCircle,
-  Clock,
   Banknote,
-  FileText,
-  Settings,
   PlusCircle,
   Download,
-  AlertCircle,
   Eye,
   RefreshCw,
-  Search,
   Lock,
   Unlock,
-  Sliders,
-  DollarSign,
   X,
-  Landmark,
-  Scale,
-  Coins,
-  ShieldCheck,
-  Check,
-  Database,
   Trash2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -36,7 +26,7 @@ import { SecureImageView } from '../common/SecureImageView.tsx';
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'users' | 'reports' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'ledger' | 'reports' | 'taxes' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -44,16 +34,10 @@ export const AdminDashboard: React.FC = () => {
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
-  const [financialReport, setFinancialReport] = useState<any>(null);
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [treasury, setTreasury] = useState<TreasurySummary | null>(null);
-  const [ledgerTransactions, setLedgerTransactions] = useState<LedgerTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
-  // Treasury Issuance Form State
-  const [issueAmount, setIssueAmount] = useState('');
-  const [issueReason, setIssueReason] = useState('');
-  const [isIssuing, setIsIssuing] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
 
   // Action modals
   const [reviewingSubmission, setReviewingSubmission] = useState<TaskSubmission | null>(null);
@@ -82,16 +66,14 @@ export const AdminDashboard: React.FC = () => {
   const loadAllAdminData = async () => {
     setIsLoading(true);
     try {
-      const [overviewRes, subsRes, withsRes, tasksRes, usersRes, repRes, setRes, treasuryRes, ledgerRes] = await Promise.all([
+      const [overviewRes, subsRes, withsRes, tasksRes, usersRes, setRes, treasuryRes] = await Promise.all([
         api.getAdminOverview().catch(() => ({ stats: null })),
         api.getAdminSubmissions().catch(() => ({ submissions: [] })),
         api.getAdminWithdrawals().catch(() => ({ withdrawals: [] })),
         api.getAdminTasks().catch(() => ({ tasks: [] })),
         api.getAdminUsers().catch(() => ({ users: [] })),
-        api.getFinancialReport().catch(() => ({ report: null })),
         api.getSettings().catch(() => ({ settings: null })),
         api.getTreasury().catch(() => ({ treasury: null })),
-        api.getLedger({ limit: 100 }).catch(() => ({ transactions: [] })),
       ]);
 
       if (overviewRes?.stats) setStats(overviewRes.stats);
@@ -99,10 +81,8 @@ export const AdminDashboard: React.FC = () => {
       if (withsRes?.withdrawals) setWithdrawals(withsRes.withdrawals);
       if (tasksRes?.tasks) setTasks(tasksRes.tasks);
       if (usersRes?.users) setUsersList(usersRes.users);
-      if (repRes?.report) setFinancialReport(repRes.report);
       if (setRes?.settings) setSettings(setRes.settings);
       if (treasuryRes?.treasury) setTreasury(treasuryRes.treasury);
-      if (ledgerRes?.transactions) setLedgerTransactions(ledgerRes.transactions);
     } catch (err) {
       console.error('Failed to load admin data', err);
     } finally {
@@ -349,47 +329,16 @@ export const AdminDashboard: React.FC = () => {
     });
   };
 
-  // --- ISSUE TREASURY UNITS ---
-  const handleIssueTreasuryUnits = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || user.role !== 'admin') {
-      showToast('ليس لديك صلاحية إصدار وحدات الخزينة.', 'error');
-      return;
+  const handleQuickExportCsv = async () => {
+    setIsExportingCsv(true);
+    try {
+      await api.downloadFinancialCsv('ledger');
+      showToast('تم تصدير السجل المالي بصيغة CSV بنجاح.', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'فشل تصدير السجل المالي.', 'error');
+    } finally {
+      setIsExportingCsv(false);
     }
-    const amountNum = Number(issueAmount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      showToast('يرجى إدخال مبلغ صحيح أكبر من الصفر', 'error');
-      return;
-    }
-    if (!issueReason.trim()) {
-      showToast('يرجى كتابة سبب الإصدار لتسجيله في السجل المالي', 'error');
-      return;
-    }
-
-    openConfirmModal({
-      title: 'إصدار وحدات نقدية للخزينة',
-      message: `هل تريد تأكيد إصدار ${amountNum.toLocaleString()} ر.ي وتقييدها في دفتر الأستاذ السيادي؟`,
-      confirmLabel: 'تأكيد الإصدار',
-      cancelLabel: 'إلغاء',
-      variant: 'warning',
-      onConfirm: async () => {
-        setIsIssuing(true);
-        try {
-          await api.issueTreasuryUnits({
-            amount: amountNum,
-            reason: issueReason.trim(),
-          });
-          showToast(`تم إصدار ${amountNum.toLocaleString()} وحدة افتراضية جديدة للخزينة بنجاح!`, 'success');
-          setIssueAmount('');
-          setIssueReason('');
-          await loadAllAdminData();
-        } catch (err: any) {
-          showToast(err.message || 'فشل في إصدار الوحدات النقدية للخزينة', 'error');
-        } finally {
-          setIsIssuing(false);
-        }
-      },
-    });
   };
 
   const pendingSubmissionsCount = submissions.filter((s) => s.status === 'PENDING').length;
@@ -433,7 +382,7 @@ export const AdminDashboard: React.FC = () => {
                 <span>لوحة التحكم والإدارة والتدقيق المالي (ADMIN)</span>
               </span>
               <span className="text-slate-500">·</span>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono text-[11px]" dir="ltr">
+              <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono text-[11px]" dir="ltr">
                 khalidalbuhiri@gmail.com
               </span>
             </div>
@@ -447,50 +396,55 @@ export const AdminDashboard: React.FC = () => {
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={loadAllAdminData}
               title="تحديث البيانات"
-              className="px-3 py-2 text-xs font-semibold bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors flex items-center gap-1.5"
+              className="px-3 py-2 text-xs font-semibold bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>تحديث البيانات</span>
             </button>
-            <a
-              href="/api/admin/financial-report/export"
-              className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl shadow transition-colors flex items-center gap-1.5"
+            <button
+              type="button"
+              onClick={handleQuickExportCsv}
+              disabled={isExportingCsv}
+              className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>تصدير السجل المالي (CSV)</span>
-            </a>
+              <span>{isExportingCsv ? 'جارِ التصدير...' : 'تصدير السجل المالي (CSV)'}</span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* Admin Navigation Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-200 dark:border-slate-800 text-xs">
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 border-b border-slate-200 dark:border-slate-800 text-xs">
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
-          { id: 'treasury', label: 'الخزينة والمحاسبة', count: null },
-          { id: 'db_errors', label: 'أخطاء قاعدة البيانات', count: null },
+          { id: 'treasury', label: 'إدارة الخزينة', count: null },
+          { id: 'ledger', label: 'دفتر الأستاذ والمراجعة', count: null },
+          { id: 'reports', label: 'التقارير المالية (8)', count: null },
+          { id: 'taxes', label: 'إدارة الضرائب', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
-          { id: 'withdrawals', label: 'طلبات السحب والصرافة', count: pendingWithdrawalsCount },
+          { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
           { id: 'users', label: 'المستخدمين والمحافظ', count: usersList.length },
-          { id: 'reports', label: 'التقارير المالية والسيولة', count: null },
+          { id: 'db_errors', label: 'أخطاء قاعدة البيانات', count: null },
           { id: 'settings', label: 'إعدادات المنصة', count: null },
         ].map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`px-4 py-2.5 font-bold rounded-xl transition-all whitespace-nowrap flex items-center gap-1.5 ${
+            className={`px-3.5 py-2 font-bold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === tab.id
-                ? 'bg-slate-900 text-white dark:bg-emerald-600 shadow-sm'
+                ? 'bg-slate-900 text-white dark:bg-emerald-600'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
             <span>{tab.label}</span>
             {tab.count !== null && tab.count > 0 && (
               <span
-                className={`px-1.5 py-0.5 rounded-full font-mono text-[10px] ${
+                className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
                   tab.id === 'submissions' || tab.id === 'withdrawals'
                     ? 'bg-amber-500 text-slate-950 font-black'
                     : 'bg-slate-700 text-white'
@@ -503,253 +457,40 @@ export const AdminDashboard: React.FC = () => {
         ))}
       </div>
 
+      {/* 1. OWNER OVERVIEW METRICS TAB */}
+      {activeTab === 'overview' && (
+        <OwnerOverviewMetrics
+          stats={stats}
+          treasury={treasury}
+          pendingSubmissionsCount={pendingSubmissionsCount}
+          pendingWithdrawalsCount={pendingWithdrawalsCount}
+          isLoading={isLoading}
+          onNavigateTab={setActiveTab}
+        />
+      )}
+
+      {/* 2. TREASURY CONTROL TAB */}
+      {activeTab === 'treasury' && (
+        <TreasuryControlView treasury={treasury} onRefreshAll={loadAllAdminData} />
+      )}
+
+      {/* 3. GENERAL LEDGER & AUDIT TAB */}
+      {activeTab === 'ledger' && (
+        <LedgerAuditView onRefreshAll={loadAllAdminData} />
+      )}
+
+      {/* 4. COMPREHENSIVE FINANCIAL REPORTS TAB */}
+      {activeTab === 'reports' && (
+        <FinancialReportsView treasury={treasury} />
+      )}
+
+      {/* 5. TAX MANAGEMENT TAB */}
+      {activeTab === 'taxes' && (
+        <TaxManagementView treasury={treasury} onRefreshAll={loadAllAdminData} />
+      )}
+
       {/* DATABASE ERRORS MONITORING TAB */}
       {activeTab === 'db_errors' && <DatabaseErrorsView />}
-
-      {/* TREASURY & ACCOUNTING LEDGER TAB */}
-      {activeTab === 'treasury' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left 2 Cols: Treasury Metrics & Reconciliation */}
-            <div className="lg:col-span-2 space-y-6">
-              <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-                  <div>
-                    <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                      <Landmark className="w-5 h-5 text-emerald-600" />
-                      <span>الخزينة السيادية وميزان المراجعة المحاسبي</span>
-                    </h2>
-                    <p className="text-xs text-slate-500 mt-1">
-                      نظام القيد المزدوج المغلق يضمن أن مجموع كافة أرصدة المحافظ والخزينة يساوي تماماً إجمالي الوحدات الصادرة.
-                    </p>
-                  </div>
-
-                  {/* Reconciliation Badge */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                    <span>ميزان المراجعة متطابق (100%)</span>
-                  </div>
-                </div>
-
-                {/* Treasury 6 Metrics Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 overflow-hidden">
-                    <span className="text-xs text-slate-500 block mb-1">إجمالي الوحدات الصادرة</span>
-                    <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${(treasury?.totalIssuedUnits || 10000000).toLocaleString()} ر.ي`}>
-                      {(treasury?.totalIssuedUnits || 10000000).toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/60 overflow-hidden">
-                    <span className="text-xs text-emerald-700 dark:text-emerald-400 block mb-1">خزينة المنصة المتاحة</span>
-                    <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-emerald-800 dark:text-emerald-300 truncate max-w-full" title={`${(treasury?.treasuryAvailable || 9850000).toLocaleString()} ر.ي`}>
-                      {(treasury?.treasuryAvailable || 9850000).toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 overflow-hidden">
-                    <span className="text-xs text-slate-500 block mb-1">ميزانية المهام المحجوزة</span>
-                    <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-blue-600 dark:text-blue-400 truncate max-w-full" title={`${(treasury?.taskBudgetReserved || 0).toLocaleString()} ر.ي`}>
-                      {(treasury?.taskBudgetReserved || 0).toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 overflow-hidden">
-                    <span className="text-xs text-slate-500 block mb-1">أرصدة المستخدمين المتاحة</span>
-                    <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${(treasury?.userAvailableTotal || 0).toLocaleString()} ر.ي`}>
-                      {(treasury?.userAvailableTotal || 0).toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 overflow-hidden">
-                    <span className="text-xs text-slate-500 block mb-1">أرصدة المستخدمين المعلقة</span>
-                    <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-amber-600 dark:text-amber-400 truncate max-w-full" title={`${(treasury?.userPendingTotal || 0).toLocaleString()} ر.ي`}>
-                      {(treasury?.userPendingTotal || 0).toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 overflow-hidden">
-                    <span className="text-xs text-slate-500 block mb-1">سحوبات محجوزة للمعالجة</span>
-                    <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-purple-600 dark:text-purple-400 truncate max-w-full" title={`${(treasury?.withdrawalReservedTotal || 0).toLocaleString()} ر.ي`}>
-                      {(treasury?.withdrawalReservedTotal || 0).toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Right Col: Issue Treasury Units Form */}
-            <div className="space-y-6">
-              <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
-                <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm border-b border-slate-100 dark:border-slate-800 pb-3">
-                  <Coins className="w-5 h-5 text-emerald-600" />
-                  <span>إصدار وحدات نقدية جديدة للخزينة</span>
-                </div>
-                <p className="text-xs text-slate-500">
-                  إجراء سيادي مخصص لمالك المنصة لإصدار وحدات افتراضية إضافية عند التوسع، مع تسجيل القيد المزدوج في دفتر الأستاذ.
-                </p>
-
-                <form onSubmit={handleIssueTreasuryUnits} className="space-y-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      المبلغ المراد إصداره (ر.ي)
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      placeholder="مثال: 1000000"
-                      value={issueAmount}
-                      onChange={(e) => setIssueAmount(e.target.value)}
-                      className="w-full px-3 py-2 text-xs font-mono font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      سبب الإصدار (إلزامي للتدقيق)
-                    </label>
-                    <textarea
-                      rows={3}
-                      required
-                      placeholder="مثال: توسيع السيولة الافتراضية للمنصة لاستيعاب نمو المستخدمين والمهام..."
-                      value={issueReason}
-                      onChange={(e) => setIssueReason(e.target.value)}
-                      className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isIssuing}
-                    className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2"
-                  >
-                    {isIssuing ? 'جارِ الإصدار والتسجيل...' : 'إصدار وتغذية الخزينة آلياً'}
-                  </button>
-                </form>
-              </div>
-            </div>
-          </div>
-
-          {/* Double Entry Ledger Audit Table */}
-          <div className="space-y-3 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-              سجل قيود الأستاذ المزدوج (Double-Entry Ledger Transactions)
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs">
-                <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-medium">
-                  <tr>
-                    <th className="py-3 px-4">رقم القيد</th>
-                    <th className="py-3 px-4">نوع العملية</th>
-                    <th className="py-3 px-4">البيان والتفاصيل</th>
-                    <th className="py-3 px-4">معرف المرجع</th>
-                    <th className="py-3 px-4">التاريخ والوقت</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {ledgerTransactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-6 text-center text-slate-400">
-                        لا توجد قيود مسجلة في دفتر الأستاذ حالياً.
-                      </td>
-                    </tr>
-                  ) : (
-                    ledgerTransactions.map((tx) => (
-                      <tr key={tx.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="py-3 px-4 font-mono text-[11px] text-slate-500">{tx.id.slice(0, 10)}...</td>
-                        <td className="py-3 px-4 font-bold text-slate-800 dark:text-slate-200">{tx.transactionType}</td>
-                        <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{tx.description}</td>
-                        <td className="py-3 px-4 font-mono text-[11px] text-slate-400">{tx.referenceId || '---'}</td>
-                        <td className="py-3 px-4 font-mono text-[11px] text-slate-400">
-                          {new Date(tx.createdAt).toLocaleString('ar-YE')}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 1. OVERVIEW TAB */}
-      {activeTab === 'overview' && stats && (
-        <div className="space-y-6">
-          {/* Key Metrics Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-xs text-slate-500 block mb-1">الرصيد المتاح للمستخدمين (التزام)</span>
-              <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-                {stats.totalAvailableLiabilities.toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-xs text-slate-500 block mb-1">المعلق بانتظار التحويل</span>
-              <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-amber-600 dark:text-amber-400">
-                {stats.totalPendingWithdrawalLiabilities.toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-xs text-slate-500 block mb-1">إجمالي ما تم تحويله وصرفه</span>
-              <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                {stats.totalCompletedWithdrawals.toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-xs text-slate-500 block mb-1">إجمالي مكافآت المهام المعتمدة</span>
-              <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-blue-600 dark:text-blue-400">
-                {stats.totalApprovedRewards.toLocaleString()} <span className="text-xs font-normal">ر.ي</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Pending Queues */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Pending Submissions Alert Box */}
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-500" />
-                  <span>إثباتات تنتظر التدقيق والاعتماد ({pendingSubmissionsCount})</span>
-                </h3>
-                <button
-                  onClick={() => setActiveTab('submissions')}
-                  className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
-                >
-                  فتح مكتب التدقيق
-                </button>
-              </div>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                يوجد {pendingSubmissionsCount} إثبات مهمة تم تقديمها من المستخدمين بانتظار فحص الصور والتحقق والموافقة أو الرفض.
-              </p>
-            </div>
-
-            {/* Pending Withdrawals Alert Box */}
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Banknote className="w-4 h-4 text-emerald-600" />
-                  <span>طلبات سحب بانتظار الإرسال المالي ({pendingWithdrawalsCount})</span>
-                </h3>
-                <button
-                  onClick={() => setActiveTab('withdrawals')}
-                  className="text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
-                >
-                  فتح طابور السحوبات
-                </button>
-              </div>
-              <p className="text-xs text-slate-500 leading-relaxed">
-                يوجد {pendingWithdrawalsCount} طلب سحب مالي محجوز ومطلوب تحويله عبر بنك الكريمي أو شبكة النجم وتزويد المستفيد برقم الحوالة.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 2. SUBMISSIONS DESK */}
       {activeTab === 'submissions' && (
@@ -1254,69 +995,7 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 6. FINANCIAL REPORTS TAB */}
-      {activeTab === 'reports' && financialReport && (
-        <div className="space-y-6">
-          <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">التقارير المالية والتدفقات النقدية</h2>
-            <p className="text-xs text-slate-500">
-              حساب إجمالي الالتزامات والسيولة وأرباح المنصة من رسوم الصرافة.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-xs text-slate-500 block mb-1">إجمالي مصاريف مكافآت المهام</span>
-              <div className="text-2xl font-extrabold font-mono text-slate-900 dark:text-white tabular-nums">
-                {financialReport.totalTaskExpenses.toLocaleString()} ر.ي
-              </div>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-xs text-slate-500 block mb-1">السيولة المسحوبة فعلياً</span>
-              <div className="text-2xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
-                {financialReport.totalPaidWithdrawals.toLocaleString()} ر.ي
-              </div>
-            </div>
-
-            <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-              <span className="text-xs text-slate-500 block mb-1">التزامات المحافظ القائمة</span>
-              <div className="text-2xl font-extrabold font-mono text-blue-600 dark:text-blue-400 tabular-nums">
-                {financialReport.totalAvailableLiabilities.toLocaleString()} ر.ي
-              </div>
-            </div>
-          </div>
-
-          {/* Daily Breakdown Table */}
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-4">
-              النشاط المالي اليومي للأسبوع الحالي
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs">
-                <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800">
-                  <tr>
-                    <th className="py-2.5 px-4">التاريخ</th>
-                    <th className="py-2.5 px-4 font-mono">مكافآت المهام</th>
-                    <th className="py-2.5 px-4 font-mono">السحوبات المنفذة</th>
-                    <th className="py-2.5 px-4">مستخدمون جدد</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {financialReport.dailyBreakdown.map((d: any, idx: number) => (
-                    <tr key={idx}>
-                      <td className="py-3 px-4 font-mono">{d.date}</td>
-                      <td className="py-3 px-4 font-mono text-emerald-600">+{d.taskRewards.toLocaleString()} ر.ي</td>
-                      <td className="py-3 px-4 font-mono text-rose-600">-{d.withdrawals.toLocaleString()} ر.ي</td>
-                      <td className="py-3 px-4 font-mono">+{d.newUsers}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Old static reports block removed; handled by <FinancialReportsView /> */}
 
       {/* 7. SETTINGS TAB */}
       {activeTab === 'settings' && settings && (

@@ -39,6 +39,7 @@ export interface UserWallet {
 export type TransactionType =
   | 'TASK_REWARD'
   | 'WITHDRAWAL_REQUEST'
+  | 'WITHDRAWAL_PAYOUT'
   | 'WITHDRAWAL_REFUND'
   | 'REFERRAL_REWARD'
   | 'ADMIN_ADJUSTMENT'
@@ -47,7 +48,18 @@ export type TransactionType =
   | 'WALLET_TRANSFER_RECEIVED'
   | 'TREASURY_ISSUANCE'
   | 'TASK_BUDGET_RESERVE'
-  | 'TASK_BUDGET_RETURN';
+  | 'TASK_BUDGET_RETURN'
+  | 'TASK_COMMISSION_REVENUE'
+  | 'OWNER_CAPITAL_DEPOSIT'
+  | 'OPERATIONAL_EXPENSE'
+  | 'OWNER_WITHDRAWAL'
+  | 'AD_REVENUE'
+  | 'SUBSCRIPTION_REVENUE'
+  | 'SERVICE_REVENUE'
+  | 'PAYMENT_PROVIDER_FEE'
+  | 'TAX_ACCRUAL'
+  | 'TAX_SETTLEMENT'
+  | 'REVERSAL';
 
 export interface WalletTransaction {
   id: string;
@@ -87,16 +99,47 @@ export interface TreasurySummary {
   totalIssuedUnits: number;
   isReconciled: boolean;
   activeTasksBudgetTotal: number;
+  withdrawalSettledTotal?: number;
+  cashVaultTotal?: number;
+  ownerCapitalTotal?: number;
+  ownerWithdrawalsTotal?: number;
+  expensesTotal?: number;
+  providerFeesTotal?: number;
+  totalOperationalExpenses?: number;
+  netProfitLoss?: number;
+  retainedEarningsTotal?: number;
+  computedRetainedEarnings?: number;
+  taxPayableTotal?: number;
+  taxesPaidTotal?: number;
+  userLiabilitiesTotal?: number;
+  revenueTotals?: {
+    tasks: number;
+    ads: number;
+    subscriptions: number;
+    services: number;
+    total: number;
+  };
+  migration011Ready?: boolean;
+  missingMigration011Accounts?: string[];
+  taxTablesReady?: boolean;
+  auditLogsTableReady?: boolean;
+  withdrawalsTableReady?: boolean;
 }
 
 export interface LedgerTransaction {
   id: string;
   transactionType: string;
+  status?: string;
   referenceId?: string;
   idempotencyKey?: string;
   description: string;
+  metadata?: Record<string, any>;
   createdBy?: string;
+  createdByName?: string;
   createdAt: string;
+  isReversed?: boolean;
+  reversedByTransactionId?: string;
+  totalAmount?: number;
   entries?: LedgerEntry[];
 }
 
@@ -104,9 +147,201 @@ export interface LedgerEntry {
   id: string;
   transactionId: string;
   accountId: string;
+  accountCode?: string;
+  accountType?: string;
+  normalSide?: 'debit' | 'credit';
   debitAmount: number;
   creditAmount: number;
+  memo?: string;
   createdAt: string;
+}
+
+export interface TreasuryMovement {
+  transactionId: string;
+  transactionType: string;
+  accountCode: 'PLATFORM-TREASURY' | 'PLATFORM-CASH-VAULT';
+  entrySide: 'debit' | 'credit';
+  amount: number;
+  signedDelta: number;
+  beforeBalance: number;
+  afterBalance: number;
+  description: string;
+  referenceId?: string;
+  createdAt: string;
+}
+
+export interface FinancialAccountItem {
+  id: string;
+  accountCode: string;
+  accountType: string;
+  normalSide: string;
+  balanceUnits: number;
+  status: string;
+  createdAt: string;
+}
+
+export interface TaxDefinition {
+  id: string;
+  taxType: string;
+  taxAuthority: string;
+  region: string;
+  taxBase: string;
+  ratePercentage: number;
+  flatAmount: number;
+  validFrom: string;
+  validTo?: string | null;
+  isActive: boolean;
+  exemptionsRules?: Record<string, any>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaxSettlement {
+  id: string;
+  taxDefinitionId: string;
+  taxType?: string;
+  taxAuthority?: string;
+  taxableAmount: number;
+  taxAmount: number;
+  status: 'PENDING' | 'SETTLED' | 'CANCELLED';
+  ledgerTransactionId?: string | null;
+  settledAt?: string | null;
+  referenceId?: string | null;
+  createdAt: string;
+}
+
+export interface FinancialAuditLog {
+  id: string;
+  actionType: string;
+  actorId?: string | null;
+  actorName?: string;
+  transactionId?: string | null;
+  details: Record<string, any>;
+  ipAddress?: string | null;
+  createdAt: string;
+  source: 'financial_audit_logs' | 'admin_logs';
+}
+
+export interface ComprehensiveFinancialReport {
+  period: {
+    from: string | null;
+    to: string | null;
+    generatedAt: string;
+  };
+  readiness: {
+    migration011Ready: boolean;
+    missingMigration011Accounts: string[];
+    taxTablesReady: boolean;
+    withdrawalsTableReady: boolean;
+    auditLogsTableReady: boolean;
+  };
+  profitAndLoss: {
+    revenueTasks: number;
+    revenueAds: number;
+    revenueSubscriptions: number;
+    revenueServices: number;
+    totalRevenue: number;
+    operationalExpenses: number;
+    paymentProviderFees: number;
+    taxExpenses: number;
+    totalExpenses: number;
+    netProfitLoss: number;
+    taskRewardsDisbursedNote: number;
+  };
+  cashFlow: {
+    operatingCashInflows: number;
+    operatingCashOutflows: number;
+    netOperatingCashFlow: number;
+    ownerCapitalInflows: number;
+    ownerWithdrawalsOutflows: number;
+    netFinancingCashFlow: number;
+    netCashChange: number;
+    endingCashVaultBalance: number;
+    virtualTreasuryAvailable: number;
+  };
+  balanceSheet: {
+    assets: {
+      cashVault: number;
+      virtualIssuanceControl: number;
+      totalRealAssets: number;
+    };
+    liabilities: {
+      userWalletBalances: number;
+      withdrawalReserved: number;
+      taskEscrowBalances: number;
+      taxesPayable: number;
+      expenseClearing: number;
+      totalUserAndExternalLiabilities: number;
+    };
+    equity: {
+      ownerCapital: number;
+      ownerWithdrawals: number;
+      retainedEarningsAccount: number;
+      currentNetIncome: number;
+      totalOwnerEquity: number;
+    };
+  };
+  revenueBySource: Array<{
+    accountCode: string;
+    label: string;
+    periodAmount: number;
+    cumulativeBalance: number;
+    txCount: number;
+  }>;
+  expensesItems: Array<{
+    transactionId: string;
+    date: string;
+    category: string;
+    accountCode: string;
+    amount: number;
+    description: string;
+    referenceId?: string;
+  }>;
+  taxesReport: {
+    taxPayableBalance: number;
+    totalAccruedInPeriod: number;
+    totalSettledInPeriod: number;
+    activeDefinitionsCount: number;
+    settlements: TaxSettlement[];
+  };
+  ownerWithdrawalsReport: {
+    totalInPeriod: number;
+    cumulativeTotal: number;
+    items: Array<{
+      transactionId: string;
+      date: string;
+      amount: number;
+      description: string;
+      actorName?: string;
+    }>;
+  };
+  userBalancesAndEscrowsReport: {
+    totalUserWallets: number;
+    totalWithdrawalReserved: number;
+    totalTaskEscrows: number;
+    users: Array<{
+      userId: string;
+      fullName: string;
+      phone: string;
+      accountCode: string;
+      balanceUnits: number;
+      status: string;
+    }>;
+    escrows: Array<{
+      accountCode: string;
+      taskId: string;
+      taskTitle: string;
+      taskStatus: string;
+      balanceUnits: number;
+    }>;
+  };
+  dailyBreakdown: Array<{
+    date: string;
+    revenues: number;
+    expenses: number;
+    taskRewards: number;
+    withdrawals: number;
+  }>;
 }
 
 export type TaskCategory =

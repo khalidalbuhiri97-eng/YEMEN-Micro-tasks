@@ -69,6 +69,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
   const [proofUrl, setProofUrl] = useState('');
   const [proofImages, setProofImages] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -99,10 +100,12 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
     setProofUrl('');
     setProofImages([]);
     setSubmitError('');
+    setIsUploadingImage(false);
   };
 
   const handleCloseModal = () => {
     setActiveTask(null);
+    setIsUploadingImage(false);
   };
 
   // Direct browser-to-storage upload via Signed Upload URL
@@ -121,7 +124,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
       return;
     }
 
-    setIsSubmitting(true);
+    setIsUploadingImage(true);
     setSubmitError('');
 
     try {
@@ -153,7 +156,9 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
     } catch (err: any) {
       setSubmitError(err.message || 'فشل رفع الصورة إلى التخزين السحابي، يرجى المحاولة مجدداً.');
     } finally {
-      setIsSubmitting(false);
+      setIsUploadingImage(false);
+      // Reset input value so same file can be chosen again if needed
+      e.target.value = '';
     }
   };
 
@@ -533,6 +538,13 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                           حذف وتغيير الصورة
                         </button>
                       </div>
+                    ) : isUploadingImage ? (
+                      <div className="flex flex-col items-center justify-center py-6 gap-2">
+                        <div className="w-8 h-8 rounded-full border-2 border-emerald-600 border-t-transparent animate-spin" />
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                          جاري رفع الصورة إلى التخزين الآمن...
+                        </span>
+                      </div>
                     ) : (
                       <label className="flex flex-col items-center justify-center cursor-pointer w-full py-3">
                         <Upload className="w-8 h-8 text-emerald-600 mb-2" />
@@ -563,11 +575,13 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                   </button>
                   <button
                     type="submit"
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || isUploadingImage || proofImages.length === 0}
                     className="px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
                   >
                     {isSubmitting ? (
                       <span>جاري إرسال الإثبات...</span>
+                    ) : isUploadingImage ? (
+                      <span>جاري رفع الصورة...</span>
                     ) : (
                       <>
                         <CheckCircle className="w-4 h-4" />

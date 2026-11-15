@@ -858,13 +858,13 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
   }
 });
 
-// Withdrawals
+// Withdrawals (Double-Entry Ledger Reservation)
 app.post('/api/withdrawals/request', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { method, amount, beneficiaryName, phoneNumber, accountNumber, idempotencyKey } = req.body || {};
 
-    const numAmount = Number(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
+    const numAmount = Math.round(Number(amount));
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
       return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح للسحب.' });
     }
 
@@ -880,46 +880,32 @@ app.post('/api/withdrawals/request', authMiddleware, async (req: AuthenticatedRe
       return res.status(400).json({ error: 'رقم كشف الحساب أو الهاتف المحول إليه مطلوب.' });
     }
 
-    const cleanMethod = method.trim();
-    const cleanBeneficiaryName = beneficiaryName.trim();
-    const cleanPhoneNumber = phoneNumber.trim();
-    const cleanAccountNumber = accountNumber ? String(accountNumber).trim() : null;
-    const cleanIdempotencyKey = idempotencyKey ? String(idempotencyKey).trim() : null;
-
-    // Execute Atomic RPC reserve_withdrawal strictly without non-atomic fallbacks
-    const { data: rpcRes, error: rpcErr } = await supabaseServer.rpc('reserve_withdrawal', {
-      p_user_id: req.user.id,
-      p_method: cleanMethod,
-      p_amount: numAmount,
-      p_beneficiary_name: cleanBeneficiaryName,
-      p_phone_number: cleanPhoneNumber,
-      p_account_number: cleanAccountNumber,
-      p_idempotency_key: cleanIdempotencyKey,
+    const result = await supabaseDb.reserveWithdrawal({
+      userId: req.user.id,
+      method: method.trim(),
+      amount: numAmount,
+      beneficiaryName: beneficiaryName.trim(),
+      phoneNumber: phoneNumber.trim(),
+      accountNumber: accountNumber ? String(accountNumber).trim() : null,
+      idempotencyKey: idempotencyKey ? String(idempotencyKey).trim() : null,
+      authToken: req.authToken,
     });
-
-    if (rpcErr || !rpcRes) {
-      await logSupabaseError({
-        err: rpcErr || 'RPC reserve_withdrawal returned null',
-        operation: 'ATOMIC_WITHDRAWAL_RESERVE_RPC',
-        sourceTable: 'withdrawal_requests',
-        apiRoute: '/api/withdrawals/request',
-        details: { userId: req.user.id, amount: numAmount, method: cleanMethod, idempotencyKey: cleanIdempotencyKey },
-      });
-      return res.status(400).json({ error: rpcErr?.message || 'فشلت عملية حجز رصيد السحب.' });
-    }
 
     const updatedWallet = await supabaseDb.getWallet(req.user.id);
     return res.json({
       success: true,
-      withdrawalId: rpcRes.withdrawalId || rpcRes.id,
-      newAvailableBalance: rpcRes.newAvailableBalance ?? updatedWallet.availableBalance,
+      idempotent: Boolean(result?.idempotent),
+      withdrawalId: result?.withdrawalId,
+      transactionId: result?.transactionId,
+      newAvailableBalance: result?.newAvailableBalance ?? updatedWallet.availableBalance,
       wallet: updatedWallet,
-      result: rpcRes,
+      result,
     });
   } catch (err: any) {
     await logSupabaseError({
       err,
       operation: 'WITHDRAWAL_REQUEST_ROUTE_FAIL',
+      sourceTable: 'withdrawal_requests',
       apiRoute: '/api/withdrawals/request',
     });
     return res.status(400).json({ error: err.message || 'فشلت عملية إنشاء طلب السحب.' });
@@ -993,7 +979,7 @@ app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, r
 // SINGLE AUTHORIZED ADMIN APIS
 // ==============================================================================
 
-app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/overview', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const dbClient = (() => {
       try {
@@ -1003,11 +989,12 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
       }
     })();
 
-    const [usersList, tasksRes, subsRes, treasury] = await Promise.all([
+    const [usersList, tasksRes, subsRes, treasury, withdrawalsList] = await Promise.all([
       supabaseDb.getAllUsers(),
       dbClient.from('tasks').select('id, status, reward_units, approved_count'),
       dbClient.from('task_submissions').select('id, status'),
-      supabaseDb.getTreasurySummary(),
+      supabaseDb.getTreasurySummary(req.authToken),
+      supabaseDb.getWithdrawals(),
     ]);
 
     const totalUsers = usersList.filter((u) => u.role === 'user').length;
@@ -1026,6 +1013,11 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
       0
     );
 
+    const pendingWithdrawals = withdrawalsList.filter((w) => w.status === 'PENDING').length;
+    const totalCompletedWithdrawals = withdrawalsList
+      .filter((w) => w.status === 'PAID')
+      .reduce((sum, w) => sum + Number(w.amount || 0), 0);
+
     res.json({
       stats: {
         totalUsers,
@@ -1034,12 +1026,12 @@ app.get('/api/admin/overview', adminMiddleware, async (_req: AuthenticatedReques
         totalTasks,
         activeTasks,
         pendingSubmissions,
-        pendingWithdrawals: 0,
+        pendingWithdrawals,
         totalAvailableLiabilities: treasury.userAvailableTotal,
-        totalPendingWithdrawalLiabilities: treasury.userPendingTotal,
-        totalCompletedWithdrawals: 0,
+        totalPendingWithdrawalLiabilities: treasury.withdrawalReservedTotal,
+        totalCompletedWithdrawals: totalCompletedWithdrawals || treasury.withdrawalSettledTotal || 0,
         totalApprovedRewards,
-        platformRevenue: 0,
+        platformRevenue: treasury.revenueTotals?.total ?? 0,
       },
     });
   } catch (err: any) {
@@ -1155,6 +1147,31 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       .eq('id', submissionId)
       .maybeSingle();
 
+    // Record task platform commission if configured on task and not already posted by Migration 011 RPC
+    let commissionResult: { recorded: boolean; transactionId?: string; pendingMigration?: boolean } = { recorded: false };
+    const rpcCommissionTxId =
+      typeof rpcRes === 'object' && rpcRes !== null ? rpcRes.commission_transaction_id : null;
+    if (rpcCommissionTxId) {
+      commissionResult = { recorded: true, transactionId: String(rpcCommissionTxId) };
+    } else {
+      const { data: taskRow } = await adminClient
+        .from('tasks')
+        .select('id, title, commission_units')
+        .eq('id', existingSub.task_id)
+        .maybeSingle();
+      const commissionUnits = Number((taskRow as any)?.commission_units ?? req.body?.commissionUnits ?? 0);
+      if (commissionUnits > 0) {
+        commissionResult = await supabaseDb.recordTaskCommission({
+          taskId: existingSub.task_id,
+          submissionId,
+          commissionUnits,
+          taskTitle: taskRow?.title,
+          actorId: req.user.id,
+          authToken: req.authToken,
+        });
+      }
+    }
+
     const wallet = await supabaseDb.getWallet(existingSub.user_id);
     const transactionId =
       (typeof rpcRes === 'object' && rpcRes !== null ? rpcRes.transaction_id : null) ||
@@ -1166,6 +1183,8 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       idempotent: Boolean(typeof rpcRes === 'object' && rpcRes?.idempotent),
       submissionId,
       transactionId,
+      commissionTransactionId: commissionResult.transactionId || null,
+      commissionPendingMigration: Boolean(commissionResult.pendingMigration),
       newBalance: wallet.availableBalance,
       result: rpcRes,
     });
@@ -1190,99 +1209,32 @@ app.get('/api/admin/withdrawals', adminMiddleware, async (_req: AuthenticatedReq
 
 app.post('/api/admin/withdrawals/:id/review', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { action, transferReference, receiptUrl, reason } = req.body;
+    const { action, transferReference, receiptUrl, reason, providerFeeUnits } = req.body || {};
     const withdrawalId = req.params.id;
 
-    const { data: withData } = await supabaseServer.from('withdrawal_requests').select('*').eq('id', withdrawalId).single();
-    if (!withData) {
-      return res.status(404).json({ error: 'طلب السحب غير موجود.' });
+    if (action !== 'PAY' && action !== 'REJECT') {
+      return res.status(400).json({ error: 'إجراء غير معروف. يجب أن يكون PAY أو REJECT.' });
     }
 
-    if (withData.status !== 'PENDING') {
-      return res.status(400).json({ error: 'تمت معالجة طلب السحب هذا مسبقاً.' });
-    }
+    const result = await supabaseDb.reviewWithdrawal({
+      withdrawalId,
+      action,
+      transferReference,
+      receiptUrl,
+      reason,
+      providerFeeUnits,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
 
-    const now = new Date().toISOString();
-    const userWallet = await supabaseDb.getWallet(withData.user_id);
-
-    if (action === 'PAY') {
-      if (!transferReference) {
-        return res.status(400).json({ error: 'يرجى إدخال رقم مرجع الحوالة البنكية.' });
-      }
-
-      await Promise.all([
-        supabaseServer.from('withdrawal_requests').update({
-          status: 'PAID',
-          transfer_reference: transferReference,
-          receipt_url: receiptUrl || null,
-          admin_id: req.user.id,
-          processed_at: now,
-        }).eq('id', withdrawalId),
-        supabaseServer.from('wallets').update({
-          pending_balance: Math.max(0, userWallet.pendingBalance - Number(withData.amount)),
-          total_withdrawn: userWallet.totalWithdrawn + Number(withData.amount),
-          updated_at: now,
-        }).eq('user_id', withData.user_id),
-        supabaseServer.from('notifications').insert({
-          id: crypto.randomUUID(),
-          user_id: withData.user_id,
-          title: 'تم تحويل مبلغ السحب بنجاح!',
-          message: `تم إرسال ${Number(withData.net_amount || withData.amount).toLocaleString()} ر.ي بنجاح برقم الحوالة: ${transferReference}.`,
-          type: 'WITHDRAWAL_COMPLETED',
-          link: '/dashboard/withdrawals',
-          created_at: now,
-        }),
-      ]);
-
-      return res.json({ success: true });
-    } else if (action === 'REJECT') {
-      if (!reason) {
-        return res.status(400).json({ error: 'يجب كتابة سبب رفض السحب لاسترجاع الرصيد.' });
-      }
-
-      const newBal = userWallet.availableBalance + Number(withData.amount);
-
-      await Promise.all([
-        supabaseServer.from('withdrawal_requests').update({
-          status: 'REJECTED',
-          rejection_reason: reason,
-          admin_id: req.user.id,
-          processed_at: now,
-        }).eq('id', withdrawalId),
-        supabaseServer.from('wallets').update({
-          available_balance: newBal,
-          pending_balance: Math.max(0, userWallet.pendingBalance - Number(withData.amount)),
-          updated_at: now,
-        }).eq('user_id', withData.user_id),
-        supabaseServer.from('wallet_transactions').insert({
-          id: crypto.randomUUID(),
-          user_id: withData.user_id,
-          type: 'WITHDRAWAL_REFUND',
-          amount: Number(withData.amount),
-          previous_balance: userWallet.availableBalance,
-          new_balance: newBal,
-          status: 'COMPLETED',
-          reference_id: withdrawalId,
-          description: `استرجاع رصيد لطلب سحب مرفوض: ${reason}`,
-          admin_id: req.user.id,
-          created_at: now,
-        }),
-        supabaseServer.from('notifications').insert({
-          id: crypto.randomUUID(),
-          user_id: withData.user_id,
-          title: 'تم رفض طلب السحب واستعادة الرصيد',
-          message: `تم استرجاع مبلغ ${Number(withData.amount).toLocaleString()} ر.ي إلى محفظتك. السبب: ${reason}`,
-          type: 'WITHDRAWAL_REJECTED',
-          link: '/dashboard/wallet',
-          created_at: now,
-        }),
-      ]);
-
-      return res.json({ success: true, newBalance: newBal });
-    } else {
-      return res.status(400).json({ error: 'إجراء غير معروف.' });
-    }
+    return res.json(result);
   } catch (err: any) {
+    await logSupabaseError({
+      err,
+      operation: 'REVIEW_WITHDRAWAL_FAIL',
+      sourceTable: 'withdrawal_requests',
+      apiRoute: `/api/admin/withdrawals/${req.params.id}/review`,
+    });
     res.status(400).json({ error: err.message || 'فشل في معالجة طلب السحب.' });
   }
 });
@@ -1320,13 +1272,14 @@ app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, 
   }
 });
 
-app.get('/api/admin/treasury', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+app.get('/api/admin/treasury', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const [summary, recentTransactions] = await Promise.all([
-      supabaseDb.getTreasurySummary(),
-      supabaseDb.getLedgerTransactions(20, 0),
+    const [summary, recentTransactions, movements] = await Promise.all([
+      supabaseDb.getTreasurySummary(req.authToken),
+      supabaseDb.getLedgerTransactions({ limit: 25, offset: 0, authToken: req.authToken }),
+      supabaseDb.getTreasuryMovements(req.authToken, 60),
     ]);
-    res.json({ treasury: summary, summary, recentTransactions });
+    res.json({ treasury: summary, summary, recentTransactions, movements });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل جلب بيانات الخزينة.' });
   }
@@ -1387,7 +1340,15 @@ app.post('/api/admin/treasury/issue', adminMiddleware, async (req: Authenticated
       return res.status(400).json({ error: rpcErr.message || 'فشل تسجيل قيد الإصدار.' });
     }
 
-    const summary = await supabaseDb.getTreasurySummary();
+    await supabaseDb.writeFinancialAuditLog({
+      actionType: 'TREASURY_ISSUANCE',
+      actorId: req.user.id,
+      transactionId: String(txId),
+      details: { amount_units: numAmount, description: cleanReason, idempotency_key: cleanKey },
+      authToken: req.authToken,
+    });
+
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
     res.json({ success: true, transactionId: txId, treasury: summary, summary });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -1396,11 +1357,26 @@ app.post('/api/admin/treasury/issue', adminMiddleware, async (req: Authenticated
 
 app.get('/api/admin/ledger', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 500);
+    const limit = Math.min(Math.max(Number(req.query.limit) || 150, 1), 500);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const transactionType = req.query.transactionType ? String(req.query.transactionType) : undefined;
+    const accountCode = req.query.accountCode ? String(req.query.accountCode) : undefined;
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to = req.query.to ? String(req.query.to) : undefined;
+    const search = req.query.search ? String(req.query.search) : undefined;
+
     const [transactions, summary] = await Promise.all([
-      supabaseDb.getLedgerTransactions(limit, offset),
-      supabaseDb.getTreasurySummary(),
+      supabaseDb.getLedgerTransactions({
+        limit,
+        offset,
+        transactionType,
+        accountCode,
+        from,
+        to,
+        search,
+        authToken: req.authToken,
+      }),
+      supabaseDb.getTreasurySummary(req.authToken),
     ]);
     res.json({ transactions, summary });
   } catch (err: any) {
@@ -1415,7 +1391,8 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
     const updates: Record<string, any> = {};
     if (title !== undefined) updates.title = title;
     if (description !== undefined) updates.description = description;
-    if (status !== undefined) updates.status = String(status).toUpperCase();
+    const normalizedStatus = status !== undefined ? String(status).toUpperCase() : undefined;
+    if (normalizedStatus !== undefined) updates.status = normalizedStatus.toLowerCase();
 
     const { data, error } = await adminClient
       .from('tasks')
@@ -1427,7 +1404,18 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
     if (!data || data.length === 0) {
       return res.status(404).json({ error: 'المهمة غير موجودة أو لا تملك صلاحية تعديلها.' });
     }
-    res.json({ success: true });
+
+    let escrowRelease: any = null;
+    if (normalizedStatus === 'ARCHIVED' || normalizedStatus === 'CANCELLED') {
+      escrowRelease = await supabaseDb.releaseTaskEscrow({
+        taskId: req.params.id,
+        reason: `تحرير الرصيد المتبقي عند تغيير حالة المهمة إلى ${normalizedStatus}`,
+        actorId: req.user.id,
+        authToken: req.authToken,
+      });
+    }
+
+    res.json({ success: true, escrowRelease });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -1464,7 +1452,15 @@ app.delete('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReq
       return res.status(404).json({ error: 'المهمة المطلوبة غير موجودة أو تم حذفها مسبقاً.' });
     }
 
-    // 2. Clean up associated submissions if allowed; if RLS blocks direct delete on submissions, ON DELETE CASCADE on tasks handles it
+    // 2. Release any remaining TASK-ESCROW balance back to PLATFORM-TREASURY before removing task
+    const escrowRelease = await supabaseDb.releaseTaskEscrow({
+      taskId,
+      reason: `تحرير الرصيد المتبقي قبل حذف المهمة: ${existingTask.title || taskId}`,
+      actorId: req.user?.id,
+      authToken: req.authToken,
+    });
+
+    // 3. Clean up associated submissions if allowed; if RLS blocks direct delete on submissions, ON DELETE CASCADE on tasks handles it
     const { error: subDelErr } = await adminClient
       .from('task_submissions')
       .delete()
@@ -1516,7 +1512,7 @@ app.delete('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReq
       });
     }
 
-    res.json({ success: true, deletedId: deletedRows[0].id });
+    res.json({ success: true, deletedId: deletedRows[0].id, escrowRelease });
   } catch (err: any) {
     console.error('Task deletion error:', err);
     await logSupabaseError({
@@ -1626,10 +1622,13 @@ app.post('/api/admin/users/:id/status', adminMiddleware, async (req: Authenticat
 
 app.get('/api/admin/financial-report', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to = req.query.to ? String(req.query.to) : undefined;
     const adminClient = getPrivilegedDbClient(req);
-    const [tasksRes, treasury] = await Promise.all([
+    const [tasksRes, treasury, comprehensive] = await Promise.all([
       adminClient.from('tasks').select('reward_units, approved_count'),
-      supabaseDb.getTreasurySummary(),
+      supabaseDb.getTreasurySummary(req.authToken),
+      supabaseDb.getComprehensiveFinancialReports({ from, to, authToken: req.authToken }),
     ]);
 
     const totalTaskExpenses = (tasksRes.data || []).reduce(
@@ -1640,16 +1639,421 @@ app.get('/api/admin/financial-report', adminMiddleware, async (req: Authenticate
     res.json({
       report: {
         totalTaskExpenses,
-        totalPaidWithdrawals: 0,
-        totalPendingWithdrawals: 0,
+        totalPaidWithdrawals: treasury.withdrawalSettledTotal ?? 0,
+        totalPendingWithdrawals: treasury.withdrawalReservedTotal ?? 0,
         totalAvailableLiabilities: treasury.userAvailableTotal,
         totalReferralExpenses: 0,
-        netPlatformVolume: totalTaskExpenses,
-        dailyBreakdown: [],
+        platformRevenue: treasury.revenueTotals?.total ?? 0,
+        revenueBreakdown: treasury.revenueTotals ?? { tasks: 0, ads: 0, subscriptions: 0, services: 0, total: 0 },
+        ownerCapitalTotal: treasury.ownerCapitalTotal ?? 0,
+        ownerWithdrawalsTotal: treasury.ownerWithdrawalsTotal ?? 0,
+        operationalExpensesTotal: treasury.expensesTotal ?? 0,
+        netPlatformVolume: totalTaskExpenses + (treasury.withdrawalSettledTotal ?? 0),
+        isReconciled: treasury.isReconciled,
+        migration011Ready: treasury.migration011Ready,
+        dailyBreakdown: comprehensive.dailyBreakdown,
       },
+      comprehensive,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/financial-report/export', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const reportType = String(req.query.reportType || 'ledger').toLowerCase();
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to = req.query.to ? String(req.query.to) : undefined;
+
+    const csvEscape = (v: any) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return `"${s.replace(/"/g, '""')}"`;
+    };
+    const buildCsv = (headers: string[], rows: any[][]) => {
+      const lines = [headers.map(csvEscape).join(','), ...rows.map((r) => r.map(csvEscape).join(','))];
+      return '\uFEFF' + lines.join('\r\n');
+    };
+
+    let csvContent = '';
+    const dateStamp = new Date().toISOString().slice(0, 10);
+
+    if (reportType === 'ledger') {
+      const txs = await supabaseDb.getLedgerTransactions({ limit: 500, from, to, authToken: req.authToken });
+      csvContent = buildCsv(
+        ['معرف القيد', 'التاريخ', 'نوع العملية', 'البيان', 'الحسابات المدينة', 'الحسابات الدائنة', 'المبلغ (ر.ي)', 'المنفذ', 'المرجع', 'الحالة'],
+        txs.map((tx) => {
+          const debits = (tx.entries || []).filter((e) => e.debitAmount > 0).map((e) => `${e.accountCode}:${e.debitAmount}`).join(' | ');
+          const credits = (tx.entries || []).filter((e) => e.creditAmount > 0).map((e) => `${e.accountCode}:${e.creditAmount}`).join(' | ');
+          return [
+            tx.id,
+            tx.createdAt,
+            tx.transactionType,
+            tx.description,
+            debits,
+            credits,
+            tx.totalAmount || 0,
+            tx.createdByName || tx.createdBy || '',
+            tx.referenceId || '',
+            tx.isReversed ? 'معكوس' : tx.status || 'posted',
+          ];
+        })
+      );
+    } else {
+      const rep = await supabaseDb.getComprehensiveFinancialReports({ from, to, authToken: req.authToken });
+      if (reportType === 'pnl') {
+        csvContent = buildCsv(
+          ['البند', 'التصنيف', 'المبلغ (ر.ي)'],
+          [
+            ['إيرادات عمولات المهام', 'إيراد', rep.profitAndLoss.revenueTasks],
+            ['إيرادات الإعلانات', 'إيراد', rep.profitAndLoss.revenueAds],
+            ['إيرادات الاشتراكات', 'إيراد', rep.profitAndLoss.revenueSubscriptions],
+            ['إيرادات الخدمات ورسوم السحب', 'إيراد', rep.profitAndLoss.revenueServices],
+            ['إجمالي الإيرادات المحققة', 'إجمالي', rep.profitAndLoss.totalRevenue],
+            ['المصروفات التشغيلية', 'مصروف', rep.profitAndLoss.operationalExpenses],
+            ['عمولات مزودي الدفع', 'مصروف', rep.profitAndLoss.paymentProviderFees],
+            ['الضرائب المثبتة', 'مصروف', rep.profitAndLoss.taxExpenses],
+            ['إجمالي المصروفات', 'إجمالي', rep.profitAndLoss.totalExpenses],
+            ['صافي الربح / الخسارة', 'صافي', rep.profitAndLoss.netProfitLoss],
+          ]
+        );
+      } else if (reportType === 'cashflow') {
+        csvContent = buildCsv(
+          ['بند التدفق النقدي', 'المبلغ (ر.ي)'],
+          [
+            ['التدفقات النقدية التشغيلية الداخلة', rep.cashFlow.operatingCashInflows],
+            ['التدفقات النقدية التشغيلية الخارجة', rep.cashFlow.operatingCashOutflows],
+            ['صافي التدفق النقدي التشغيلي', rep.cashFlow.netOperatingCashFlow],
+            ['تدفقات إيداع رأس مال المالك', rep.cashFlow.ownerCapitalInflows],
+            ['تدفقات مسحوبات المالك', rep.cashFlow.ownerWithdrawalsOutflows],
+            ['صافي التدفق التمويلي', rep.cashFlow.netFinancingCashFlow],
+            ['صافي التغير النقدي للفترة', rep.cashFlow.netCashChange],
+            ['الرصيد النقدي الفعلي بالخزينة (PLATFORM-CASH-VAULT)', rep.cashFlow.endingCashVaultBalance],
+            ['الوحدات الافتراضية المتاحة بالخزينة (PLATFORM-TREASURY)', rep.cashFlow.virtualTreasuryAvailable],
+          ]
+        );
+      } else if (reportType === 'balance_sheet') {
+        csvContent = buildCsv(
+          ['القسم', 'الحساب / البند', 'الرصيد (ر.ي)'],
+          [
+            ['الأصول', 'النقد الفعلي في الخزينة (PLATFORM-CASH-VAULT)', rep.balanceSheet.assets.cashVault],
+            ['الأصول', 'مراقبة الإصدار الافتراضي (منفصل)', rep.balanceSheet.assets.virtualIssuanceControl],
+            ['الالتزامات', 'أرصدة محافظ المستخدمين (WALLET-*)', rep.balanceSheet.liabilities.userWalletBalances],
+            ['الالتزامات', 'سحوبات قيد المعالجة (WITHDRAWAL-RESERVED)', rep.balanceSheet.liabilities.withdrawalReserved],
+            ['الالتزامات', 'أموال ضمان المهام (TASK-ESCROW-*)', rep.balanceSheet.liabilities.taskEscrowBalances],
+            ['الالتزامات', 'الضرائب المستحقة (TAX-PAYABLE)', rep.balanceSheet.liabilities.taxesPayable],
+            ['الالتزامات', 'إجمالي التزامات المستخدمين والغير', rep.balanceSheet.liabilities.totalUserAndExternalLiabilities],
+            ['حقوق الملكية', 'رأس مال المالك (OWNER-CAPITAL)', rep.balanceSheet.equity.ownerCapital],
+            ['حقوق الملكية', 'الأرباح المحتجزة (RETAINED-EARNINGS)', rep.balanceSheet.equity.retainedEarningsAccount],
+            ['حقوق الملكية', 'صافي دخل الفترة المتراكم', rep.balanceSheet.equity.currentNetIncome],
+            ['حقوق الملكية', 'مسحوبات المالك (OWNER-WITHDRAWALS)', -rep.balanceSheet.equity.ownerWithdrawals],
+            ['حقوق الملكية', 'صافي حقوق الملكية', rep.balanceSheet.equity.totalOwnerEquity],
+          ]
+        );
+      } else if (reportType === 'revenue') {
+        csvContent = buildCsv(
+          ['كود الحساب', 'مصدر الإيراد', 'إيراد الفترة (ر.ي)', 'الرصيد التراكمي (ر.ي)', 'عدد القيود'],
+          rep.revenueBySource.map((r) => [r.accountCode, r.label, r.periodAmount, r.cumulativeBalance, r.txCount])
+        );
+      } else if (reportType === 'expenses') {
+        csvContent = buildCsv(
+          ['التاريخ', 'القيد', 'التصنيف', 'كود الحساب', 'المبلغ (ر.ي)', 'البيان', 'المرجع'],
+          rep.expensesItems.map((e) => [e.date, e.transactionId, e.category, e.accountCode, e.amount, e.description, e.referenceId || ''])
+        );
+      } else if (reportType === 'taxes') {
+        csvContent = buildCsv(
+          ['المعرف', 'نوع الضريبة', 'الجهة', 'الوعاء الخاضع', 'قيمة الضريبة', 'الحالة', 'المرجع', 'تاريخ السداد'],
+          rep.taxesReport.settlements.map((s) => [s.id, s.taxType || '', s.taxAuthority || '', s.taxableAmount, s.taxAmount, s.status, s.referenceId || '', s.settledAt || ''])
+        );
+      } else if (reportType === 'withdrawals') {
+        csvContent = buildCsv(
+          ['التاريخ', 'القيد', 'المبلغ (ر.ي)', 'البيان', 'المنفذ'],
+          rep.ownerWithdrawalsReport.items.map((w) => [w.date, w.transactionId, w.amount, w.description, w.actorName || ''])
+        );
+      } else if (reportType === 'liabilities') {
+        csvContent = buildCsv(
+          ['النوع', 'الاسم / المهمة', 'الكود', 'الرصيد المحجوز / المستحق (ر.ي)', 'الحالة'],
+          [
+            ...rep.userBalancesAndEscrowsReport.users.map((u) => ['محفظة مستخدم', `${u.fullName} (${u.phone})`, u.accountCode, u.balanceUnits, u.status]),
+            ...rep.userBalancesAndEscrowsReport.escrows.map((e) => ['ضمان مهمة', e.taskTitle, e.accountCode, e.balanceUnits, e.taskStatus]),
+          ]
+        );
+      } else {
+        csvContent = buildCsv(
+          ['التاريخ', 'الإيرادات', 'المصروفات', 'مكافآت المهام', 'السحوبات المدفوعة'],
+          rep.dailyBreakdown.map((d) => [d.date, d.revenues, d.expenses, d.taskRewards, d.withdrawals])
+        );
+      }
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="kasb-finance-${reportType}-${dateStamp}.csv"`);
+    res.send(csvContent);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل تصدير التقرير المالي.' });
+  }
+});
+
+// ==============================================================================
+// SINGLE-OWNER FINANCIAL OPERATIONS (MIGRATION 011 DOUBLE-ENTRY LEDGER)
+// ==============================================================================
+
+app.get('/api/admin/finance/accounts', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const [overview, summary] = await Promise.all([
+      supabaseDb.getFinancialAccountsOverview(req.authToken),
+      supabaseDb.getTreasurySummary(req.authToken),
+    ]);
+    res.json({ ...overview, summary });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب الحسابات المالية.' });
+  }
+});
+
+app.post('/api/admin/finance/capital', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { amount, reason, idempotencyKey } = req.body || {};
+    const result = await supabaseDb.executeOwnerFinancialOperation({
+      operationType: 'OWNER_CAPITAL_DEPOSIT',
+      amount: Number(amount),
+      description: String(reason || ''),
+      idempotencyKey,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'OWNER_CAPITAL_DEPOSIT', apiRoute: '/api/admin/finance/capital' });
+    res.status(400).json({ error: err.message || 'فشل تسجيل إيداع رأس المال.' });
+  }
+});
+
+app.post('/api/admin/finance/expense', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { amount, reason, category, idempotencyKey } = req.body || {};
+    const result = await supabaseDb.executeOwnerFinancialOperation({
+      operationType: 'OPERATIONAL_EXPENSE',
+      amount: Number(amount),
+      description: String(reason || ''),
+      idempotencyKey,
+      metadata: category ? { expense_category: String(category).trim() } : {},
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'OPERATIONAL_EXPENSE', apiRoute: '/api/admin/finance/expense' });
+    res.status(400).json({ error: err.message || 'فشل تسجيل المصروف التشغيلي.' });
+  }
+});
+
+app.post('/api/admin/finance/owner-withdrawal', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { amount, reason, idempotencyKey } = req.body || {};
+    const result = await supabaseDb.executeOwnerFinancialOperation({
+      operationType: 'OWNER_WITHDRAWAL',
+      amount: Number(amount),
+      description: String(reason || ''),
+      idempotencyKey,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'OWNER_WITHDRAWAL', apiRoute: '/api/admin/finance/owner-withdrawal' });
+    res.status(400).json({ error: err.message || 'فشل تسجيل السحب الشخصي للمالك.' });
+  }
+});
+
+app.post('/api/admin/finance/revenue', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { source, amount, reason, creditToTreasury, idempotencyKey } = req.body || {};
+    const cleanSource = String(source || '').trim().toUpperCase();
+    const opMap: Record<string, 'AD_REVENUE' | 'SUBSCRIPTION_REVENUE' | 'SERVICE_REVENUE'> = {
+      ADS: 'AD_REVENUE',
+      AD_REVENUE: 'AD_REVENUE',
+      SUBSCRIPTIONS: 'SUBSCRIPTION_REVENUE',
+      SUBSCRIPTION_REVENUE: 'SUBSCRIPTION_REVENUE',
+      SERVICES: 'SERVICE_REVENUE',
+      SERVICE_REVENUE: 'SERVICE_REVENUE',
+    };
+    const operationType = opMap[cleanSource];
+    if (!operationType) {
+      return res.status(400).json({ error: 'مصدر الإيراد غير صالح. يجب أن يكون ADS أو SUBSCRIPTIONS أو SERVICES.' });
+    }
+
+    const result = await supabaseDb.executeOwnerFinancialOperation({
+      operationType,
+      amount: Number(amount),
+      description: String(reason || ''),
+      creditToTreasury: creditToTreasury !== false,
+      idempotencyKey,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'PLATFORM_REVENUE_RECORD', apiRoute: '/api/admin/finance/revenue' });
+    res.status(400).json({ error: err.message || 'فشل تسجيل الإيراد.' });
+  }
+});
+
+app.post('/api/admin/finance/reverse', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { transactionId, reason } = req.body || {};
+    if (!transactionId) {
+      return res.status(400).json({ error: 'معرف المعاملة مطلوب للقيد العكسي.' });
+    }
+    const result = await supabaseDb.reverseTransaction({
+      transactionId: String(transactionId),
+      reason: String(reason || ''),
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'REVERSE_LEDGER_TRANSACTION', apiRoute: '/api/admin/finance/reverse' });
+    res.status(400).json({ error: err.message || 'فشل تنفيذ القيد العكسي.' });
+  }
+});
+
+app.get('/api/admin/finance/treasury-movements', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 60, 1), 300);
+    const movements = await supabaseDb.getTreasuryMovements(req.authToken, limit);
+    res.json({ movements });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب حركات الخزينة.' });
+  }
+});
+
+app.get('/api/admin/finance/reports', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const from = req.query.from ? String(req.query.from) : undefined;
+    const to = req.query.to ? String(req.query.to) : undefined;
+    const report = await supabaseDb.getComprehensiveFinancialReports({ from, to, authToken: req.authToken });
+    res.json({ report });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل إنشاء التقارير المالية.' });
+  }
+});
+
+app.get('/api/admin/finance/audit-logs', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 300);
+    const result = await supabaseDb.getFinancialAuditLogs(req.authToken, limit);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب سجل المراجعة المالية.' });
+  }
+});
+
+app.get('/api/admin/finance/taxes', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.getTaxesOverview(req.authToken);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب بيانات الضرائب.' });
+  }
+});
+
+app.post('/api/admin/finance/taxes', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { taxType, taxAuthority, region, taxBase, ratePercentage, flatAmount, validFrom, validTo, isActive } = req.body || {};
+    const definition = await supabaseDb.createTaxDefinition({
+      taxType,
+      taxAuthority,
+      region,
+      taxBase,
+      ratePercentage: Number(ratePercentage ?? 0),
+      flatAmount: Number(flatAmount ?? 0),
+      validFrom,
+      validTo: validTo || null,
+      isActive: Boolean(isActive),
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    res.json({ success: true, definition });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'CREATE_TAX_DEFINITION', apiRoute: '/api/admin/finance/taxes' });
+    res.status(400).json({ error: err.message || 'فشل إنشاء تعريف الضريبة.' });
+  }
+});
+
+app.put('/api/admin/finance/taxes/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { ratePercentage, flatAmount, isActive, validTo, taxAuthority } = req.body || {};
+    const definition = await supabaseDb.updateTaxDefinition({
+      id: req.params.id,
+      ratePercentage,
+      flatAmount,
+      isActive,
+      validTo,
+      taxAuthority,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    res.json({ success: true, definition });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'UPDATE_TAX_DEFINITION', apiRoute: `/api/admin/finance/taxes/${req.params.id}` });
+    res.status(400).json({ error: err.message || 'فشل تحديث تعريف الضريبة.' });
+  }
+});
+
+app.post('/api/admin/finance/taxes/accrue', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { taxDefinitionId, taxableAmount, referenceId, note } = req.body || {};
+    const result = await supabaseDb.accrueTaxObligation({
+      taxDefinitionId: String(taxDefinitionId || ''),
+      taxableAmount: Number(taxableAmount),
+      referenceId,
+      note,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'ACCRUE_TAX_OBLIGATION', apiRoute: '/api/admin/finance/taxes/accrue' });
+    res.status(400).json({ error: err.message || 'فشل احتساب الالتزام الضريبي.' });
+  }
+});
+
+app.post('/api/admin/finance/taxes/settle', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { settlementId, referenceId } = req.body || {};
+    const result = await supabaseDb.settleTaxObligation({
+      settlementId: String(settlementId || ''),
+      referenceId: String(referenceId || ''),
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'SETTLE_TAX_OBLIGATION', apiRoute: '/api/admin/finance/taxes/settle' });
+    res.status(400).json({ error: err.message || 'فشل تسوية الالتزام الضريبي.' });
+  }
+});
+
+app.post('/api/admin/tasks/:id/release-escrow', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.releaseTaskEscrow({
+      taskId: req.params.id,
+      reason: req.body?.reason,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ success: true, ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'RELEASE_TASK_ESCROW', apiRoute: `/api/admin/tasks/${req.params.id}/release-escrow` });
+    res.status(400).json({ error: err.message || 'فشل تحرير أموال ضمان المهمة.' });
   }
 });
 
