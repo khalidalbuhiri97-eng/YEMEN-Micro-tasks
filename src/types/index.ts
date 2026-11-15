@@ -481,17 +481,24 @@ export interface FinancialReportData {
   }>;
 }
 
+export type ReferralRewardStatus = 'awaiting_first_task' | 'pending' | 'approved' | 'paid' | 'rejected';
+
 export interface ReferralStat {
   code: string;
   shareUrl: string;
+  referralBonus: number;
   totalReferred: number;
+  qualifiedReferralsCount: number;
+  paidRewardsCount: number;
   totalEarnedYer: number;
   referredUsers: Array<{
     id: string;
     fullName: string;
     createdAt: string;
     hasCompletedFirstTask: boolean;
+    rewardStatus: ReferralRewardStatus;
     rewardEarned: number;
+    paidAt?: string | null;
   }>;
 }
 

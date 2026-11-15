@@ -32,6 +32,8 @@ import type {
   TaxSettlement,
   FinancialAuditLog,
   ComprehensiveFinancialReport,
+  ReferralStat,
+  ReferralRewardStatus,
 } from '../src/types/index';
 
 const AUTHORIZED_OWNER_EMAIL = (process.env.ADMIN_EMAIL || 'khalidalbuhiri97@gmail.com').trim().toLowerCase();
@@ -40,6 +42,89 @@ const AUTHORIZED_OWNER_ID = '00000000-0000-4000-8000-000000000001';
 export function generateWalletAddress(userId: string): string {
   const hash = crypto.createHash('sha256').update(userId + '_kasb_wallet_salt_yemen_v1').digest('hex').toUpperCase();
   return `KY-${hash.slice(0, 12)}`;
+}
+
+export function generateReferralCode(userId: string): string {
+  const hash = crypto.createHash('sha256').update(`${userId}:kasb_referral_v1`).digest('hex').toUpperCase();
+  return `KY-${hash.slice(0, 8)}`;
+}
+
+export function computeReferralSummary(params: {
+  ownReferralCode: string;
+  referralBonus: number;
+  referredProfiles: Array<{ id: string; full_name?: string; fullName?: string; created_at?: string; createdAt?: string }>;
+  approvedSubmissions: Array<{ user_id: string; reward_transaction_id?: string | null; status?: string }>;
+  referralRewards: Array<{
+    referred_user_id: string;
+    reward_amount: number;
+    status: string;
+    ledger_transaction_id?: string | null;
+    paid_at?: string | null;
+  }>;
+}): ReferralStat {
+  const code = params.ownReferralCode.trim();
+  const approvedUserIds = new Set(
+    (params.approvedSubmissions || [])
+      .filter((s) => String(s.status || '').toLowerCase() === 'approved' && Boolean(s.reward_transaction_id))
+      .map((s) => s.user_id)
+  );
+  const rewardByUser = new Map<string, any>();
+  for (const rw of params.referralRewards || []) {
+    rewardByUser.set(rw.referred_user_id, rw);
+  }
+
+  let qualifiedReferralsCount = 0;
+  let paidRewardsCount = 0;
+  let totalEarnedYer = 0;
+
+  const referredUsers = (params.referredProfiles || []).map((p) => {
+    const hasCompletedFirstTask = approvedUserIds.has(p.id);
+    if (hasCompletedFirstTask) qualifiedReferralsCount += 1;
+
+    const rw = rewardByUser.get(p.id);
+    const rwStatus = rw?.status ? String(rw.status).toLowerCase() : null;
+    const isActuallyPaid = rwStatus === 'paid' && Boolean(rw?.ledger_transaction_id);
+    const rewardEarned = isActuallyPaid ? Number(rw.reward_amount || 0) : 0;
+
+    if (isActuallyPaid) {
+      paidRewardsCount += 1;
+      totalEarnedYer += rewardEarned;
+    }
+
+    let rewardStatus: ReferralRewardStatus;
+    if (rwStatus === 'paid' && rw?.ledger_transaction_id) {
+      rewardStatus = 'paid';
+    } else if (rwStatus === 'approved') {
+      rewardStatus = 'approved';
+    } else if (rwStatus === 'rejected') {
+      rewardStatus = 'rejected';
+    } else if (rwStatus === 'pending' || hasCompletedFirstTask) {
+      rewardStatus = 'pending';
+    } else {
+      rewardStatus = 'awaiting_first_task';
+    }
+
+    return {
+      id: p.id,
+      fullName: p.full_name || p.fullName || 'مستخدم',
+      createdAt: p.created_at || p.createdAt || new Date().toISOString(),
+      hasCompletedFirstTask,
+      rewardStatus,
+      rewardEarned,
+      paidAt: rw?.paid_at || null,
+    };
+  });
+
+  return {
+    code,
+    shareUrl: code ? `https://kasbyemen.com/?ref=${encodeURIComponent(code)}` : 'https://kasbyemen.com/',
+    referralBonus: Math.max(0, Number(params.referralBonus ?? 0)),
+    totalReferred: referredUsers.length,
+    qualifiedReferralsCount,
+    paidRewardsCount,
+    totalEarnedYer,
+    referredUsers,
+  };
 }
 
 function getDbClient() {
@@ -309,11 +394,22 @@ export const supabaseDb = {
     const startTime = Date.now();
     const db = getDbClient();
     try {
-      const { data: profileData, error: profileErr } = await db
+      let { data: profileData, error: profileErr } = await db
         .from('profiles')
-        .select('id, full_name, phone, city, area_name, avatar_url, account_status, created_at, updated_at')
+        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, created_at, updated_at')
         .eq('id', id)
         .maybeSingle();
+
+      // Pre-Migration 014 backwards-compatible fallback if referred_by doesn't exist yet
+      if (profileErr && (profileErr.code === '42703' || String(profileErr.message || '').includes('referred_by'))) {
+        const fallback = await db
+          .from('profiles')
+          .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, created_at, updated_at')
+          .eq('id', id)
+          .maybeSingle();
+        profileData = fallback.data as any;
+        profileErr = fallback.error;
+      }
 
       if (profileErr) {
         await logSupabaseError({
@@ -377,8 +473,8 @@ export const supabaseDb = {
         avatarUrl: profileData.avatar_url || '',
         role: userRole,
         status: accountStatus,
-        referralCode: '',
-        referredBy: undefined,
+        referralCode: (profileData as any).referral_code || '',
+        referredBy: (profileData as any).referred_by || undefined,
         city: profileData.city || profileData.area_name || 'صنعاء',
         createdAt: profileData.created_at || new Date().toISOString(),
         updatedAt: profileData.updated_at || new Date().toISOString(),
@@ -437,13 +533,19 @@ export const supabaseDb = {
     const startTime = Date.now();
     const db = getDbClient();
     try {
-      const [profilesRes, rolesRes] = await Promise.all([
-        db
+      let profilesRes = await db
+        .from('profiles')
+        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, created_at, updated_at')
+        .order('created_at', { ascending: false });
+
+      if (profilesRes.error && (profilesRes.error.code === '42703' || String(profilesRes.error.message || '').includes('referred_by'))) {
+        profilesRes = (await db
           .from('profiles')
-          .select('id, full_name, phone, city, area_name, avatar_url, account_status, created_at, updated_at')
-          .order('created_at', { ascending: false }),
-        db.from('user_roles').select('user_id, role'),
-      ]);
+          .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, created_at, updated_at')
+          .order('created_at', { ascending: false })) as any;
+      }
+
+      const rolesRes = await db.from('user_roles').select('user_id, role');
 
       if (profilesRes.error) {
         await logSupabaseError({
@@ -480,8 +582,8 @@ export const supabaseDb = {
         avatarUrl: p.avatar_url || '',
         role: roleMap.get(p.id) || 'user',
         status: (p.account_status as AccountStatus) || 'active',
-        referralCode: '',
-        referredBy: undefined,
+        referralCode: p.referral_code || '',
+        referredBy: p.referred_by || undefined,
         city: p.city || p.area_name || 'صنعاء',
         createdAt: p.created_at || new Date().toISOString(),
         updatedAt: p.updated_at || new Date().toISOString(),
@@ -641,13 +743,25 @@ export const supabaseDb = {
             .limit(1);
           accountRow = retryFa?.[0] || null;
         } else {
-          await logSupabaseError({
-            err: insertFaErr,
-            operation: 'CREATE_FINANCIAL_ACCOUNT',
-            sourceTable: 'financial_accounts',
-            executionDurationMs: Date.now() - startTime,
-          });
-          throw insertFaErr;
+          // If direct INSERT is blocked by Migration 013 privilege hardening, invoke SECURITY DEFINER RPC
+          const { data: rpcAccId } = await db.rpc('ensure_own_financial_account');
+          if (rpcAccId) {
+            const { data: rpcFa } = await db
+              .from('financial_accounts')
+              .select('id, account_code, account_type, owner_user_id, wallet_id, normal_side, balance_units, status, created_at')
+              .eq('id', String(rpcAccId))
+              .maybeSingle();
+            accountRow = rpcFa || null;
+          }
+          if (!accountRow) {
+            await logSupabaseError({
+              err: insertFaErr,
+              operation: 'CREATE_FINANCIAL_ACCOUNT',
+              sourceTable: 'financial_accounts',
+              executionDurationMs: Date.now() - startTime,
+            });
+            throw insertFaErr;
+          }
         }
       } else {
         accountRow = insertedFa;
@@ -3301,7 +3415,7 @@ export const supabaseDb = {
   /**
    * 6. PLATFORM SETTINGS
    */
-  async getSettings(): Promise<PlatformSettings> {
+  async getSettings(authToken?: string): Promise<PlatformSettings> {
     const defaultSettings: PlatformSettings = {
       id: 'settings-1',
       platformName: 'كسب اليمن',
@@ -3310,7 +3424,7 @@ export const supabaseDb = {
       maxWithdrawal: 500000,
       dailyWithdrawalLimit: 1000000,
       defaultFeePercentage: 1.5,
-      referralBonus: 300,
+      referralBonus: 30,
       taskSubmissionLimit: 10,
       isRegistrationOpen: true,
       maintenanceMode: false,
@@ -3320,15 +3434,35 @@ export const supabaseDb = {
     };
 
     try {
-      const db = getDbClient();
-      const { data, error } = await db
-        .from('platform_settings')
-        .select('setting_key, setting_value, updated_at');
+      const db = getActorOrAdminClient(authToken);
+      const { data, error } = await db.from('platform_settings').select('*');
 
       if (error || !data || data.length === 0) {
         return defaultSettings;
       }
 
+      // Support single-row column-based platform_settings (Migration 005)
+      const first = data[0] as any;
+      if (first && first.setting_key === undefined && first.referral_bonus !== undefined) {
+        return {
+          ...defaultSettings,
+          id: String(first.id || defaultSettings.id),
+          platformName: String(first.platform_name || defaultSettings.platformName),
+          minWithdrawal: Number(first.min_withdrawal ?? defaultSettings.minWithdrawal),
+          maxWithdrawal: Number(first.max_withdrawal ?? defaultSettings.maxWithdrawal),
+          dailyWithdrawalLimit: Number(first.daily_withdrawal_limit ?? defaultSettings.dailyWithdrawalLimit),
+          defaultFeePercentage: Number(first.default_fee_percentage ?? defaultSettings.defaultFeePercentage),
+          referralBonus: Number(first.referral_bonus ?? defaultSettings.referralBonus),
+          taskSubmissionLimit: Number(first.task_submission_limit ?? defaultSettings.taskSubmissionLimit),
+          isRegistrationOpen: first.is_registration_open !== undefined ? Boolean(first.is_registration_open) : true,
+          maintenanceMode: Boolean(first.maintenance_mode),
+          contactPhone: String(first.contact_phone || defaultSettings.contactPhone),
+          contactEmail: String(first.contact_email || defaultSettings.contactEmail),
+          updatedAt: first.updated_at || defaultSettings.updatedAt,
+        };
+      }
+
+      // Support key-value platform_settings
       const map = new Map<string, any>();
       let latestUpdate = defaultSettings.updatedAt;
       for (const row of data) {
@@ -3550,6 +3684,129 @@ export const supabaseDb = {
         .eq('user_id', userId);
     } catch {
       // Optional table
+    }
+  },
+
+  /**
+   * 10. REFERRAL SYSTEM (Validation, Ledger-Backed Summary & Reward Lookup)
+   */
+  async resolveReferralCode(code: string): Promise<{ referrerId: string; referralCode: string; phone?: string } | null> {
+    const clean = String(code || '').trim().toUpperCase();
+    if (!clean) return null;
+
+    const db = getDbClient();
+    const { data: profileRow, error } = await db
+      .from('profiles')
+      .select('id, phone, referral_code')
+      .ilike('referral_code', clean)
+      .maybeSingle();
+
+    if (!error && profileRow?.id) {
+      return {
+        referrerId: profileRow.id,
+        referralCode: profileRow.referral_code || clean,
+        phone: profileRow.phone || undefined,
+      };
+    }
+
+    // Fallback to SECURITY DEFINER RPC when service_role is absent & profiles RLS blocks anon
+    const { data: rpcId, error: rpcErr } = await db.rpc('resolve_referral_code', { p_code: clean });
+    if (!rpcErr && rpcId) {
+      return { referrerId: String(rpcId), referralCode: clean };
+    }
+
+    return null;
+  },
+
+  async getMyReferrals(userId: string, authToken?: string): Promise<ReferralStat> {
+    const settings = await this.getSettings(authToken);
+
+    // 1. Prefer Migration 014 SECURITY DEFINER RPC when deployed (enforces auth.uid() & reads ledger-backed rewards)
+    if (authToken) {
+      const userClient = getSupabaseUserClient(authToken);
+      const { data: rpcSummary, error: rpcErr } = await userClient.rpc('get_my_referral_summary');
+      if (!rpcErr && rpcSummary && typeof rpcSummary === 'object') {
+        const ownCode = String(rpcSummary.code || generateReferralCode(userId));
+        return {
+          code: ownCode,
+          shareUrl: ownCode ? `https://kasbyemen.com/?ref=${encodeURIComponent(ownCode)}` : 'https://kasbyemen.com/',
+          referralBonus: Number(rpcSummary.referralBonus ?? settings.referralBonus),
+          totalReferred: Number(rpcSummary.totalReferred || 0),
+          qualifiedReferralsCount: Number(rpcSummary.qualifiedReferralsCount || 0),
+          paidRewardsCount: Number(rpcSummary.paidRewardsCount || 0),
+          totalEarnedYer: Number(rpcSummary.totalEarnedYer || 0),
+          referredUsers: Array.isArray(rpcSummary.referredUsers) ? rpcSummary.referredUsers : [],
+        };
+      }
+    }
+
+    // 2. Fallback query path (gracefully handles pre-Migration 014 live schema)
+    const db = getActorOrAdminClient(authToken);
+    let ownReferralCode = '';
+    const { data: selfProf } = await db
+      .from('profiles')
+      .select('referral_code')
+      .eq('id', userId)
+      .maybeSingle();
+    ownReferralCode = String(selfProf?.referral_code || '');
+
+    let referredProfiles: any[] = [];
+    const { data: refRows, error: refErr } = await db
+      .from('profiles')
+      .select('id, full_name, created_at')
+      .eq('referred_by', userId)
+      .order('created_at', { ascending: false });
+
+    if (!refErr && Array.isArray(refRows)) {
+      referredProfiles = refRows;
+    }
+
+    const referredIds = referredProfiles.map((r) => r.id);
+    let approvedSubmissions: any[] = [];
+    let referralRewards: any[] = [];
+
+    if (referredIds.length > 0) {
+      const [subsRes, rewardsRes] = await Promise.all([
+        db
+          .from('task_submissions')
+          .select('user_id, status, reward_transaction_id')
+          .in('user_id', referredIds)
+          .not('reward_transaction_id', 'is', null),
+        db
+          .from('referral_rewards')
+          .select('referred_user_id, reward_amount, status, ledger_transaction_id, paid_at')
+          .eq('referrer_id', userId),
+      ]);
+
+      if (!subsRes.error && Array.isArray(subsRes.data)) {
+        approvedSubmissions = subsRes.data;
+      }
+      if (!rewardsRes.error && Array.isArray(rewardsRes.data)) {
+        referralRewards = rewardsRes.data;
+      }
+    }
+
+    return computeReferralSummary({
+      ownReferralCode,
+      referralBonus: settings.referralBonus,
+      referredProfiles,
+      approvedSubmissions,
+      referralRewards,
+    });
+  },
+
+  async getReferralRewardForSubmission(submissionId: string, authToken?: string) {
+    try {
+      const db = getActorOrAdminClient(authToken);
+      const { data, error } = await db
+        .from('referral_rewards')
+        .select('id, referrer_id, referred_user_id, reward_amount, status, ledger_transaction_id, paid_at, failure_reason')
+        .eq('trigger_submission_id', submissionId)
+        .maybeSingle();
+      if (error || !data) return null;
+      return data;
+    } catch {
+      return null;
     }
   },
 };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { X, Lock, Phone, User, MapPin, Mail, ArrowRight, Shield, Eye, EyeOff } from 'lucide-react';
 
@@ -21,6 +21,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
   const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setMode(defaultMode);
+    setError('');
+    if (typeof window !== 'undefined') {
+      const refParam = new URLSearchParams(window.location.search).get('ref');
+      if (refParam && refParam.trim()) {
+        setReferralCode((prev) => prev || refParam.trim().toUpperCase());
+      }
+    }
+  }, [isOpen, defaultMode]);
 
   if (!isOpen) return null;
 

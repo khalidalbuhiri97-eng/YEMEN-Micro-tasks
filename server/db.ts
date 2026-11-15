@@ -179,7 +179,7 @@ function getCleanInitialDatabase(): DatabaseSchema {
     maxWithdrawal: 500000,
     dailyWithdrawalLimit: 1000000,
     defaultFeePercentage: 1.5,
-    referralBonus: 300,
+    referralBonus: 30,
     taskSubmissionLimit: 10,
     isRegistrationOpen: true,
     maintenanceMode: false,

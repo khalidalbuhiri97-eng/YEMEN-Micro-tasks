@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import { supabaseDb, generateWalletAddress } from './supabaseDb.js';
+import { supabaseDb, generateWalletAddress, generateReferralCode } from './supabaseDb.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
@@ -330,8 +330,24 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 
     const cleanPhone = phone.trim();
     const cleanEmail = email ? email.trim().toLowerCase() : `ky_${cleanPhone.replace(/\D/g, '')}@kasbyemen.local`;
+    const cleanReferralCode = typeof referralCode === 'string' ? referralCode.trim().toUpperCase() : '';
 
-    // 1. Check duplicate phone or email in existing profiles
+    // 1. Validate optional referral code strictly BEFORE creating auth user (reject nonexistent / self-referral)
+    let resolvedReferrer: { referrerId: string; referralCode: string; phone?: string } | null = null;
+    if (cleanReferralCode) {
+      if (cleanReferralCode.length < 4 || cleanReferralCode.length > 32) {
+        return res.status(400).json({ error: 'صيغة كود الإحالة غير صالحة.' });
+      }
+      resolvedReferrer = await supabaseDb.resolveReferralCode(cleanReferralCode);
+      if (!resolvedReferrer) {
+        return res.status(400).json({ error: 'كود الإحالة المدخل غير صحيح أو غير موجود في النظام.' });
+      }
+      if (resolvedReferrer.phone && resolvedReferrer.phone.trim() === cleanPhone) {
+        return res.status(400).json({ error: 'لا يمكنك استخدام كود الإحالة الخاص بك.' });
+      }
+    }
+
+    // 2. Check duplicate phone or email in existing profiles
     const existingPhone = await supabaseDb.findUserByPhoneOrEmail(cleanPhone);
     if (existingPhone) {
       return res.status(400).json({ error: 'رقم الهاتف مسجل مسبقاً في النظام.' });
@@ -343,7 +359,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       }
     }
 
-    // 2. Register strictly via Supabase Auth
+    // 3. Register strictly via Supabase Auth (passing referred_by_code so DB trigger handles it atomically too)
     const { data: supaAuth, error: supaAuthErr } = await supabaseServer.auth.signUp({
       email: cleanEmail,
       password: password,
@@ -352,6 +368,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
           full_name: fullName.trim(),
           phone: cleanPhone,
           city: city?.trim() || 'صنعاء',
+          ...(resolvedReferrer ? { referred_by_code: resolvedReferrer.referralCode } : {}),
         },
       },
     });
@@ -366,32 +383,91 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     }
 
     const authUserId = supaAuth.user.id;
+    if (resolvedReferrer && resolvedReferrer.referrerId === authUserId) {
+      return res.status(400).json({ error: 'لا يمكنك إحالة نفسك.' });
+    }
+
     const now = new Date().toISOString();
     const assignedRole = cleanEmail === supabaseDb.getOwnerEmail() ? 'admin' : 'user';
+    const generatedRefCode = generateReferralCode(authUserId);
     const dbClient = (() => {
       try {
         return getSupabaseAdminClient();
       } catch {
+        if (supaAuth.session?.access_token) {
+          return getSupabaseUserClient(supaAuth.session.access_token);
+        }
         return supabaseServer;
       }
     })();
 
-    // 3. Create/Upsert Profile strictly with actual live columns
-    const newProfile = {
+    // 4. Create/Update Profile safely without overwriting an existing referral_code or referred_by
+    let existingProfile: any = null;
+    const { data: existingWithRef, error: existingErr } = await dbClient
+      .from('profiles')
+      .select('id, referral_code, referred_by')
+      .eq('id', authUserId)
+      .maybeSingle();
+
+    if (existingErr && (existingErr.code === '42703' || String(existingErr.message || '').includes('referred_by'))) {
+      const { data: existingLegacy } = await dbClient
+        .from('profiles')
+        .select('id, referral_code')
+        .eq('id', authUserId)
+        .maybeSingle();
+      existingProfile = existingLegacy;
+    } else {
+      existingProfile = existingWithRef;
+    }
+
+    const finalReferralCode = existingProfile?.referral_code || generatedRefCode;
+    const baseProfileFields: Record<string, any> = {
       id: authUserId,
       full_name: fullName.trim(),
       phone: cleanPhone,
       city: city?.trim() || 'صنعاء',
       account_status: 'active',
-      created_at: now,
+      referral_code: finalReferralCode,
       updated_at: now,
     };
 
-    const { data: profileData, error: profileErr } = await dbClient
+    if (!existingProfile) {
+      baseProfileFields.created_at = now;
+      if (resolvedReferrer) {
+        baseProfileFields.referred_by = resolvedReferrer.referrerId;
+      }
+    } else if (resolvedReferrer && !existingProfile.referred_by) {
+      // Only attach referred_by during initial registration if trigger didn't set it yet
+      baseProfileFields.referred_by = resolvedReferrer.referrerId;
+    }
+
+    let profileData: any = null;
+    let profileErr: any = null;
+    const attemptUpsert = await dbClient
       .from('profiles')
-      .upsert(newProfile, { onConflict: 'id' })
-      .select('id, full_name, phone, city, account_status, created_at, updated_at')
+      .upsert(baseProfileFields, { onConflict: 'id' })
+      .select('id, full_name, phone, city, account_status, referral_code, referred_by, created_at, updated_at')
       .single();
+
+    profileData = attemptUpsert.data;
+    profileErr = attemptUpsert.error;
+
+    // Pre-Migration 014 fallback if referred_by column isn't added yet, or trigger blocks updating referred_by
+    if (
+      profileErr &&
+      (profileErr.code === '42703' ||
+        String(profileErr.message || '').includes('referred_by') ||
+        String(profileErr.message || '').includes('immutable'))
+    ) {
+      const { referred_by: _omit, ...legacyFields } = baseProfileFields;
+      const retry = await dbClient
+        .from('profiles')
+        .upsert(legacyFields, { onConflict: 'id' })
+        .select('id, full_name, phone, city, account_status, referral_code, created_at, updated_at')
+        .single();
+      profileData = retry.data;
+      profileErr = retry.error;
+    }
 
     if (profileErr) {
       await logSupabaseError({
@@ -407,7 +483,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       .from('user_roles')
       .upsert({ user_id: authUserId, role: assignedRole }, { onConflict: 'user_id' });
 
-    // 4. Create/Get Wallet & Financial Account strictly for authUserId
+    // 5. Create/Get Wallet & Financial Account strictly for authUserId
     let wallet;
     try {
       wallet = await supabaseDb.getWallet(authUserId);
@@ -421,7 +497,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: `فشل في إنشاء محفظة المستخدم: ${walletErr.message}` });
     }
 
-    // 5. Handle Session and Response
+    // 6. Handle Session and Response (NO referral rewards created or paid on registration!)
     const userPayload = {
       id: profileData.id,
       fullName: profileData.full_name,
@@ -429,7 +505,8 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       email: cleanEmail,
       role: assignedRole,
       status: profileData.account_status || 'active',
-      referralCode: '',
+      referralCode: profileData.referral_code || finalReferralCode,
+      referredBy: profileData.referred_by || resolvedReferrer?.referrerId || undefined,
       city: profileData.city || 'صنعاء',
       createdAt: profileData.created_at,
       updatedAt: profileData.updated_at,
@@ -496,7 +573,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       email: authRes.user.email,
       role: authRes.user.email === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
       status: 'active',
-      referralCode: 'KY' + Math.floor(100000 + Math.random() * 900000),
+      referralCode: generateReferralCode(authRes.user.id),
       city: 'صنعاء',
       createdAt: authRes.user.created_at,
       updatedAt: authRes.user.created_at,
@@ -940,35 +1017,15 @@ app.post('/api/notifications/read-all', authMiddleware, async (req: Authenticate
   }
 });
 
-// Referrals
+// Referrals (Real DB & Ledger-Backed — Zero Fake 300 Multiplier or Hardcoded Completion)
 app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const settings = await supabaseDb.getSettings();
-    let referredUsers: any[] = [];
-    const { data, error } = await supabaseServer
-      .from('profiles')
-      .select('id, full_name, created_at')
-      .eq('referred_by', req.user.id);
-
-    if (!error && Array.isArray(data)) {
-      referredUsers = data;
-    }
-
-    const count = referredUsers.length;
-    const totalEarnedYer = count * (settings.referralBonus || 300);
-
+    const stats = await supabaseDb.getMyReferrals(req.user.id, req.authToken);
+    const code = stats.code || req.user.referralCode || '';
     res.json({
-      code: req.user.referralCode || `KY-${req.user.id.slice(0, 8).toUpperCase()}`,
-      shareUrl: `https://kasbyemen.com/register?ref=${req.user.referralCode || req.user.id.slice(0, 8).toUpperCase()}`,
-      totalReferred: count,
-      totalEarnedYer,
-      referredUsers: referredUsers.map((u) => ({
-        id: u.id,
-        fullName: u.full_name,
-        createdAt: u.created_at,
-        hasCompletedFirstTask: true,
-        rewardEarned: settings.referralBonus || 300,
-      })),
+      ...stats,
+      code,
+      shareUrl: code ? `https://kasbyemen.com/?ref=${encodeURIComponent(code)}` : 'https://kasbyemen.com/',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل جلب بيانات الإحالة.' });
@@ -1172,8 +1229,12 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       }
     }
 
-    const wallet = await supabaseDb.getWallet(existingSub.user_id);
+    const [wallet, referralReward] = await Promise.all([
+      supabaseDb.getWallet(existingSub.user_id),
+      supabaseDb.getReferralRewardForSubmission(submissionId, req.authToken),
+    ]);
     const transactionId =
+      (typeof rpcRes === 'string' && rpcRes.trim() ? rpcRes.trim() : null) ||
       (typeof rpcRes === 'object' && rpcRes !== null ? rpcRes.transaction_id : null) ||
       updatedSub?.reward_transaction_id ||
       null;
@@ -1185,6 +1246,7 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       transactionId,
       commissionTransactionId: commissionResult.transactionId || null,
       commissionPendingMigration: Boolean(commissionResult.pendingMigration),
+      referralReward,
       newBalance: wallet.availableBalance,
       result: rpcRes,
     });
