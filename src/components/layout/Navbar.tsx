@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { Wallet, Moon, Sun, Shield, LogOut, User } from 'lucide-react';
+import { Wallet, Moon, Sun, Shield, LogOut, User, Megaphone } from 'lucide-react';
 
 interface NavbarProps {
   currentTab: string;
@@ -78,6 +78,17 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
                   لوحة التحكم
                 </button>
               )}
+              {user?.role === 'advertiser' && (
+                <button
+                  onClick={() => onNavigate('advertiser')}
+                  className={`hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 flex items-center gap-1.5 ${
+                    currentTab === 'advertiser' ? 'text-emerald-600 dark:text-emerald-400 font-bold border-b-2 border-emerald-600' : ''
+                  }`}
+                >
+                  <Megaphone className="w-3.5 h-3.5" />
+                  <span>بوابة المعلنين</span>
+                </button>
+              )}
             </nav>
 
             {/* Zone 3: User Profile Icon Dropdown & Theme Toggle */}
@@ -145,6 +156,20 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
                           >
                             المحفظة وسجل الأرباح
                           </button>
+
+                          {user?.role === 'advertiser' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onNavigate('advertiser');
+                                setIsUserMenuOpen(false);
+                              }}
+                              className="w-full text-right px-4 py-2 text-xs text-emerald-600 dark:text-emerald-400 font-bold hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Megaphone className="w-3.5 h-3.5" />
+                              <span>بوابة المعلنين والحملات</span>
+                            </button>
+                          )}
 
                           {/* PRIVATE OWNER ADMINISTRATOR ONLY LINK */}
                           {isAdmin && (

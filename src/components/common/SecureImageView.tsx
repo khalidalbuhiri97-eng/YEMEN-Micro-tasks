@@ -23,8 +23,8 @@ export const SecureImageView: React.FC<SecureImageViewProps> = ({
     let isMounted = true;
     if (!storagePathOrUrl) return;
 
-    // If it's already an http/https URL (legacy or external), use it directly
-    if (/^https?:\/\//i.test(storagePathOrUrl)) {
+    // If it's already an http/https URL or safe raster base64 data URL, use it directly
+    if (/^(https?:\/\/|data:image\/(?:png|jpeg|jpg|webp);base64,)/i.test(storagePathOrUrl)) {
       setSignedUrl(storagePathOrUrl);
       return;
     }
@@ -34,7 +34,9 @@ export const SecureImageView: React.FC<SecureImageViewProps> = ({
       setIsLoading(true);
       setHasError(false);
       try {
-        const res = await api.getViewSignedUrl(storagePathOrUrl);
+        const res = storagePathOrUrl.startsWith('advertiser-logos/')
+          ? await api.getPublicAdvertiserLogoUrl(storagePathOrUrl)
+          : await api.getViewSignedUrl(storagePathOrUrl);
         if (isMounted && res?.signedUrl) {
           setSignedUrl(res.signedUrl);
         } else {
@@ -78,6 +80,7 @@ export const SecureImageView: React.FC<SecureImageViewProps> = ({
     <img
       src={signedUrl}
       alt={alt}
+      referrerPolicy="no-referrer"
       className={className}
       onClick={onClick}
       onError={() => setHasError(true)}

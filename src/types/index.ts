@@ -2,8 +2,8 @@
  * Kasb Yemen - Core Domain Models & Types
  */
 
-export type UserRole = 'user' | 'admin';
-export type AccountStatus = 'active' | 'suspended' | 'under_review';
+export type UserRole = 'user' | 'admin' | 'advertiser';
+export type AccountStatus = 'active' | 'suspended' | 'under_review' | 'pending';
 
 export interface UserProfile {
   id: string;
@@ -16,6 +16,8 @@ export interface UserProfile {
   referralCode: string;
   referredBy?: string;
   city: string;
+  companyName?: string;
+  contactPerson?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +61,8 @@ export type TransactionType =
   | 'PAYMENT_PROVIDER_FEE'
   | 'TAX_ACCRUAL'
   | 'TAX_SETTLEMENT'
+  | 'CAMPAIGN_FUNDING_RESERVE'
+  | 'CAMPAIGN_ESCROW_REFUND'
   | 'REVERSAL';
 
 export interface WalletTransaction {
@@ -73,6 +77,7 @@ export interface WalletTransaction {
   idempotencyKey?: string;
   description: string;
   adminId?: string;
+  metadata?: Record<string, any>;
   createdAt: string;
 }
 
@@ -93,6 +98,8 @@ export interface WalletTransfer {
 export interface TreasurySummary {
   treasuryAvailable: number;
   taskBudgetReserved: number;
+  campaignBudgetReserved?: number;
+  campaignFeeReserved?: number;
   userAvailableTotal: number;
   userPendingTotal: number;
   withdrawalReservedTotal: number;
@@ -124,6 +131,134 @@ export interface TreasurySummary {
   taxTablesReady?: boolean;
   auditLogsTableReady?: boolean;
   withdrawalsTableReady?: boolean;
+  externalAccountsReady?: boolean;
+  externalAccountsTotal?: number;
+  externalPlatformBalance?: number;
+  externalAdvertiserCustodyBalance?: number;
+  advertiserWalletTotal?: number;
+  workerWalletTotal?: number;
+  pendingExternalDepositsCount?: number;
+  pendingExternalDepositsAmount?: number;
+  externalAdvertiserDepositsTotal?: number;
+  fundSegregation?: FundSegregationSummary;
+}
+
+export type ExternalAccountOwnerRole = 'owner' | 'admin' | 'company';
+export type ExternalAccountType = 'bank' | 'exchange' | 'ewallet' | 'cash';
+export type ExternalFundScope = 'platform' | 'advertiser' | 'mixed';
+
+export interface ExternalAccount {
+  id: string;
+  accountName: string;
+  ownerName: string;
+  ownerRole: ExternalAccountOwnerRole;
+  accountType: ExternalAccountType;
+  providerName: string;
+  accountNumber: string;
+  currency: string;
+  fundScope: ExternalFundScope;
+  financialAccountId: string;
+  accountCode: string;
+  accountingBalance: number;
+  actualBalance: number;
+  discrepancyUnits: number;
+  lastReconciledAt?: string | null;
+  status: 'active' | 'frozen';
+  notes?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalDeposit {
+  id: string;
+  externalAccountId: string;
+  externalAccountName?: string;
+  externalAccountCode?: string;
+  depositPurpose: 'advertiser_wallet' | 'platform_capital';
+  advertiserId?: string | null;
+  advertiserName?: string | null;
+  advertiserCompany?: string | null;
+  amountUnits: number;
+  referenceNumber: string;
+  receiptUrl: string;
+  depositorName?: string | null;
+  depositorPhone?: string | null;
+  notes?: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedBy?: string | null;
+  reviewedByName?: string | null;
+  reviewedAt?: string | null;
+  rejectionReason?: string | null;
+  ledgerTransactionId?: string | null;
+  createdAt: string;
+}
+
+export interface ExternalAccountTransfer {
+  id: string;
+  fromExternalAccountId?: string | null;
+  toExternalAccountId?: string | null;
+  fromFinancialAccountId: string;
+  toFinancialAccountId: string;
+  fromAccountName: string;
+  fromAccountCode: string;
+  toAccountName: string;
+  toAccountCode: string;
+  amountUnits: number;
+  referenceNumber?: string | null;
+  reason: string;
+  ledgerTransactionId: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
+  createdAt: string;
+}
+
+export interface ExternalAccountReconciliation {
+  id: string;
+  externalAccountId: string;
+  externalAccountName?: string;
+  accountingBalanceUnits: number;
+  actualBalanceUnits: number;
+  discrepancyUnits: number;
+  adjustmentTransactionId?: string | null;
+  adjustmentReason?: string | null;
+  status: 'matched' | 'discrepancy' | 'adjusted';
+  reconciledBy?: string | null;
+  reconciledByName?: string | null;
+  createdAt: string;
+}
+
+export interface FundSegregationSummary {
+  platformFunds: {
+    cashVaultTotal: number;
+    externalPlatformBalance: number;
+    realizedRevenuesTotal: number;
+    operationalExpensesTotal: number;
+    ownerCapitalTotal: number;
+    ownerWithdrawalsTotal: number;
+    netOwnerEquity: number;
+    virtualTreasuryAvailable: number;
+  };
+  advertiserFunds: {
+    advertiserWalletsTotal: number;
+    campaignBudgetEscrow: number;
+    campaignFeeEscrow: number;
+    totalAdvertiserLiabilities: number;
+    pendingExternalDepositsCount: number;
+    pendingExternalDepositsAmount: number;
+    approvedExternalDepositsTotal: number;
+  };
+  userFunds: {
+    workerWalletsTotal: number;
+    withdrawalReservedTotal: number;
+    adminTaskEscrowTotal: number;
+    totalUserLiabilities: number;
+  };
+  externalAccountsSummary: {
+    totalAccountingBalance: number;
+    totalActualBalance: number;
+    totalDiscrepancy: number;
+    activeAccountsCount: number;
+  };
 }
 
 export interface LedgerTransaction {
@@ -262,13 +397,20 @@ export interface ComprehensiveFinancialReport {
   balanceSheet: {
     assets: {
       cashVault: number;
+      externalAccounts?: number;
+      externalPlatformAccounts?: number;
+      externalAdvertiserCustodyAccounts?: number;
       virtualIssuanceControl: number;
       totalRealAssets: number;
     };
     liabilities: {
       userWalletBalances: number;
+      advertiserWalletBalances?: number;
+      workerWalletBalances?: number;
       withdrawalReserved: number;
       taskEscrowBalances: number;
+      campaignBudgetEscrows?: number;
+      campaignFeeEscrows?: number;
       taxesPayable: number;
       expenseClearing: number;
       totalUserAndExternalLiabilities: number;
@@ -281,6 +423,7 @@ export interface ComprehensiveFinancialReport {
       totalOwnerEquity: number;
     };
   };
+  fundSegregation?: FundSegregationSummary;
   revenueBySource: Array<{
     accountCode: string;
     label: string;
@@ -375,6 +518,11 @@ export interface TaskItem {
   deadline?: string;
   status: 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'ARCHIVED';
   createdBy?: string;
+  campaignId?: string | null;
+  isExternalCampaign?: boolean;
+  hideAdvertiserName?: boolean;
+  advertiserDisplayName?: string;
+  advertiserLogoUrl?: string;
   createdAt: string;
 }
 
@@ -457,12 +605,57 @@ export interface PlatformSettings {
   maxWithdrawal: number;
   dailyWithdrawalLimit: number;
   defaultFeePercentage: number;
+  advertiserCampaignFeePercentage: number;
   referralBonus: number;
   taskSubmissionLimit: number;
   isRegistrationOpen: boolean;
   maintenanceMode: boolean;
   contactPhone: string;
   contactEmail: string;
+  updatedAt: string;
+}
+
+export type CampaignStatus = 'pending_start' | 'active' | 'paused' | 'completed' | 'cancelled';
+
+export interface CampaignItem {
+  id: string;
+  advertiserId: string;
+  advertiserName?: string;
+  advertiserCompany?: string;
+  hideAdvertiserName?: boolean;
+  advertiserDisplayName?: string;
+  advertiserLogoUrl?: string;
+  isExternalCampaign?: boolean;
+  title: string;
+  description: string;
+  category: TaskCategory;
+  rewardUnits: number;
+  slots: number;
+  budgetUnits: number;
+  feePercentage: number;
+  feeUnits: number;
+  totalUnits: number;
+  refundedUnits: number;
+  budgetEscrowBalance?: number;
+  feeEscrowBalance?: number;
+  status: CampaignStatus;
+  creationKey: string;
+  fundingTransactionId?: string | null;
+  feeRevenueTransactionId?: string | null;
+  settlementTransactionId?: string | null;
+  linkedTaskId?: string | null;
+  approvedCount?: number;
+  timeEstimateMinutes: number;
+  proofRequirements: {
+    requireImage: boolean;
+    requireText: boolean;
+    requireUrl?: boolean;
+    instructions?: string;
+  };
+  deadlineAt?: string | null;
+  startedAt?: string | null;
+  settledAt?: string | null;
+  createdAt: string;
   updatedAt: string;
 }
 

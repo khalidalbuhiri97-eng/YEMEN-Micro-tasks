@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { X, Lock, Phone, User, MapPin, Mail, ArrowRight, Shield, Eye, EyeOff } from 'lucide-react';
+import { X, Lock, Phone, User, MapPin, Mail, ArrowRight, Shield, Eye, EyeOff, Building2 } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -11,10 +11,13 @@ interface AuthModalProps {
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMode = 'login' }) => {
   const { login, register } = useAuth();
   const [mode, setMode] = useState<'login' | 'register' | 'owner'>(defaultMode);
+  const [userType, setUserType] = useState<'user' | 'advertiser'>('user');
+  
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [city, setCity] = useState('صنعاء');
@@ -25,6 +28,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
   useEffect(() => {
     if (!isOpen) return;
     setMode(defaultMode);
+    setUserType('user');
     setError('');
     if (typeof window !== 'undefined') {
       const refParam = new URLSearchParams(window.location.search).get('ref');
@@ -51,7 +55,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
           email: email || undefined,
           password,
           city,
-          referralCode: referralCode || undefined,
+          referralCode: userType === 'user' ? (referralCode || undefined) : undefined,
+          role: userType,
+          companyName: userType === 'advertiser' ? companyName : undefined,
         });
       }
       onClose();
@@ -73,13 +79,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                 ? 'بوابة دخول مالك المنصة المعتمد'
                 : mode === 'login'
                 ? 'تسجيل الدخول إلى Yemen Micro-tasks'
-                : 'إنشاء حساب جديد'}
+                : userType === 'advertiser'
+                ? 'إنشاء حساب معلن جديد'
+                : 'إنشاء حساب مستخدم جديد'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               {mode === 'owner'
                 ? 'تسجيل الدخول الحصري المخصص للمشرف ومالك النظام'
                 : mode === 'login'
-                ? 'ادخل بيانات حسابك لمتابعة المهام والأرباح الفعلية'
+                ? 'أدخل بيانات حسابك للانتقال مباشرة إلى لوحة حسابك'
+                : userType === 'advertiser'
+                ? 'إدارة الحملات الإعلانية الممولة والترويج لأنشطتك'
                 : 'انضم للمنصة وابدأ في إنجاز المهام وكسب الريال اليمني'}
             </p>
           </div>
@@ -91,6 +101,36 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
           </button>
         </div>
 
+        {/* User Type Switcher Tabs (Strictly only in Register mode) */}
+        {mode === 'register' && (
+          <div className="grid grid-cols-2 p-2 bg-slate-100 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700 text-xs font-bold">
+            <button
+              type="button"
+              onClick={() => setUserType('user')}
+              className={`py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                userType === 'user'
+                  ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+              }`}
+            >
+              <User className="w-4 h-4" />
+              <span>أنا مستخدم</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setUserType('advertiser')}
+              className={`py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+                userType === 'advertiser'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+              }`}
+            >
+              <Building2 className="w-4 h-4" />
+              <span>أنا معلن</span>
+            </button>
+          </div>
+        )}
+
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {error && (
@@ -99,11 +139,36 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             </div>
           )}
 
+          {userType === 'advertiser' && mode === 'register' && (
+            <div className="p-3 text-xs bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl text-indigo-900 dark:text-indigo-200">
+              تنبيه: حسابات المعلنين الجديدة تخضع للمراجعة والاعتماد من قِبل إدارة المنصة قبل السماح بإنشاء الحملات.
+            </div>
+          )}
+
           {mode === 'register' && (
             <>
+              {userType === 'advertiser' && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    اسم المنشأة أو الشركة التجارية
+                  </label>
+                  <div className="relative">
+                    <Building2 className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      placeholder="مثال: شركة اليمن للتقنية والاتصالات"
+                      className="w-full pr-9 pl-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  الاسم الرباعي الكامل (مطابق للهوية للحوالات المالية)
+                  {userType === 'advertiser' ? 'اسم المسؤول أو الممثل الرسمي' : 'الاسم الرباعي الكامل (مطابق للهوية)'}
                 </label>
                 <div className="relative">
                   <User className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
@@ -112,7 +177,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                     required
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="مثال: محمد عبدالله أحمد القدسي"
+                    placeholder={userType === 'advertiser' ? 'مثال: مهندس خالد البحيري' : 'مثال: محمد عبدالله أحمد'}
                     className="w-full pr-9 pl-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
                   />
                 </div>
@@ -120,7 +185,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  رقم الهاتف اليمني (يمن موبايل، سبأفون، يو، واي)
+                  رقم الهاتف الرسمي
                 </label>
                 <div className="relative">
                   <Phone className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
@@ -158,28 +223,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                     </select>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    كود الإحالة (اختياري)
-                  </label>
-                  <input
-                    type="text"
-                    value={referralCode}
-                    onChange={(e) => setReferralCode(e.target.value)}
-                    placeholder="كود دعوة الصديق"
-                    className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
-                  />
-                </div>
+                {userType === 'user' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      كود الإحالة (اختياري)
+                    </label>
+                    <input
+                      type="text"
+                      value={referralCode}
+                      onChange={(e) => setReferralCode(e.target.value)}
+                      placeholder="كود دعوة الصديق"
+                      className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  البريد الإلكتروني (اختياري)
+                  البريد الإلكتروني {userType === 'advertiser' && '(مطلوب للمعلنين)'}
                 </label>
                 <div className="relative">
                   <Mail className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
                   <input
                     type="email"
+                    required={userType === 'advertiser'}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="email@example.com"
@@ -244,6 +312,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             className={`w-full mt-2 py-2.5 px-4 text-white text-xs sm:text-sm font-semibold rounded-lg shadow-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2 ${
               mode === 'owner'
                 ? 'bg-slate-900 hover:bg-slate-800 border border-slate-700'
+                : mode === 'register' && userType === 'advertiser'
+                ? 'bg-indigo-600 hover:bg-indigo-700'
                 : 'bg-emerald-600 hover:bg-emerald-700'
             }`}
           >
@@ -256,7 +326,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                     ? 'دخول لوحة تحكم المالك'
                     : mode === 'login'
                     ? 'تسجيل الدخول'
-                    : 'إنشاء الحساب وبدء الكسب'}
+                    : (userType === 'advertiser' ? 'إنشاء حساب معلن جديد' : 'إنشاء الحساب وبدء الكسب')}
                 </span>
                 <ArrowRight className="w-4 h-4" />
               </>
@@ -271,7 +341,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
               ليس لديك حساب بعد؟{' '}
               <button
                 type="button"
-                onClick={() => setMode('register')}
+                onClick={() => {
+                  setError('');
+                  setMode('register');
+                }}
                 className="text-emerald-600 font-bold hover:underline"
               >
                 سجل الآن مجاناً
@@ -282,7 +355,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
               لديك حساب بالفعل؟{' '}
               <button
                 type="button"
-                onClick={() => setMode('login')}
+                onClick={() => {
+                  setError('');
+                  setUserType('user');
+                  setMode('login');
+                }}
                 className="text-emerald-600 font-bold hover:underline"
               >
                 تسجيل الدخول
@@ -292,7 +369,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             <div>
               <button
                 type="button"
-                onClick={() => setMode('login')}
+                onClick={() => {
+                  setError('');
+                  setUserType('user');
+                  setMode('login');
+                }}
                 className="text-emerald-600 font-bold hover:underline"
               >
                 العودة لدخول المستخدمين

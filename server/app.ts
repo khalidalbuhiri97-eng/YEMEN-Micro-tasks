@@ -283,8 +283,12 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
         phone: authData.user.user_metadata?.phone || authData.user.phone || '',
         email: authData.user.email,
         avatarUrl: '',
-        role: 'user',
-        status: 'active',
+        role: supabaseDb.isAuthorizedOwner(authData.user.id, authData.user.email)
+          ? 'admin'
+          : authData.user.user_metadata?.role === 'advertiser'
+          ? 'advertiser'
+          : 'user',
+        status: authData.user.user_metadata?.role === 'advertiser' ? 'pending' : 'active',
         referralCode: '',
         city: authData.user.user_metadata?.city || 'صنعاء',
         createdAt: authData.user.created_at,
@@ -314,15 +318,28 @@ export const adminMiddleware = async (req: AuthenticatedRequest, res: Response, 
   });
 };
 
+// Advertiser Middleware
+export const advertiserMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  await authMiddleware(req, res, () => {
+    if (!req.user || req.user.role !== 'advertiser') {
+      return res.status(403).json({ error: 'وصول محظور: هذه الواجهة مخصصة للمعلنين فقط.' });
+    }
+    if (req.user.status !== 'active') {
+      return res.status(403).json({ error: 'حساب المعلن الخاص بك قيد الانتظار ولم يتم اعتماده بعد من الإدارة.' });
+    }
+    next();
+  });
+};
+
 // ==============================================================================
 // PUBLIC & REAL USER AUTH
 // ==============================================================================
 
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
-    const { fullName, phone, email, password, city, referralCode } = req.body || {};
+    const { fullName, phone, email, password, city, referralCode, role, companyName } = req.body || {};
     if (!fullName || !phone || !password) {
-      return res.status(400).json({ error: 'يرجى إدخال الاسم الرباعي ورقم الهاتف وكلمة المرور.' });
+      return res.status(400).json({ error: 'يرجى إدخال الاسم ورقم الهاتف وكلمة المرور.' });
     }
     if (password.length < 6) {
       return res.status(400).json({ error: 'كلمة المرور يجب أن لا تقل عن 6 خانات.' });
@@ -334,7 +351,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
 
     // 1. Validate optional referral code strictly BEFORE creating auth user (reject nonexistent / self-referral)
     let resolvedReferrer: { referrerId: string; referralCode: string; phone?: string } | null = null;
-    if (cleanReferralCode) {
+    if (cleanReferralCode && role !== 'advertiser') {
       if (cleanReferralCode.length < 4 || cleanReferralCode.length > 32) {
         return res.status(400).json({ error: 'صيغة كود الإحالة غير صالحة.' });
       }
@@ -368,6 +385,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
           full_name: fullName.trim(),
           phone: cleanPhone,
           city: city?.trim() || 'صنعاء',
+          role: role === 'advertiser' ? 'advertiser' : 'user',
           ...(resolvedReferrer ? { referred_by_code: resolvedReferrer.referralCode } : {}),
         },
       },
@@ -388,7 +406,8 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     }
 
     const now = new Date().toISOString();
-    const assignedRole = cleanEmail === supabaseDb.getOwnerEmail() ? 'admin' : 'user';
+    const assignedRole = cleanEmail === supabaseDb.getOwnerEmail() ? 'admin' : (role === 'advertiser' ? 'advertiser' : 'user');
+    const initialStatus = assignedRole === 'advertiser' ? 'pending' : 'active';
     const generatedRefCode = generateReferralCode(authUserId);
     const dbClient = (() => {
       try {
@@ -426,9 +445,13 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       full_name: fullName.trim(),
       phone: cleanPhone,
       city: city?.trim() || 'صنعاء',
-      account_status: 'active',
+      account_status: initialStatus,
       referral_code: finalReferralCode,
       updated_at: now,
+      ...(assignedRole === 'advertiser' ? {
+        company_name: companyName?.trim() || '',
+        contact_person: fullName.trim(),
+      } : {}),
     };
 
     if (!existingProfile) {
@@ -446,7 +469,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     const attemptUpsert = await dbClient
       .from('profiles')
       .upsert(baseProfileFields, { onConflict: 'id' })
-      .select('id, full_name, phone, city, account_status, referral_code, referred_by, created_at, updated_at')
+      .select('id, full_name, phone, city, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
       .single();
 
     profileData = attemptUpsert.data;
@@ -457,9 +480,15 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       profileErr &&
       (profileErr.code === '42703' ||
         String(profileErr.message || '').includes('referred_by') ||
+        String(profileErr.message || '').includes('company_name') ||
         String(profileErr.message || '').includes('immutable'))
     ) {
-      const { referred_by: _omit, ...legacyFields } = baseProfileFields;
+      const {
+        referred_by: _omit,
+        company_name: _omitComp,
+        contact_person: _omitContact,
+        ...legacyFields
+      } = baseProfileFields;
       const retry = await dbClient
         .from('profiles')
         .upsert(legacyFields, { onConflict: 'id' })
@@ -479,9 +508,23 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: `فشل في إنشاء الملف الشخصي: ${profileErr.message}` });
     }
 
-    await dbClient
+    const { error: roleUpsertErr } = await dbClient
       .from('user_roles')
       .upsert({ user_id: authUserId, role: assignedRole }, { onConflict: 'user_id' });
+    if (roleUpsertErr) {
+      await logSupabaseError({
+        err: roleUpsertErr,
+        operation: 'REGISTER_USER_ROLE_UPSERT',
+        sourceTable: 'user_roles',
+        apiRoute: '/api/auth/register',
+      });
+      return res.status(400).json({
+        error:
+          assignedRole === 'advertiser'
+            ? `تعذر تعيين صلاحية المعلن في قاعدة البيانات (تأكد من تشغيل الترحيل 019): ${roleUpsertErr.message}`
+            : `فشل حفظ صلاحية المستخدم: ${roleUpsertErr.message}`,
+      });
+    }
 
     // 5. Create/Get Wallet & Financial Account strictly for authUserId
     let wallet;
@@ -497,17 +540,19 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       return res.status(400).json({ error: `فشل في إنشاء محفظة المستخدم: ${walletErr.message}` });
     }
 
-    // 6. Handle Session and Response (NO referral rewards created or paid on registration!)
+    // 6. Handle Session and Response
     const userPayload = {
       id: profileData.id,
       fullName: profileData.full_name,
       phone: profileData.phone,
       email: cleanEmail,
       role: assignedRole,
-      status: profileData.account_status || 'active',
+      status: profileData.account_status || initialStatus,
       referralCode: profileData.referral_code || finalReferralCode,
       referredBy: profileData.referred_by || resolvedReferrer?.referrerId || undefined,
       city: profileData.city || 'صنعاء',
+      companyName: companyName?.trim() || undefined,
+      contactPerson: fullName.trim(),
       createdAt: profileData.created_at,
       updatedAt: profileData.updated_at,
     };
@@ -573,8 +618,13 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       fullName: authRes.user.user_metadata?.full_name || 'مستخدم',
       phone: authRes.user.user_metadata?.phone || '',
       email: authRes.user.email,
-      role: authRes.user.email === supabaseDb.getOwnerEmail() ? 'admin' : 'user',
-      status: 'active',
+      role:
+        authRes.user.email === supabaseDb.getOwnerEmail()
+          ? 'admin'
+          : authRes.user.user_metadata?.role === 'advertiser'
+          ? 'advertiser'
+          : 'user',
+      status: authRes.user.user_metadata?.role === 'advertiser' ? 'pending' : 'active',
       referralCode: generateReferralCode(authRes.user.id),
       city: 'صنعاء',
       createdAt: authRes.user.created_at,
@@ -790,14 +840,18 @@ app.post('/api/upload/signed-url', authMiddleware, async (req: AuthenticatedRequ
 app.post('/api/storage/signed-url', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { storagePath } = req.body || {};
-    if (!storagePath || typeof storagePath !== 'string') {
+    const cleanPath = typeof storagePath === 'string' ? storagePath.trim() : '';
+    if (!cleanPath || cleanPath.includes('..')) {
       return res.status(400).json({ error: 'مسار التخزين مطلوب' });
+    }
+    if (cleanPath.startsWith('external-receipts/') && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'صلاحية الإدارة مطلوبة لعرض إيصالات التحصيل الخارجي.' });
     }
 
     const adminClient = getSupabaseAdminClient();
     const { data, error } = await adminClient.storage
       .from('task-proofs')
-      .createSignedUrl(storagePath.trim(), 3600); // 1 hour validity
+      .createSignedUrl(cleanPath, 3600); // 1 hour validity
 
     if (error || !data?.signedUrl) {
       return res.status(404).json({ error: `تعذر إصدار رابط عرض الصورة: ${error?.message || 'الملف غير موجود'}` });
@@ -806,6 +860,26 @@ app.post('/api/storage/signed-url', authMiddleware, async (req: AuthenticatedReq
     return res.json({ signedUrl: data.signedUrl });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'تعذر جلب رابط عرض الصورة' });
+  }
+});
+
+app.post('/api/public/advertiser-logo-url', async (req: Request, res: Response) => {
+  try {
+    const cleanPath = typeof req.body?.storagePath === 'string' ? req.body.storagePath.trim() : '';
+    if (!cleanPath || !/^advertiser-logos\/[a-zA-Z0-9_./-]+$/i.test(cleanPath) || cleanPath.includes('..')) {
+      return res.status(400).json({ error: 'مسار شعار المعلن غير صالح.' });
+    }
+    const adminClient = getSupabaseAdminClient();
+    const { data, error } = await adminClient.storage
+      .from('task-proofs')
+      .createSignedUrl(cleanPath, 3600);
+
+    if (error || !data?.signedUrl) {
+      return res.status(404).json({ error: 'تعذر عرض شعار المعلن.' });
+    }
+    return res.json({ signedUrl: data.signedUrl });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'تعذر جلب شعار المعلن.' });
   }
 });
 
@@ -1259,9 +1333,16 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       }
     }
 
-    const [wallet, referralReward] = await Promise.all([
+    const [wallet, referralReward, campaignCompletion] = await Promise.all([
       supabaseDb.getWallet(existingSub.user_id),
       supabaseDb.getReferralRewardForSubmission(submissionId, req.authToken),
+      supabaseDb
+        .syncCampaignCompletionAfterSubmissionApproval({
+          taskId: existingSub.task_id,
+          actorId: req.user.id,
+          authToken: req.authToken,
+        })
+        .catch(() => null),
     ]);
     const transactionId =
       (typeof rpcRes === 'string' && rpcRes.trim() ? rpcRes.trim() : null) ||
@@ -1277,6 +1358,7 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       commissionTransactionId: commissionResult.transactionId || null,
       commissionPendingMigration: Boolean(commissionResult.pendingMigration),
       referralReward,
+      campaignCompletion,
       newBalance: wallet.availableBalance,
       result: rpcRes,
     });
@@ -1704,8 +1786,11 @@ app.post('/api/admin/users/:id/adjust', adminMiddleware, async (req: Authenticat
 
 app.post('/api/admin/users/:id/status', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { status } = req.body;
-    await supabaseDb.updateUserStatus(req.params.id, status);
+    const status = String(req.body?.status || '').trim().toLowerCase();
+    if (!['active', 'suspended', 'under_review', 'pending'].includes(status)) {
+      return res.status(400).json({ error: 'حالة الحساب غير صالحة.' });
+    }
+    await supabaseDb.updateUserStatus(req.params.id, status as 'active' | 'suspended' | 'under_review' | 'pending');
     res.json({ success: true });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -2149,12 +2234,388 @@ app.post('/api/admin/tasks/:id/release-escrow', adminMiddleware, async (req: Aut
   }
 });
 
+// ==============================================================================
+// PHASE 5: EXTERNAL ACCOUNTS, DEPOSIT APPROVALS, INTERNAL TRANSFERS & RECONCILIATION
+// ==============================================================================
+
+app.get('/api/admin/finance/external-accounts', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const overview = await supabaseDb.getExternalAccountsOverview(req.authToken);
+    res.json(overview);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب بيانات الحسابات الخارجية.' });
+  }
+});
+
+app.post('/api/admin/finance/external-accounts', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const {
+      accountName,
+      ownerName,
+      ownerRole,
+      accountType,
+      providerName,
+      accountNumber,
+      fundScope,
+      notes,
+    } = req.body || {};
+    const result = await supabaseDb.createExternalAccount({
+      accountName: String(accountName || ''),
+      ownerName: String(ownerName || ''),
+      ownerRole: ownerRole || 'owner',
+      accountType: accountType || 'bank',
+      providerName: String(providerName || ''),
+      accountNumber: String(accountNumber || ''),
+      fundScope: fundScope || 'mixed',
+      notes,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'CREATE_EXTERNAL_ACCOUNT', apiRoute: '/api/admin/finance/external-accounts' });
+    res.status(400).json({ error: err.message || 'فشل إنشاء الحساب الخارجي.' });
+  }
+});
+
+app.post('/api/admin/finance/external-deposits/receipt-signed-url', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { fileName, contentType, fileSize } = req.body || {};
+    const cleanContentType = String(contentType || '').trim().toLowerCase();
+    const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!ALLOWED_MIME_TYPES.includes(cleanContentType)) {
+      return res.status(400).json({ error: 'صيغة صورة الإيصال غير مدعومة. يرجى اختيار PNG أو JPEG أو WEBP.' });
+    }
+    const numSize = Number(fileSize) || 0;
+    if (numSize > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'حجم صورة الإيصال يجب أن لا يتجاوز 5 ميجابايت.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const safeFileName = (fileName || 'receipt.png').replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const storagePath = `external-receipts/${req.user.id}/${Date.now()}_${crypto.randomUUID().slice(0, 6)}_${safeFileName}`;
+
+    const { data, error } = await adminClient.storage
+      .from('task-proofs')
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data?.signedUrl) {
+      return res.status(500).json({ error: error?.message || 'تعذر إنشاء رابط رفع صورة الإيصال.' });
+    }
+
+    return res.json({
+      signedUrl: data.signedUrl,
+      token: data.token,
+      path: storagePath,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'تعذر تجهيز رفع الإيصال.' });
+  }
+});
+
+app.post('/api/admin/finance/external-deposits', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const {
+      externalAccountId,
+      depositPurpose,
+      advertiserId,
+      amountUnits,
+      referenceNumber,
+      receiptUrl,
+      depositorName,
+      depositorPhone,
+      notes,
+    } = req.body || {};
+
+    const result = await supabaseDb.createExternalDeposit({
+      externalAccountId: String(externalAccountId || ''),
+      depositPurpose: depositPurpose === 'platform_capital' ? 'platform_capital' : 'advertiser_wallet',
+      advertiserId: advertiserId ? String(advertiserId) : null,
+      amountUnits: Number(amountUnits),
+      referenceNumber: String(referenceNumber || ''),
+      receiptUrl: String(receiptUrl || ''),
+      depositorName,
+      depositorPhone,
+      notes,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    res.json(result);
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'RECORD_EXTERNAL_DEPOSIT', apiRoute: '/api/admin/finance/external-deposits' });
+    res.status(400).json({ error: err.message || 'فشل تسجيل الإيداع.' });
+  }
+});
+
+app.post('/api/admin/finance/external-deposits/:id/approve', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.approveExternalDeposit({
+      depositId: req.params.id,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'APPROVE_EXTERNAL_DEPOSIT', apiRoute: `/api/admin/finance/external-deposits/${req.params.id}/approve` });
+    res.status(400).json({ error: err.message || 'فشل اعتماد الإيداع وشحن المحفظة.' });
+  }
+});
+
+app.post('/api/admin/finance/external-deposits/:id/reject', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.rejectExternalDeposit({
+      depositId: req.params.id,
+      reason: String(req.body?.reason || ''),
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    res.json(result);
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'REJECT_EXTERNAL_DEPOSIT', apiRoute: `/api/admin/finance/external-deposits/${req.params.id}/reject` });
+    res.status(400).json({ error: err.message || 'فشل رفض الإيداع.' });
+  }
+});
+
+app.post('/api/admin/finance/external-transfers', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const {
+      fromFinancialAccountId,
+      toFinancialAccountId,
+      amountUnits,
+      reason,
+      referenceNumber,
+      idempotencyKey,
+    } = req.body || {};
+    const result = await supabaseDb.transferBetweenExternalAccounts({
+      fromFinancialAccountId: String(fromFinancialAccountId || ''),
+      toFinancialAccountId: String(toFinancialAccountId || ''),
+      amountUnits: Number(amountUnits),
+      reason: String(reason || ''),
+      referenceNumber,
+      idempotencyKey,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'INTERNAL_ACCOUNT_TRANSFER', apiRoute: '/api/admin/finance/external-transfers' });
+    res.status(400).json({ error: err.message || 'فشل التحويل الداخلي بين الحسابات.' });
+  }
+});
+
+app.post('/api/admin/finance/external-accounts/:id/reconcile', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { actualBalanceUnits, applyAdjustment, adjustmentReason } = req.body || {};
+    const result = await supabaseDb.reconcileExternalAccount({
+      externalAccountId: req.params.id,
+      actualBalanceUnits: Number(actualBalanceUnits),
+      applyAdjustment: Boolean(applyAdjustment),
+      adjustmentReason,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    const summary = await supabaseDb.getTreasurySummary(req.authToken);
+    res.json({ ...result, summary });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'RECONCILE_EXTERNAL_ACCOUNT', apiRoute: `/api/admin/finance/external-accounts/${req.params.id}/reconcile` });
+    res.status(400).json({ error: err.message || 'فشل مطابقة الحساب الخارجي.' });
+  }
+});
+
 app.put('/api/admin/settings', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const updated = await supabaseDb.updateSettings(req.body);
     res.json({ success: true, settings: updated });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// ==============================================================================
+// ADVERTISER CAMPAIGN FUNDING & LIFECYCLE (PHASE 3)
+// ==============================================================================
+
+app.get('/api/advertiser/campaigns', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== 'advertiser') {
+      return res.status(403).json({ error: 'وصول محظور: هذه الواجهة مخصصة للمعلنين فقط.' });
+    }
+    const [campaigns, settings, wallet] = await Promise.all([
+      supabaseDb.getCampaignsForAdvertiser(req.user.id, req.authToken),
+      supabaseDb.getSettings(req.authToken),
+      supabaseDb.getWallet(req.user.id),
+    ]);
+    res.json({
+      campaigns,
+      feePercentage: settings.advertiserCampaignFeePercentage,
+      walletBalance: wallet.availableBalance,
+      accountStatus: req.user.status,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب حملات المعلن.' });
+  }
+});
+
+app.post('/api/advertiser/logo/signed-url', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { fileName, contentType, fileSize } = req.body || {};
+    const cleanContentType = String(contentType || '').trim().toLowerCase();
+    const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
+    if (!ALLOWED_MIME_TYPES.includes(cleanContentType)) {
+      return res.status(400).json({ error: 'صيغة الشعار غير مدعومة. يرجى اختيار PNG أو JPEG أو WEBP.' });
+    }
+    const numSize = Number(fileSize) || 0;
+    if (numSize > 2 * 1024 * 1024) {
+      return res.status(400).json({ error: 'حجم الشعار يجب أن لا يتجاوز 2 ميجابايت.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const safeFileName = (fileName || 'logo.png').replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const storagePath = `advertiser-logos/${req.user.id}/${Date.now()}_${crypto.randomUUID().slice(0, 6)}_${safeFileName}`;
+
+    const { data, error } = await adminClient.storage
+      .from('task-proofs')
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data?.signedUrl) {
+      return res.status(500).json({ error: error?.message || 'تعذر إنشاء رابط رفع الشعار.' });
+    }
+
+    return res.json({
+      signedUrl: data.signedUrl,
+      token: data.token,
+      path: storagePath,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'تعذر تجهيز رفع شعار المعلن.' });
+  }
+});
+
+app.post('/api/advertiser/campaigns', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const {
+      title,
+      description,
+      category,
+      rewardUnits,
+      rewardYer,
+      slots,
+      totalQuantity,
+      timeEstimateMinutes,
+      proofRequirements,
+      hideAdvertiserName,
+      advertiserDisplayName,
+      advertiserLogoUrl,
+      deadlineAt,
+      creationKey,
+    } = req.body || {};
+
+    const cleanReward = Math.round(Number(rewardUnits ?? rewardYer));
+    const cleanSlots = Math.round(Number(slots ?? totalQuantity));
+    if (!title || !description) {
+      return res.status(400).json({ error: 'يرجى إدخال عنوان الحملة ووصف المهمة المطلوبة.' });
+    }
+    if (!Number.isFinite(cleanReward) || cleanReward <= 0 || !Number.isFinite(cleanSlots) || cleanSlots <= 0) {
+      return res.status(400).json({ error: 'سعر المهمة وعدد المهمات يجب أن يكونا أعداداً صحيحة أكبر من صفر.' });
+    }
+
+    const result = await supabaseDb.createAdvertiserCampaign({
+      advertiserId: req.user.id,
+      title: String(title),
+      description: String(description),
+      category: category ? String(category) : 'app_testing',
+      rewardUnits: cleanReward,
+      slots: cleanSlots,
+      timeEstimateMinutes: Number(timeEstimateMinutes || 10),
+      proofRequirements,
+      hideAdvertiserName: Boolean(hideAdvertiserName),
+      advertiserDisplayName: advertiserDisplayName ? String(advertiserDisplayName) : undefined,
+      advertiserLogoUrl: advertiserLogoUrl ? String(advertiserLogoUrl) : undefined,
+      deadlineAt: deadlineAt || null,
+      creationKey: creationKey ? String(creationKey) : undefined,
+      authToken: req.authToken,
+    });
+
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    const msg = String(err?.message || 'فشل إنشاء الحملة وتمويلها.');
+    const isInsufficient = msg.includes('INSUFFICIENT_FUNDS') || msg.includes('العجز المطلوب');
+    res.status(400).json({
+      error: msg.replace(/^INSUFFICIENT_FUNDS:\s*/i, ''),
+      code: isInsufficient ? 'INSUFFICIENT_FUNDS' : undefined,
+    });
+  }
+});
+
+app.post('/api/advertiser/campaigns/:id/start', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.startAdvertiserCampaign({
+      campaignId: req.params.id,
+      actorId: req.user.id,
+      isAdmin: false,
+      authToken: req.authToken,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تشغيل الحملة الإعلانية.' });
+  }
+});
+
+app.post('/api/advertiser/campaigns/:id/settle', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.settleAdvertiserCampaign({
+      campaignId: req.params.id,
+      targetStatus: req.body?.targetStatus === 'completed' ? 'completed' : 'cancelled',
+      reason: req.body?.reason,
+      actorId: req.user.id,
+      isAdmin: false,
+      authToken: req.authToken,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تسوية الحملة وإرجاع المتبقي.' });
+  }
+});
+
+app.get('/api/admin/campaigns', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const campaigns = await supabaseDb.getAllAdminCampaigns(req.authToken);
+    res.json({ campaigns });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب الحملات الإعلانية.' });
+  }
+});
+
+app.post('/api/admin/campaigns/:id/start', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.startAdvertiserCampaign({
+      campaignId: req.params.id,
+      actorId: req.user.id,
+      isAdmin: true,
+      authToken: req.authToken,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تشغيل الحملة الإعلانية.' });
+  }
+});
+
+app.post('/api/admin/campaigns/:id/settle', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.settleAdvertiserCampaign({
+      campaignId: req.params.id,
+      targetStatus: req.body?.targetStatus === 'completed' ? 'completed' : 'cancelled',
+      reason: req.body?.reason,
+      actorId: req.user.id,
+      isAdmin: true,
+      authToken: req.authToken,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تسوية الحملة.' });
   }
 });
 

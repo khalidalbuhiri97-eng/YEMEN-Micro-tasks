@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary } from '../../types/index.ts';
+import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary, CampaignItem } from '../../types/index.ts';
 import { DatabaseErrorsView } from './DatabaseErrorsView.tsx';
 import { OwnerOverviewMetrics } from './finance/OwnerOverviewMetrics.tsx';
 import { TreasuryControlView } from './finance/TreasuryControlView.tsx';
 import { LedgerAuditView } from './finance/LedgerAuditView.tsx';
 import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
 import { TaxManagementView } from './finance/TaxManagementView.tsx';
+import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import {
   ShieldAlert,
   CheckCircle,
@@ -20,19 +21,29 @@ import {
   Unlock,
   X,
   Trash2,
+  Megaphone,
+  Play,
+  RotateCcw,
+  FileText,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SecureImageView } from '../common/SecureImageView.tsx';
+import {
+  CampaignDetailsModal,
+  CampaignInvoiceModal,
+  getCampaignStatusLabel,
+} from '../advertiser/CampaignModals.tsx';
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'ledger' | 'reports' | 'taxes' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
   const [treasury, setTreasury] = useState<TreasurySummary | null>(null);
@@ -47,7 +58,10 @@ export const AdminDashboard: React.FC = () => {
   const [withdrawingRejectReason, setWithdrawingRejectReason] = useState('');
   
   // New Task form
+  const isCreatingTaskRef = useRef(false);
   const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [isSubmittingTask, setIsSubmittingTask] = useState(false);
+  const [creationKey, setCreationKey] = useState<string>(() => crypto.randomUUID());
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskCat, setNewTaskCat] = useState('app_testing');
@@ -60,17 +74,20 @@ export const AdminDashboard: React.FC = () => {
   const [adjustAmount, setAdjustAmount] = useState('');
   const [adjustReason, setAdjustReason] = useState('');
 
-  // Proof Image Preview
+  // Proof Image Preview & Campaign Modals
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [selectedAdminCampaign, setSelectedAdminCampaign] = useState<CampaignItem | null>(null);
+  const [invoiceAdminCampaign, setInvoiceAdminCampaign] = useState<CampaignItem | null>(null);
 
   const loadAllAdminData = async () => {
     setIsLoading(true);
     try {
-      const [overviewRes, subsRes, withsRes, tasksRes, usersRes, setRes, treasuryRes] = await Promise.all([
+      const [overviewRes, subsRes, withsRes, tasksRes, campsRes, usersRes, setRes, treasuryRes] = await Promise.all([
         api.getAdminOverview().catch(() => ({ stats: null })),
         api.getAdminSubmissions().catch(() => ({ submissions: [] })),
         api.getAdminWithdrawals().catch(() => ({ withdrawals: [] })),
         api.getAdminTasks().catch(() => ({ tasks: [] })),
+        api.getAdminCampaigns().catch(() => ({ campaigns: [] })),
         api.getAdminUsers().catch(() => ({ users: [] })),
         api.getSettings().catch(() => ({ settings: null })),
         api.getTreasury().catch(() => ({ treasury: null })),
@@ -80,6 +97,7 @@ export const AdminDashboard: React.FC = () => {
       if (subsRes?.submissions) setSubmissions(subsRes.submissions);
       if (withsRes?.withdrawals) setWithdrawals(withsRes.withdrawals);
       if (tasksRes?.tasks) setTasks(tasksRes.tasks);
+      if (campsRes?.campaigns) setCampaigns(campsRes.campaigns);
       if (usersRes?.users) setUsersList(usersRes.users);
       if (setRes?.settings) setSettings(setRes.settings);
       if (treasuryRes?.treasury) setTreasury(treasuryRes.treasury);
@@ -217,6 +235,11 @@ export const AdminDashboard: React.FC = () => {
       showToast('ليس لديك صلاحية تنفيذ هذا الإجراء.', 'error');
       return;
     }
+    if (isCreatingTaskRef.current || isSubmittingTask) return;
+
+    isCreatingTaskRef.current = true;
+    setIsSubmittingTask(true);
+
     try {
       await api.createAdminTask({
         title: newTaskTitle,
@@ -226,14 +249,19 @@ export const AdminDashboard: React.FC = () => {
         totalQuantity: Number(newTaskQty),
         timeEstimateMinutes: Number(newTaskTime),
         proofRequirements: { requireImage: true, requireText: true },
+        creationKey,
       });
       showToast('تم نشر المهمة الجديدة بنجاح للمستخدمين!', 'success');
       setIsCreatingTask(false);
       setNewTaskTitle('');
       setNewTaskDesc('');
+      setCreationKey(crypto.randomUUID());
       await loadAllAdminData();
     } catch (err: any) {
       showToast(err.message || 'فشل في إنشاء المهمة', 'error');
+    } finally {
+      isCreatingTaskRef.current = false;
+      setIsSubmittingTask(false);
     }
   };
 
@@ -310,20 +338,68 @@ export const AdminDashboard: React.FC = () => {
     const nextStatus = targetUser.status === 'active' ? 'suspended' : 'active';
     const isSuspending = nextStatus === 'suspended';
     openConfirmModal({
-      title: isSuspending ? 'تجميد حساب المستخدم' : 'تفعيل حساب المستخدم',
+      title: isSuspending ? 'تجميد حساب المستخدم' : 'تفعيل / اعتماد الحساب',
       message: isSuspending
         ? `هل أنت متأكد من تجميد حساب "${targetUser.fullName}" ومنعه من الدخول؟`
-        : `هل تريد إعادة تفعيل حساب "${targetUser.fullName}"؟`,
-      confirmLabel: isSuspending ? 'تأكيد التجميد' : 'تأكيد التفعيل',
+        : `هل تريد تفعيل واعتماد حساب "${targetUser.fullName}"؟`,
+      confirmLabel: isSuspending ? 'تأكيد التجميد' : 'تأكيد التفعيل والاعتماد',
       cancelLabel: 'إلغاء',
       variant: isSuspending ? 'danger' : 'primary',
       onConfirm: async () => {
         try {
           await api.updateUserStatus(targetUser.id, nextStatus);
-          showToast(`تم ${isSuspending ? 'تجميد' : 'إلغاء تجميد'} حساب المستخدم بنجاح.`, 'info');
+          showToast(`تم ${isSuspending ? 'تجميد' : 'اعتماد وتفعيل'} الحساب بنجاح.`, 'info');
           await loadAllAdminData();
         } catch (err: any) {
           showToast(err.message || 'فشل في تحديث حالة المستخدم', 'error');
+        }
+      },
+    });
+  };
+
+  const handleStartCampaignAdmin = (camp: CampaignItem) => {
+    openConfirmModal({
+      title: 'تشغيل الحملة الإعلانية وإثبات الإيراد',
+      message: `سيتم نشر مهام حملة "${camp.title}" وإثبات رسوم المنصة (${camp.feeUnits.toLocaleString()} ر.ي) في حساب إيرادات الإعلانات مرة واحدة فقط. هل تريد المتابعة؟`,
+      confirmLabel: 'بدء الحملة',
+      cancelLabel: 'إلغاء',
+      variant: 'primary',
+      onConfirm: async () => {
+        try {
+          await api.startAdminCampaign(camp.id);
+          showToast('تم تشغيل الحملة وإثبات إيراد الرسوم بنجاح.', 'success');
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل بدء الحملة.', 'error');
+        }
+      },
+    });
+  };
+
+  const handleSettleCampaignAdmin = (camp: CampaignItem, targetStatus: 'cancelled' | 'completed' = 'cancelled') => {
+    const isComplete = targetStatus === 'completed';
+    const refundEstimate =
+      (camp.budgetEscrowBalance ?? 0) + (!camp.startedAt ? (camp.feeEscrowBalance ?? 0) : 0);
+    openConfirmModal({
+      title: isComplete ? 'إنهاء وإكمال الحملة الإعلانية' : 'إلغاء وتسوية الحملة الإعلانية',
+      message: isComplete
+        ? `سيتم إغلاق حملة "${camp.title}" بحالة (مكتملة)، وإبقاء رسوم المنصة المستحقة (${camp.feeUnits.toLocaleString()} ر.ي)، وإرجاع أي فائض متبقٍ من ميزانية المكافآت (${refundEstimate.toLocaleString()} ر.ي) لمحفظة المعلن "${camp.advertiserName}".`
+        : !camp.startedAt
+          ? `الحملة "${camp.title}" لم تبدأ بعد — سيتم إلغاؤها وإرجاع كامل المبلغ المحجوز (${refundEstimate.toLocaleString()} ر.ي شامل الميزانية والرسوم) لمحفظة المعلن "${camp.advertiserName}".`
+          : `الحملة "${camp.title}" بدأت بالفعل — سيتم إلغاؤها والاحتفاظ برسوم المنصة (${camp.feeUnits.toLocaleString()} ر.ي) وإرجاع غير المستخدم من ميزانية المكافآت (${(camp.budgetEscrowBalance ?? 0).toLocaleString()} ر.ي) لمحفظة المعلن.`,
+      confirmLabel: isComplete ? 'تأكيد الإكمال والتسوية' : 'تأكيد الإلغاء والتسوية',
+      cancelLabel: 'تراجع',
+      variant: isComplete ? 'primary' : 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await api.settleAdminCampaign(camp.id, { targetStatus });
+          showToast(
+            `تم ${isComplete ? 'إكمال' : 'إلغاء'} الحملة وإرجاع ${Number(res?.refundedUnits || 0).toLocaleString()} ر.ي لمحفظة المعلن.`,
+            'success'
+          );
+          await loadAllAdminData();
+        } catch (err: any) {
+          showToast(err.message || 'فشل تسوية الحملة.', 'error');
         }
       },
     });
@@ -422,13 +498,15 @@ export const AdminDashboard: React.FC = () => {
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
           { id: 'treasury', label: 'إدارة الخزينة', count: null },
+          { id: 'external_accounts', label: 'الحسابات الخارجية والتحصيل', count: treasury?.pendingExternalDepositsCount ?? null },
           { id: 'ledger', label: 'دفتر الأستاذ والمراجعة', count: null },
           { id: 'reports', label: 'التقارير المالية (8)', count: null },
           { id: 'taxes', label: 'إدارة الضرائب', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
-          { id: 'users', label: 'المستخدمين والمحافظ', count: usersList.length },
+          { id: 'campaigns', label: 'حملات المعلنين', count: campaigns.filter((c) => c.status === 'pending_start' || c.status === 'active').length },
+          { id: 'users', label: 'المستخدمين والمعلنين', count: usersList.filter((u) => u.status === 'pending').length || usersList.length },
           { id: 'db_errors', label: 'أخطاء قاعدة البيانات', count: null },
           { id: 'settings', label: 'إعدادات المنصة', count: null },
         ].map((tab) => (
@@ -472,6 +550,11 @@ export const AdminDashboard: React.FC = () => {
       {/* 2. TREASURY CONTROL TAB */}
       {activeTab === 'treasury' && (
         <TreasuryControlView treasury={treasury} onRefreshAll={loadAllAdminData} />
+      )}
+
+      {/* 2B. EXTERNAL ACCOUNTS & ADVERTISER DEPOSITS TAB */}
+      {activeTab === 'external_accounts' && (
+        <ExternalAccountsView treasury={treasury} onRefreshAll={loadAllAdminData} />
       )}
 
       {/* 3. GENERAL LEDGER & AUDIT TAB */}
@@ -714,6 +797,233 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {/* 4. TASKS MANAGEMENT TAB */}
+      {/* ADVERTISER CAMPAIGNS MANAGEMENT TAB */}
+      {activeTab === 'campaigns' && (
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Megaphone className="w-4 h-4 text-emerald-600" />
+              <span>إدارة حملات المعلنين وحسابات الضمان</span>
+            </h2>
+            <p className="text-xs text-slate-500">
+              تظهر هنا حملات المعلنين الخارجيين (ليست ممولة من المنصة). تحتفظ الإدارة بالهوية الحقيقية لكل معلن حتى عند إخفاء اسمه عن المستخدمين.
+            </p>
+          </div>
+
+          {/* Mobile Card Stack (< md) */}
+          <div className="md:hidden space-y-3">
+            {campaigns.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-400 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                لا توجد حملات معلنين مسجلة حالياً.
+              </div>
+            ) : (
+              campaigns.map((camp) => {
+                const statusMeta = getCampaignStatusLabel(camp.status);
+                const publicLabel = camp.hideAdvertiserName
+                  ? 'معلن عبر يمن تاسك (مخفي عن المستخدمين)'
+                  : camp.advertiserDisplayName || camp.advertiserCompany || camp.advertiserName || 'معلن عبر يمن تاسك';
+
+                return (
+                  <div
+                    key={camp.id}
+                    className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-bold text-sm text-slate-900 dark:text-white">{camp.title}</div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                          هوية المعلن الحقيقية: <strong>{camp.advertiserName}</strong>
+                          {camp.advertiserCompany ? ` · ${camp.advertiserCompany}` : ''}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          الظهور للمستخدمين: {publicLabel}
+                        </div>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${statusMeta.cls}`}>
+                        {statusMeta.label}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs font-mono tabular-nums pt-2 border-t border-slate-100 dark:border-slate-800">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-sans">الميزانية / المنجز</span>
+                        <span>{camp.budgetUnits.toLocaleString()} ر.ي ({camp.approvedCount ?? 0}/{camp.slots})</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-sans">رسوم ({camp.feePercentage}%)</span>
+                        <span>{camp.feeUnits.toLocaleString()} ر.ي</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAdminCampaign(camp)}
+                        className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold text-xs flex items-center justify-center gap-1"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>تفاصيل</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInvoiceAdminCampaign(camp)}
+                        className="min-h-[44px] px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 font-bold text-xs flex items-center justify-center gap-1"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>فاتورة</span>
+                      </button>
+                      {camp.status === 'pending_start' && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartCampaignAdmin(camp)}
+                          className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          <span>بدء</span>
+                        </button>
+                      )}
+                      {camp.status === 'active' && (
+                        <button
+                          type="button"
+                          onClick={() => handleSettleCampaignAdmin(camp, 'completed')}
+                          className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-600 text-white font-bold text-xs flex items-center justify-center gap-1"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>إكمال</span>
+                        </button>
+                      )}
+                      {(camp.status === 'pending_start' || camp.status === 'active' || camp.status === 'paused') && (
+                        <button
+                          type="button"
+                          onClick={() => handleSettleCampaignAdmin(camp, 'cancelled')}
+                          className="min-h-[44px] px-3 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 font-bold text-xs flex items-center justify-center gap-1"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>إلغاء</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Desktop Table (>= md) */}
+          <div className="hidden md:block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">الحملة وهوية المعلن</th>
+                    <th className="py-3 px-4 font-mono">الميزانية</th>
+                    <th className="py-3 px-4 font-mono">الرسوم (النسبة)</th>
+                    <th className="py-3 px-4 font-mono">الضمان المتبقي</th>
+                    <th className="py-3 px-4">الحالة</th>
+                    <th className="py-3 px-4 text-left">الإجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {campaigns.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-slate-400">
+                        لا توجد حملات معلنين مسجلة حالياً.
+                      </td>
+                    </tr>
+                  ) : (
+                    campaigns.map((camp) => {
+                      const statusMeta = getCampaignStatusLabel(camp.status);
+                      return (
+                        <tr key={camp.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-slate-900 dark:text-white">{camp.title}</div>
+                            <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                              المعلن الفعلي: {camp.advertiserName} {camp.advertiserCompany ? `· ${camp.advertiserCompany}` : ''}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {camp.hideAdvertiserName
+                                ? 'مخفي عن المستخدمين (يظهر كـ: معلن عبر يمن تاسك)'
+                                : `ظاهر للمستخدمين: ${camp.advertiserDisplayName || camp.advertiserCompany || camp.advertiserName}`}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 font-mono tabular-nums">
+                            <div>{camp.budgetUnits.toLocaleString()} ر.ي</div>
+                            <div className="text-[10px] text-slate-400">{camp.approvedCount ?? 0} / {camp.slots} مهمة</div>
+                          </td>
+                          <td className="py-3 px-4 font-mono tabular-nums">
+                            <div>{camp.feeUnits.toLocaleString()} ر.ي</div>
+                            <div className="text-[10px] text-slate-400">({camp.feePercentage}%)</div>
+                          </td>
+                          <td className="py-3 px-4 font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                            <div>مكافآت: {(camp.budgetEscrowBalance ?? 0).toLocaleString()} ر.ي</div>
+                            <div className="text-[10px] text-amber-600">رسوم معلقة: {(camp.feeEscrowBalance ?? 0).toLocaleString()} ر.ي</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${statusMeta.cls}`}>
+                              {statusMeta.label}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-left">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedAdminCampaign(camp)}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px] flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>تفاصيل</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setInvoiceAdminCampaign(camp)}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px] flex items-center gap-1"
+                              >
+                                <FileText className="w-3 h-3" />
+                                <span>فاتورة</span>
+                              </button>
+                              {camp.status === 'pending_start' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartCampaignAdmin(camp)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] flex items-center gap-1"
+                                >
+                                  <Play className="w-3 h-3" />
+                                  <span>بدء</span>
+                                </button>
+                              )}
+                              {camp.status === 'active' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSettleCampaignAdmin(camp, 'completed')}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-[11px] flex items-center gap-1"
+                                >
+                                  <CheckCircle className="w-3 h-3" />
+                                  <span>إكمال</span>
+                                </button>
+                              )}
+                              {(camp.status === 'pending_start' || camp.status === 'active' || camp.status === 'paused') && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSettleCampaignAdmin(camp, 'cancelled')}
+                                  className="px-2.5 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] flex items-center gap-1"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>إلغاء وتسوية</span>
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'tasks' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
@@ -871,9 +1181,17 @@ export const AdminDashboard: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow"
+                  disabled={isSubmittingTask}
+                  className="px-6 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 rounded-lg shadow flex items-center gap-2"
                 >
-                  نشر المهمة فوراً وتجميد المبلغ
+                  {isSubmittingTask ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>جارٍ نشر المهمة...</span>
+                    </>
+                  ) : (
+                    <span>نشر المهمة فوراً وتجميد المبلغ</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -941,8 +1259,21 @@ export const AdminDashboard: React.FC = () => {
                   {usersList.map((u) => (
                     <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
-                        <div>{u.fullName}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">كود: {u.referralCode}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span>{u.fullName}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                            u.role === 'advertiser'
+                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                              : u.role === 'admin'
+                              ? 'bg-purple-100 text-purple-800'
+                              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                          }`}>
+                            {u.role === 'advertiser' ? 'معلن' : u.role === 'admin' ? 'مدير' : 'مستخدم'}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {u.companyName ? `${u.companyName} · ` : ''}كود: {u.referralCode}
+                        </div>
                       </td>
                       <td className="py-3 px-4 font-mono">{u.phone}</td>
                       <td className="py-3 px-4 font-mono font-bold text-emerald-600 tabular-nums">
@@ -955,14 +1286,26 @@ export const AdminDashboard: React.FC = () => {
                       <td className="py-3 px-4">
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            u.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            u.status === 'active'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : u.status === 'pending'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-rose-100 text-rose-800'
                           }`}
                         >
-                          {u.status === 'active' ? 'نشط' : 'مجمد'}
+                          {u.status === 'active' ? 'نشط' : u.status === 'pending' ? 'بانتظار الاعتماد' : 'مجمد'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-left">
                         <div className="flex items-center justify-end gap-2">
+                          {u.status === 'pending' && (
+                            <button
+                              onClick={() => handleToggleUserStatus(u)}
+                              className="px-2.5 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg"
+                            >
+                              اعتماد المعلن
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               setAdjustingUser(u);
@@ -971,7 +1314,7 @@ export const AdminDashboard: React.FC = () => {
                             }}
                             className="px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded-lg"
                           >
-                            تسوية رصيد
+                            {u.role === 'advertiser' ? 'شحن / تسوية رصيد' : 'تسوية رصيد'}
                           </button>
                           <button
                             onClick={() => handleToggleUserStatus(u)}
@@ -980,7 +1323,7 @@ export const AdminDashboard: React.FC = () => {
                                 ? 'text-rose-600 hover:bg-rose-50'
                                 : 'text-emerald-600 hover:bg-emerald-50'
                             }`}
-                            title={u.status === 'active' ? 'تجميد الحساب' : 'إلغاء التجميد'}
+                            title={u.status === 'active' ? 'تجميد الحساب' : 'تفعيل الحساب'}
                           >
                             {u.status === 'active' ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
                           </button>
@@ -1053,6 +1396,31 @@ export const AdminDashboard: React.FC = () => {
                 className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
               />
             </div>
+          </div>
+
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                نسبة رسوم المنصة على حملات المعلنين (%)
+              </label>
+              <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
+                الافتراضي: 20%
+              </span>
+            </div>
+            <input
+              type="number"
+              min="0"
+              max="50"
+              step="0.5"
+              value={settings.advertiserCampaignFeePercentage ?? 20}
+              onChange={(e) =>
+                setSettings({ ...settings, advertiserCampaignFeePercentage: Number(e.target.value) })
+              }
+              className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+            />
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              تُطبق هذه النسبة على الحملات الجديدة عند إنشائها فقط، وتُحفظ تاريخياً داخل كل حملة دون التأثير على الحملات السابقة.
+            </p>
           </div>
 
           <button
@@ -1268,6 +1636,24 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Admin Campaign Details & Invoice Modals */}
+      <CampaignDetailsModal
+        campaign={selectedAdminCampaign}
+        isAdminView={true}
+        onClose={() => setSelectedAdminCampaign(null)}
+        onOpenInvoice={(camp) => {
+          setSelectedAdminCampaign(null);
+          setInvoiceAdminCampaign(camp);
+        }}
+        onStart={handleStartCampaignAdmin}
+        onSettle={handleSettleCampaignAdmin}
+      />
+
+      <CampaignInvoiceModal
+        campaign={invoiceAdminCampaign}
+        isAdminView={true}
+        onClose={() => setInvoiceAdminCampaign(null)}
+      />
     </div>
   );
 };

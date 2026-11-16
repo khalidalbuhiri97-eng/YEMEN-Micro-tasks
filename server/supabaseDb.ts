@@ -34,6 +34,16 @@ import type {
   ComprehensiveFinancialReport,
   ReferralStat,
   ReferralRewardStatus,
+  CampaignItem,
+  CampaignStatus,
+  ExternalAccount,
+  ExternalAccountOwnerRole,
+  ExternalAccountType,
+  ExternalFundScope,
+  ExternalDeposit,
+  ExternalAccountTransfer,
+  ExternalAccountReconciliation,
+  FundSegregationSummary,
 } from '../src/types/index';
 
 const AUTHORIZED_OWNER_EMAIL = (process.env.ADMIN_EMAIL || 'khalidalbuhiri97@gmail.com').trim().toLowerCase();
@@ -277,6 +287,404 @@ export function buildDoubleEntryForOperation(params: {
   return entries;
 }
 
+export interface CampaignFundingBreakdown {
+  rewardUnits: number;
+  slots: number;
+  feePercentage: number;
+  budgetUnits: number;
+  feeUnits: number;
+  totalUnits: number;
+}
+
+export function calculateCampaignFundingCosts(params: {
+  rewardUnits: number;
+  slots: number;
+  feePercentage?: number;
+}): CampaignFundingBreakdown {
+  const rewardUnits = Math.round(Number(params.rewardUnits));
+  const slots = Math.round(Number(params.slots));
+  const rawPct = params.feePercentage === undefined || params.feePercentage === null ? 20 : Number(params.feePercentage);
+
+  if (!Number.isFinite(rewardUnits) || rewardUnits <= 0) {
+    throw new Error('سعر المهمة يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
+  }
+  if (!Number.isFinite(slots) || slots <= 0) {
+    throw new Error('عدد المهمات يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
+  }
+  if (!Number.isFinite(rawPct) || rawPct < 0 || rawPct > 50) {
+    throw new Error('نسبة رسوم المنصة يجب أن تكون بين 0% و 50%.');
+  }
+
+  const feePercentage = Math.round(rawPct * 100) / 100;
+  const budgetUnits = rewardUnits * slots;
+  const feeUnits = Math.round((budgetUnits * feePercentage) / 100);
+  const totalUnits = budgetUnits + feeUnits;
+
+  return {
+    rewardUnits,
+    slots,
+    feePercentage,
+    budgetUnits,
+    feeUnits,
+    totalUnits,
+  };
+}
+
+export function checkCampaignBalanceSufficiency(availableBalance: number, totalRequired: number) {
+  const safeAvailable = Math.max(0, Math.round(Number(availableBalance || 0)));
+  const safeRequired = Math.max(0, Math.round(Number(totalRequired || 0)));
+  const deficitUnits = Math.max(0, safeRequired - safeAvailable);
+  return {
+    sufficient: safeAvailable >= safeRequired && safeRequired > 0,
+    availableBalance: safeAvailable,
+    totalRequired: safeRequired,
+    deficitUnits,
+  };
+}
+
+export function buildCampaignReserveEntries(params: {
+  title: string;
+  walletAccountId: string;
+  budgetEscrowAccountId: string;
+  feeEscrowAccountId: string;
+  budgetUnits: number;
+  feeUnits: number;
+  feePercentage: number;
+}): LedgerEntryDraft[] {
+  const budget = Math.round(Number(params.budgetUnits));
+  const fee = Math.round(Number(params.feeUnits));
+  if (!Number.isFinite(budget) || budget <= 0) {
+    throw new Error('ميزانية الحملة غير صالحة.');
+  }
+  if (!Number.isFinite(fee) || fee < 0) {
+    throw new Error('قيمة رسوم المنصة غير صالحة.');
+  }
+  const total = budget + fee;
+  const entries: LedgerEntryDraft[] = [
+    {
+      account_id: params.walletAccountId,
+      side: 'debit',
+      amount_units: total,
+      memo: `حجز إجمالي تمويل الحملة: ${params.title}`,
+    },
+    {
+      account_id: params.budgetEscrowAccountId,
+      side: 'credit',
+      amount_units: budget,
+      memo: `حجز ميزانية مكافآت الحملة: ${params.title}`,
+    },
+  ];
+  if (fee > 0) {
+    entries.push({
+      account_id: params.feeEscrowAccountId,
+      side: 'credit',
+      amount_units: fee,
+      memo: `حجز رسوم المنصة المعلقة (${params.feePercentage}%) قبل بدء الحملة: ${params.title}`,
+    });
+  }
+  return entries;
+}
+
+export function buildCampaignFeeRecognitionEntries(params: {
+  title: string;
+  feeEscrowAccountId: string;
+  adsRevenueAccountId: string;
+  feeUnits: number;
+}): LedgerEntryDraft[] {
+  const fee = Math.round(Number(params.feeUnits));
+  if (!Number.isFinite(fee) || fee <= 0) {
+    return [];
+  }
+  return [
+    {
+      account_id: params.feeEscrowAccountId,
+      side: 'debit',
+      amount_units: fee,
+      memo: `تحصيل رسوم المنصة عند بدء الحملة: ${params.title}`,
+    },
+    {
+      account_id: params.adsRevenueAccountId,
+      side: 'credit',
+      amount_units: fee,
+      memo: `إيراد إعلانات متحقق من الحملة: ${params.title}`,
+    },
+  ];
+}
+
+export function buildCampaignSettlementRefundEntries(params: {
+  title: string;
+  walletAccountId: string;
+  budgetEscrowAccountId: string;
+  feeEscrowAccountId: string;
+  refundBudgetUnits: number;
+  refundFeeUnits: number;
+}): LedgerEntryDraft[] {
+  const refundBudget = Math.max(0, Math.round(Number(params.refundBudgetUnits || 0)));
+  const refundFee = Math.max(0, Math.round(Number(params.refundFeeUnits || 0)));
+  const totalRefund = refundBudget + refundFee;
+  if (totalRefund <= 0) return [];
+
+  const entries: LedgerEntryDraft[] = [];
+  if (refundBudget > 0) {
+    entries.push({
+      account_id: params.budgetEscrowAccountId,
+      side: 'debit',
+      amount_units: refundBudget,
+      memo: `استرجاع متبقي ميزانية الحملة: ${params.title}`,
+    });
+  }
+  if (refundFee > 0) {
+    entries.push({
+      account_id: params.feeEscrowAccountId,
+      side: 'debit',
+      amount_units: refundFee,
+      memo: `استرجاع رسوم منصة محتجزة لحملة لم تبدأ: ${params.title}`,
+    });
+  }
+  entries.push({
+    account_id: params.walletAccountId,
+    side: 'credit',
+    amount_units: totalRefund,
+    memo: `إيداع مرتجع الحملة في محفظة المعلن: ${params.title}`,
+  });
+  return entries;
+}
+
+export function normalizeReceiptReference(ref: string): string {
+  return String(ref || '')
+    .trim()
+    .replace(/[\s-]+/g, '')
+    .toUpperCase();
+}
+
+export function sanitizeDepositReceiptUrl(raw?: string | null): string {
+  const val = typeof raw === 'string' ? raw.trim() : '';
+  if (!val || val.length > 400000) return '';
+  if (val.includes('..')) return '';
+  if (/^https?:\/\/[^\s<>"']+$/i.test(val)) return val;
+  if (/^external-receipts\/[a-zA-Z0-9_./-]+$/i.test(val)) return val;
+  if (/^task-proofs\/[a-zA-Z0-9_./-]+$/i.test(val)) return val;
+  if (/^data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/i.test(val)) return val;
+  return '';
+}
+
+export function buildExternalDepositApprovalEntries(params: {
+  externalFinAccountId: string;
+  targetFinAccountId: string;
+  amountUnits: number;
+  externalAccountName: string;
+  referenceNumber: string;
+  depositPurpose: 'advertiser_wallet' | 'platform_capital';
+}): LedgerEntryDraft[] {
+  const amt = Math.round(Number(params.amountUnits));
+  if (!Number.isFinite(amt) || amt <= 0) {
+    throw new Error('مبلغ الإيداع يجب أن يكون عدداً صحيحاً موجباً.');
+  }
+  const ref = String(params.referenceNumber || '').trim();
+  if (!ref) {
+    throw new Error('الرقم المرجعي للإيصال إلزامي.');
+  }
+  return [
+    {
+      account_id: params.externalFinAccountId,
+      side: 'debit',
+      amount_units: amt,
+      memo: `تحصيل نقدي في الحساب الخارجي: ${params.externalAccountName} (${ref})`,
+    },
+    {
+      account_id: params.targetFinAccountId,
+      side: 'credit',
+      amount_units: amt,
+      memo:
+        params.depositPurpose === 'advertiser_wallet'
+          ? `شحن محفظة المعلن (التزام غير مُستحق كإيراد) - مرجع: ${ref}`
+          : `إثبات رأس مال مضاف بالحساب الخارجي - مرجع: ${ref}`,
+    },
+  ];
+}
+
+export function buildInternalAccountTransferEntries(params: {
+  fromFinAccountId: string;
+  toFinAccountId: string;
+  fromAccountCode: string;
+  toAccountCode: string;
+  amountUnits: number;
+  reason: string;
+}): LedgerEntryDraft[] {
+  const amt = Math.round(Number(params.amountUnits));
+  if (!Number.isFinite(amt) || amt <= 0) {
+    throw new Error('مبلغ التحويل يجب أن يكون عدداً صحيحاً موجباً.');
+  }
+  if (!params.fromFinAccountId || !params.toFinAccountId || params.fromFinAccountId === params.toFinAccountId) {
+    throw new Error('يجب اختيار حسابين مختلفين للتحويل الداخلي.');
+  }
+  return [
+    {
+      account_id: params.toFinAccountId,
+      side: 'debit',
+      amount_units: amt,
+      memo: `استلام تحويل داخلي من ${params.fromAccountCode}: ${params.reason.trim()}`,
+    },
+    {
+      account_id: params.fromFinAccountId,
+      side: 'credit',
+      amount_units: amt,
+      memo: `تحويل داخلي صادر إلى ${params.toAccountCode}: ${params.reason.trim()}`,
+    },
+  ];
+}
+
+export function buildReconciliationAdjustmentEntries(params: {
+  externalFinAccountId: string;
+  contraFinAccountId: string;
+  accountingBalance: number;
+  actualBalance: number;
+  reason: string;
+  accountName: string;
+}): { discrepancy: number; entries: LedgerEntryDraft[] } {
+  const accounting = Math.round(Number(params.accountingBalance || 0));
+  const actual = Math.round(Number(params.actualBalance || 0));
+  const diff = actual - accounting;
+  if (diff === 0) {
+    return { discrepancy: 0, entries: [] };
+  }
+  const absDiff = Math.abs(diff);
+  const cleanReason = String(params.reason || '').trim();
+  if (!cleanReason) {
+    throw new Error('سبب التسوية إلزامي عند وجود فرق بالمطابقة.');
+  }
+  if (diff > 0) {
+    return {
+      discrepancy: diff,
+      entries: [
+        {
+          account_id: params.externalFinAccountId,
+          side: 'debit',
+          amount_units: absDiff,
+          memo: `قيد تسوية زيادة فعلية بالحساب الخارجي (${params.accountName}): ${cleanReason}`,
+        },
+        {
+          account_id: params.contraFinAccountId,
+          side: 'credit',
+          amount_units: absDiff,
+          memo: `مقابل تسوية مطابقة الحساب الخارجي (${params.accountName})`,
+        },
+      ],
+    };
+  }
+  return {
+    discrepancy: diff,
+    entries: [
+      {
+        account_id: params.contraFinAccountId,
+        side: 'debit',
+        amount_units: absDiff,
+        memo: `قيد تسوية عجز/عمولات بالمطابقة (${params.accountName}): ${cleanReason}`,
+      },
+      {
+        account_id: params.externalFinAccountId,
+        side: 'credit',
+        amount_units: absDiff,
+        memo: `تعديل رصيد الحساب الخارجي للرصيد الفعلي (${params.accountName})`,
+      },
+    ],
+  };
+}
+
+export function computeFundSegregationSummary(params: {
+  cashVaultTotal: number;
+  externalPlatformBalance: number;
+  externalAccountsTotal: number;
+  externalActualTotal: number;
+  activeExternalCount: number;
+  realizedRevenuesTotal: number;
+  operationalExpensesTotal: number;
+  ownerCapitalTotal: number;
+  ownerWithdrawalsTotal: number;
+  virtualTreasuryAvailable: number;
+  advertiserWalletsTotal: number;
+  campaignBudgetEscrow: number;
+  campaignFeeEscrow: number;
+  pendingExternalDepositsCount: number;
+  pendingExternalDepositsAmount: number;
+  approvedExternalDepositsTotal: number;
+  workerWalletsTotal: number;
+  withdrawalReservedTotal: number;
+  adminTaskEscrowTotal: number;
+}): FundSegregationSummary {
+  const netOwnerEquity =
+    params.ownerCapitalTotal +
+    (params.realizedRevenuesTotal - params.operationalExpensesTotal) -
+    params.ownerWithdrawalsTotal;
+
+  return {
+    platformFunds: {
+      cashVaultTotal: params.cashVaultTotal,
+      externalPlatformBalance: params.externalPlatformBalance,
+      realizedRevenuesTotal: params.realizedRevenuesTotal,
+      operationalExpensesTotal: params.operationalExpensesTotal,
+      ownerCapitalTotal: params.ownerCapitalTotal,
+      ownerWithdrawalsTotal: params.ownerWithdrawalsTotal,
+      netOwnerEquity,
+      virtualTreasuryAvailable: params.virtualTreasuryAvailable,
+    },
+    advertiserFunds: {
+      advertiserWalletsTotal: params.advertiserWalletsTotal,
+      campaignBudgetEscrow: params.campaignBudgetEscrow,
+      campaignFeeEscrow: params.campaignFeeEscrow,
+      totalAdvertiserLiabilities:
+        params.advertiserWalletsTotal + params.campaignBudgetEscrow + params.campaignFeeEscrow,
+      pendingExternalDepositsCount: params.pendingExternalDepositsCount,
+      pendingExternalDepositsAmount: params.pendingExternalDepositsAmount,
+      approvedExternalDepositsTotal: params.approvedExternalDepositsTotal,
+    },
+    userFunds: {
+      workerWalletsTotal: params.workerWalletsTotal,
+      withdrawalReservedTotal: params.withdrawalReservedTotal,
+      adminTaskEscrowTotal: params.adminTaskEscrowTotal,
+      totalUserLiabilities:
+        params.workerWalletsTotal + params.withdrawalReservedTotal + params.adminTaskEscrowTotal,
+    },
+    externalAccountsSummary: {
+      totalAccountingBalance: params.externalAccountsTotal,
+      totalActualBalance: params.externalActualTotal,
+      totalDiscrepancy: params.externalActualTotal - params.externalAccountsTotal,
+      activeAccountsCount: params.activeExternalCount,
+    },
+  };
+}
+
+function isMissingRelationError(err: any): boolean {
+  const msg = String(err?.message || '').toLowerCase();
+  const code = String(err?.code || '');
+  return (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('does not exist') ||
+    msg.includes('could not find the table') ||
+    msg.includes('schema cache')
+  );
+}
+
+const advertiserCampaignLocks = new Map<string, Promise<void>>();
+export async function withAdvertiserLock<T>(advertiserId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = advertiserCampaignLocks.get(advertiserId) || Promise.resolve();
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  advertiserCampaignLocks.set(advertiserId, prev.then(() => next));
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (advertiserCampaignLocks.get(advertiserId) === next) {
+      advertiserCampaignLocks.delete(advertiserId);
+    }
+  }
+}
+
 function mapLedgerTxType(rawType: string, entrySide: 'debit' | 'credit'): TransactionType {
   const upper = String(rawType || '').trim().toUpperCase();
   if (upper.startsWith('REVERSAL_')) {
@@ -326,12 +734,72 @@ function mapLedgerTxType(rawType: string, entrySide: 'debit' | 'credit'): Transa
       return 'SERVICE_REVENUE';
     case 'PAYMENT_PROVIDER_FEE':
       return 'PAYMENT_PROVIDER_FEE';
+    case 'CAMPAIGN_FUNDING_RESERVE':
+      return 'CAMPAIGN_FUNDING_RESERVE';
+    case 'CAMPAIGN_ESCROW_REFUND':
+      return 'CAMPAIGN_ESCROW_REFUND';
     default:
       return (entrySide === 'credit' ? 'TASK_REWARD' : 'ADMIN_ADJUSTMENT') as TransactionType;
   }
 }
 
-function mapTaskRow(t: any): TaskItem {
+export function sanitizeAdvertiserLogoUrl(raw?: string | null): string | undefined {
+  const val = typeof raw === 'string' ? raw.trim() : '';
+  if (!val) return undefined;
+  if (val.length > 350000) return undefined;
+  if (/^https?:\/\/[^\s<>"']+$/i.test(val)) return val;
+  if (!val.includes('..') && /^advertiser-logos\/[a-zA-Z0-9_./-]+$/i.test(val)) return val;
+  if (/^data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/i.test(val)) return val;
+  return undefined;
+}
+
+export function resolvePublicTaskAdvertiserIdentity(t: any, options?: { maskHiddenIdentity?: boolean }) {
+  const rawReqs = t?.proof_requirements || {};
+  const meta = rawReqs?._campaignMeta || {};
+  const isExternalCampaign = Boolean(
+    t?.campaign_id || t?.is_external_campaign || meta?.isExternalCampaign
+  );
+  const hideAdvertiserName = Boolean(
+    t?.hide_advertiser_name ?? meta?.hideAdvertiserName ?? false
+  );
+  const rawDisplayName =
+    typeof (t?.advertiser_display_name ?? meta?.advertiserDisplayName) === 'string'
+      ? String(t?.advertiser_display_name ?? meta?.advertiserDisplayName).trim()
+      : '';
+  const rawLogoUrl = sanitizeAdvertiserLogoUrl(t?.advertiser_logo_url ?? meta?.advertiserLogoUrl);
+
+  const mask = options?.maskHiddenIdentity !== false;
+
+  if (!isExternalCampaign) {
+    return {
+      isExternalCampaign: false,
+      hideAdvertiserName: false,
+      advertiserDisplayName: undefined,
+      advertiserLogoUrl: undefined,
+      exposeCreatedBy: true,
+    };
+  }
+
+  if (hideAdvertiserName && mask) {
+    return {
+      isExternalCampaign: true,
+      hideAdvertiserName: true,
+      advertiserDisplayName: 'معلن عبر يمن تاسك',
+      advertiserLogoUrl: undefined,
+      exposeCreatedBy: false,
+    };
+  }
+
+  return {
+    isExternalCampaign: true,
+    hideAdvertiserName,
+    advertiserDisplayName: rawDisplayName || 'معلن عبر يمن تاسك',
+    advertiserLogoUrl: rawLogoUrl,
+    exposeCreatedBy: true,
+  };
+}
+
+function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskItem {
   const rewardYer = Number(t.reward_units ?? t.reward_yer ?? 0);
   const totalQuantity = Number(t.slots ?? t.total_quantity ?? 0);
   const completedQuantity = Number(t.approved_count ?? t.completed_quantity ?? 0);
@@ -351,6 +819,8 @@ function mapTaskRow(t: any): TaskItem {
     instructions: rawReqs.instructions,
   };
 
+  const identity = resolvePublicTaskAdvertiserIdentity(t, options);
+
   return {
     id: t.id,
     title: t.title || '',
@@ -367,7 +837,12 @@ function mapTaskRow(t: any): TaskItem {
     budgetSpentYer,
     deadline: t.deadline_at ?? t.deadline ?? undefined,
     status,
-    createdBy: t.created_by,
+    createdBy: identity.exposeCreatedBy ? t.created_by : undefined,
+    campaignId: t.campaign_id || null,
+    isExternalCampaign: identity.isExternalCampaign,
+    hideAdvertiserName: identity.hideAdvertiserName,
+    advertiserDisplayName: identity.advertiserDisplayName,
+    advertiserLogoUrl: identity.advertiserLogoUrl,
     createdAt: t.created_at,
   };
 }
@@ -396,12 +871,12 @@ export const supabaseDb = {
     try {
       let { data: profileData, error: profileErr } = await db
         .from('profiles')
-        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, created_at, updated_at')
+        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
         .eq('id', id)
         .maybeSingle();
 
-      // Pre-Migration 014 backwards-compatible fallback if referred_by doesn't exist yet
-      if (profileErr && (profileErr.code === '42703' || String(profileErr.message || '').includes('referred_by'))) {
+      // Backwards-compatible fallback if Migration 014/019 columns don't exist yet
+      if (profileErr && profileErr.code === '42703') {
         const fallback = await db
           .from('profiles')
           .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, created_at, updated_at')
@@ -439,7 +914,7 @@ export const supabaseDb = {
         throw roleErr;
       }
 
-      const userRole: UserRole = roleData?.role === 'admin' ? 'admin' : 'user';
+      const userRole: UserRole = roleData?.role === 'admin' ? 'admin' : roleData?.role === 'advertiser' ? 'advertiser' : 'user';
 
       let userEmail = '';
       try {
@@ -476,6 +951,8 @@ export const supabaseDb = {
         referralCode: (profileData as any).referral_code || '',
         referredBy: (profileData as any).referred_by || undefined,
         city: profileData.city || profileData.area_name || 'صنعاء',
+        companyName: (profileData as any).company_name || undefined,
+        contactPerson: (profileData as any).contact_person || undefined,
         createdAt: profileData.created_at || new Date().toISOString(),
         updatedAt: profileData.updated_at || new Date().toISOString(),
       };
@@ -535,13 +1012,13 @@ export const supabaseDb = {
     try {
       let profilesRes = await db
         .from('profiles')
-        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, created_at, updated_at')
+        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
         .order('created_at', { ascending: false });
 
       if (profilesRes.error && (profilesRes.error.code === '42703' || String(profilesRes.error.message || '').includes('referred_by'))) {
         profilesRes = (await db
           .from('profiles')
-          .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, created_at, updated_at')
+          .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, company_name, contact_person, created_at, updated_at')
           .order('created_at', { ascending: false })) as any;
       }
 
@@ -559,7 +1036,7 @@ export const supabaseDb = {
 
       const roleMap = new Map<string, UserRole>();
       for (const r of rolesRes.data || []) {
-        roleMap.set(r.user_id, r.role === 'admin' ? 'admin' : 'user');
+        roleMap.set(r.user_id, r.role === 'admin' ? 'admin' : r.role === 'advertiser' ? 'advertiser' : 'user');
       }
 
       const emailMap = new Map<string, string>();
@@ -585,6 +1062,8 @@ export const supabaseDb = {
         referralCode: p.referral_code || '',
         referredBy: p.referred_by || undefined,
         city: p.city || p.area_name || 'صنعاء',
+        companyName: p.company_name || undefined,
+        contactPerson: p.contact_person || undefined,
         createdAt: p.created_at || new Date().toISOString(),
         updatedAt: p.updated_at || new Date().toISOString(),
       }));
@@ -594,7 +1073,7 @@ export const supabaseDb = {
     }
   },
 
-  async updateUserStatus(userId: string, status: 'active' | 'suspended' | 'under_review'): Promise<void> {
+  async updateUserStatus(userId: string, status: 'active' | 'suspended' | 'under_review' | 'pending'): Promise<void> {
     const startTime = Date.now();
     const db = getDbClient();
     try {
@@ -885,6 +1364,7 @@ export const supabaseDb = {
               tx.transaction_type ||
               'عملية مالية',
             adminId: tx.created_by || undefined,
+            metadata: tx.metadata || {},
             createdAt: e.created_at || tx.created_at,
           };
         });
@@ -941,6 +1421,7 @@ export const supabaseDb = {
           idempotencyKey: tx.idempotency_key,
           description: desc,
           adminId: tx.created_by || undefined,
+          metadata: tx.metadata || {},
           createdAt: e.created_at || tx.created_at,
         };
       });
@@ -998,7 +1479,7 @@ export const supabaseDb = {
         throw error;
       }
 
-      let mapped = (data || []).map(mapTaskRow);
+      let mapped = (data || []).map((t) => mapTaskRow(t));
       if (params?.category && params.category !== 'all') {
         mapped = mapped.filter((t) => t.category === params.category);
       }
@@ -1028,7 +1509,7 @@ export const supabaseDb = {
         throw error;
       }
 
-      return (data || []).map(mapTaskRow);
+      return (data || []).map((row) => mapTaskRow(row, { maskHiddenIdentity: false }));
     } catch (err: any) {
       throw new Error(`فشل جلب مهام المدير من Supabase: ${err.message}`);
     }
@@ -1456,10 +1937,23 @@ export const supabaseDb = {
 
   async getTreasurySummary(authToken?: string): Promise<TreasurySummary> {
     const db = getActorOrAdminClient(authToken);
-    const [accountsRes, tasksRes, taxDefRes, taxSettleRes, auditRes, withdrawRes] = await Promise.all([
+    const adminClient = getSupabaseAdminClient();
+    const [
+      accountsRes,
+      tasksRes,
+      taxDefRes,
+      taxSettleRes,
+      auditRes,
+      withdrawRes,
+      profilesRolesRes,
+      userRolesRes,
+      extAccountsRes,
+      extDepositsRes,
+      extAdvLedgerRes,
+    ] = await Promise.all([
       db
         .from('financial_accounts')
-        .select('id, account_code, account_type, balance_units, status'),
+        .select('id, account_code, account_type, owner_user_id, balance_units, status'),
       db
         .from('tasks')
         .select('status, total_budget_units, approved_count, reward_units, budget_spent_yer'),
@@ -1467,6 +1961,14 @@ export const supabaseDb = {
       db.from('tax_settlements').select('tax_amount, status'),
       db.from('financial_audit_logs').select('id', { count: 'exact', head: true }),
       db.from('withdrawal_requests').select('id', { count: 'exact', head: true }),
+      adminClient.from('profiles').select('id, role'),
+      adminClient.from('user_roles').select('user_id, role'),
+      db.from('external_accounts').select('id, fund_scope, financial_account_id, actual_balance_units, status'),
+      db.from('external_deposits').select('id, amount_units, status, deposit_purpose'),
+      db
+        .from('ledger_transactions')
+        .select('id, transaction_type, ledger_entries(amount_units, entry_side, financial_accounts(account_type))')
+        .in('transaction_type', ['EXTERNAL_ADVERTISER_DEPOSIT', 'REVERSAL_EXTERNAL_ADVERTISER_DEPOSIT']),
     ]);
 
     if (accountsRes.error) {
@@ -1475,20 +1977,110 @@ export const supabaseDb = {
 
     const accounts = accountsRes.data || [];
     const byCode = new Map<string, any>();
+    const byId = new Map<string, any>();
     for (const a of accounts) {
       if (a.account_code) byCode.set(String(a.account_code), a);
+      if (a.id) byId.set(String(a.id), a);
     }
 
     const bal = (code: string) => Number(byCode.get(code)?.balance_units || 0);
+
+    // Determine authoritative role per user (advertiser vs worker vs admin)
+    const roleMap = new Map<string, string>();
+    for (const p of profilesRolesRes.data || []) {
+      if (p.id && p.role) roleMap.set(String(p.id), String(p.role).toLowerCase());
+    }
+    for (const ur of userRolesRes.data || []) {
+      if (ur.user_id && ur.role) {
+        const nextR = String(ur.role).toLowerCase();
+        const prevR = roleMap.get(String(ur.user_id));
+        if (!prevR || nextR === 'admin' || nextR === 'advertiser') {
+          roleMap.set(String(ur.user_id), nextR);
+        }
+      }
+    }
 
     const totalIssuedUnits = bal('VIRTUAL-ISSUANCE-CONTROL');
     const treasuryAvailable = bal('PLATFORM-TREASURY');
     const taskBudgetReserved = accounts
       .filter((a: any) => String(a.account_code || '').startsWith('TASK-ESCROW-'))
       .reduce((sum: number, a: any) => sum + Number(a.balance_units || 0), 0);
-    const userAvailableTotal = accounts
-      .filter((a: any) => a.account_type === 'wallet')
+    const campaignBudgetReserved = accounts
+      .filter((a: any) => String(a.account_code || '').startsWith('CAMPAIGN-ESCROW-'))
       .reduce((sum: number, a: any) => sum + Number(a.balance_units || 0), 0);
+    const campaignFeeReserved = accounts
+      .filter((a: any) => String(a.account_code || '').startsWith('CAMPAIGN-FEE-ESCROW-'))
+      .reduce((sum: number, a: any) => sum + Number(a.balance_units || 0), 0);
+
+    let advertiserWalletTotal = 0;
+    let workerWalletTotal = 0;
+    let userAvailableTotal = 0;
+    for (const a of accounts) {
+      if (a.account_type !== 'wallet') continue;
+      const units = Number(a.balance_units || 0);
+      userAvailableTotal += units;
+      const ownerRole = a.owner_user_id ? roleMap.get(String(a.owner_user_id)) : 'user';
+      if (ownerRole === 'advertiser') {
+        advertiserWalletTotal += units;
+      } else {
+        workerWalletTotal += units;
+      }
+    }
+
+    // External accounts & receipt-backed custody stats
+    const externalAccountsReady = !extAccountsRes.error && !extDepositsRes.error;
+    let externalAccountsTotal = 0;
+    let externalActualTotal = 0;
+    let externalPlatformBalance = 0;
+    let externalAdvertiserCustodyBalance = 0;
+    let activeExternalCount = 0;
+
+    if (!extAccountsRes.error && Array.isArray(extAccountsRes.data)) {
+      for (const ea of extAccountsRes.data) {
+        const finAcc = byId.get(String(ea.financial_account_id));
+        const accBal = Number(finAcc?.balance_units || 0);
+        const actualBal = Number(ea.actual_balance_units || 0);
+        externalAccountsTotal += accBal;
+        externalActualTotal += actualBal;
+        if (String(ea.status || 'active') === 'active') activeExternalCount += 1;
+        if (ea.fund_scope === 'platform') {
+          externalPlatformBalance += accBal;
+        } else if (ea.fund_scope === 'advertiser') {
+          externalAdvertiserCustodyBalance += accBal;
+        } else {
+          externalPlatformBalance += accBal;
+        }
+      }
+    }
+
+    let pendingExternalDepositsCount = 0;
+    let pendingExternalDepositsAmount = 0;
+    if (!extDepositsRes.error && Array.isArray(extDepositsRes.data)) {
+      for (const dep of extDepositsRes.data) {
+        if (dep.status === 'pending') {
+          pendingExternalDepositsCount += 1;
+          pendingExternalDepositsAmount += Number(dep.amount_units || 0);
+        }
+      }
+    }
+
+    let externalAdvertiserDepositsTotal = 0;
+    if (!extAdvLedgerRes.error && Array.isArray(extAdvLedgerRes.data)) {
+      for (const tx of extAdvLedgerRes.data) {
+        const tType = String(tx.transaction_type || '').toUpperCase();
+        for (const le of (tx as any).ledger_entries || []) {
+          const isWallet = le.financial_accounts?.account_type === 'wallet';
+          if (!isWallet) continue;
+          const amt = Number(le.amount_units || 0);
+          if (tType === 'EXTERNAL_ADVERTISER_DEPOSIT' && le.entry_side === 'credit') {
+            externalAdvertiserDepositsTotal += amt;
+          } else if (tType === 'REVERSAL_EXTERNAL_ADVERTISER_DEPOSIT' && le.entry_side === 'debit') {
+            externalAdvertiserDepositsTotal -= amt;
+          }
+        }
+      }
+    }
+    externalAdvertiserDepositsTotal = Math.max(0, externalAdvertiserDepositsTotal);
 
     const withdrawalReservedTotal = bal('WITHDRAWAL-RESERVED');
     const withdrawalSettledTotal = bal('WITHDRAWAL-SETTLED');
@@ -1508,7 +2100,8 @@ export const supabaseDb = {
     const totalOperationalExpenses = expensesTotal + providerFeesTotal;
     const netProfitLoss = totalRevenue - totalOperationalExpenses;
     const computedRetainedEarnings = retainedEarningsTotal + (netProfitLoss - ownerWithdrawalsTotal);
-    const userLiabilitiesTotal = userAvailableTotal + withdrawalReservedTotal;
+    const userLiabilitiesTotal =
+      userAvailableTotal + withdrawalReservedTotal + campaignBudgetReserved + campaignFeeReserved;
 
     const taxTablesReady = !taxDefRes.error && !taxSettleRes.error;
     const taxesPaidTotal = !taxSettleRes.error
@@ -1535,6 +2128,26 @@ export const supabaseDb = {
       }
     }
 
+    // Compute campaign fees moved from CAMPAIGN-FEE-ESCROW-* into PLATFORM-REVENUE-ADS (part of virtual supply loop)
+    let adFeesFromSupply = 0;
+    const revAdsAcc = byCode.get('PLATFORM-REVENUE-ADS');
+    if (revAdsAcc?.id && revAds > 0) {
+      const { data: adFeeEntries } = await db
+        .from('ledger_entries')
+        .select('amount_units, entry_side, ledger_transactions(transaction_type, metadata)')
+        .eq('account_id', revAdsAcc.id);
+      for (const ae of adFeeEntries || []) {
+        const tx = (ae as any).ledger_transactions;
+        const txType = String(tx?.transaction_type || '').toUpperCase();
+        const isCampaignFeeSource = tx?.metadata?.source === 'campaign_fee_escrow';
+        if (ae.entry_side === 'credit' && txType === 'AD_REVENUE' && isCampaignFeeSource) {
+          adFeesFromSupply += Number(ae.amount_units || 0);
+        } else if (ae.entry_side === 'debit' && txType === 'REVERSAL_AD_REVENUE' && isCampaignFeeSource) {
+          adFeesFromSupply -= Number(ae.amount_units || 0);
+        }
+      }
+    }
+
     const activeTasksBudgetTotal = (tasksRes.data || [])
       .filter((t: any) => String(t.status || '').toLowerCase() === 'active')
       .reduce((sum: number, t: any) => {
@@ -1545,11 +2158,38 @@ export const supabaseDb = {
     const reconciledSum =
       treasuryAvailable +
       taskBudgetReserved +
+      campaignBudgetReserved +
+      campaignFeeReserved +
       userAvailableTotal +
       withdrawalReservedTotal +
       withdrawalSettledTotal +
       revTasks +
-      Math.max(0, withdrawalFeesFromSupply);
+      Math.max(0, withdrawalFeesFromSupply) +
+      Math.max(0, adFeesFromSupply);
+
+    const expectedSupplyBacking = totalIssuedUnits + externalAdvertiserDepositsTotal;
+
+    const fundSegregation = computeFundSegregationSummary({
+      cashVaultTotal,
+      externalPlatformBalance,
+      externalAccountsTotal,
+      externalActualTotal,
+      activeExternalCount,
+      realizedRevenuesTotal: totalRevenue,
+      operationalExpensesTotal: totalOperationalExpenses,
+      ownerCapitalTotal,
+      ownerWithdrawalsTotal,
+      virtualTreasuryAvailable: treasuryAvailable,
+      advertiserWalletsTotal: advertiserWalletTotal,
+      campaignBudgetEscrow: campaignBudgetReserved,
+      campaignFeeEscrow: campaignFeeReserved,
+      pendingExternalDepositsCount,
+      pendingExternalDepositsAmount,
+      approvedExternalDepositsTotal: externalAdvertiserDepositsTotal,
+      workerWalletsTotal: workerWalletTotal,
+      withdrawalReservedTotal,
+      adminTaskEscrowTotal: taskBudgetReserved,
+    });
 
     const missingMigration011Accounts = MIGRATION_011_CORE_ACCOUNTS.filter((code) => !byCode.has(code));
     const migration011Ready = missingMigration011Accounts.length === 0;
@@ -1558,11 +2198,22 @@ export const supabaseDb = {
       totalIssuedUnits,
       treasuryAvailable,
       taskBudgetReserved,
+      campaignBudgetReserved,
+      campaignFeeReserved,
       userAvailableTotal,
+      advertiserWalletTotal,
+      workerWalletTotal,
       userPendingTotal: withdrawalReservedTotal,
       withdrawalReservedTotal,
       withdrawalSettledTotal,
       cashVaultTotal,
+      externalAccountsReady,
+      externalAccountsTotal,
+      externalPlatformBalance,
+      externalAdvertiserCustodyBalance,
+      pendingExternalDepositsCount,
+      pendingExternalDepositsAmount,
+      externalAdvertiserDepositsTotal,
       ownerCapitalTotal,
       ownerWithdrawalsTotal,
       expensesTotal,
@@ -1574,6 +2225,7 @@ export const supabaseDb = {
       taxPayableTotal,
       taxesPaidTotal,
       userLiabilitiesTotal,
+      fundSegregation,
       revenueTotals: {
         tasks: revTasks,
         ads: revAds,
@@ -1586,7 +2238,7 @@ export const supabaseDb = {
       taxTablesReady,
       auditLogsTableReady: !auditRes.error,
       withdrawalsTableReady: !withdrawRes.error,
-      isReconciled: totalIssuedUnits > 0 ? reconciledSum === totalIssuedUnits : true,
+      isReconciled: expectedSupplyBacking > 0 ? reconciledSum === expectedSupplyBacking : true,
       activeTasksBudgetTotal,
     };
   },
@@ -1623,10 +2275,10 @@ export const supabaseDb = {
     idempotent: boolean;
   }> {
     const cleanReason = (params.reason || 'إلغاء/إغلاق المهمة وتحرير المتبقي من الضمان للخزينة').trim();
-    const rpcClient = getRpcClient(params.authToken);
+    const adminClient = getSupabaseAdminClient();
 
-    // 1. Try Migration 011 atomic RPC first
-    const { data: rpcData, error: rpcErr } = await rpcClient.rpc('release_task_escrow', {
+    // 1. Try Migration 011 atomic RPC first using admin client
+    const { data: rpcData, error: rpcErr } = await adminClient.rpc('release_task_escrow', {
       p_task_id: params.taskId,
       p_reason: cleanReason,
     });
@@ -1646,11 +2298,10 @@ export const supabaseDb = {
       throw new Error(rpcErr.message || 'فشل تحرير أموال ضمان المهمة.');
     }
 
-    // 2. Live Fallback using existing atomic post_ledger_transaction RPC
-    const db = getActorOrAdminClient(params.authToken);
+    // 2. Live Fallback using existing atomic post_ledger_transaction RPC with admin client
     const idempotencyKey = `TASK-ESCROW-RELEASE:${params.taskId}`;
 
-    const { data: existingTx } = await db
+    const { data: existingTx } = await adminClient
       .from('ledger_transactions')
       .select('id')
       .eq('idempotency_key', idempotencyKey)
@@ -1660,13 +2311,13 @@ export const supabaseDb = {
       return { releasedUnits: 0, transactionId: existingTx.id, idempotent: true };
     }
 
-    const { data: taskRow } = await db
+    const { data: taskRow } = await adminClient
       .from('tasks')
       .select('id, title, escrow_account_id')
       .eq('id', params.taskId)
       .maybeSingle();
 
-    const { data: escrowAcc } = await db
+    const { data: escrowAcc } = await adminClient
       .from('financial_accounts')
       .select('id, account_code, balance_units')
       .or(
@@ -1682,7 +2333,7 @@ export const supabaseDb = {
       return { releasedUnits: 0, transactionId: null, idempotent: false };
     }
 
-    const { data: treasuryAcc, error: tErr } = await db
+    const { data: treasuryAcc, error: tErr } = await adminClient
       .from('financial_accounts')
       .select('id')
       .eq('account_code', 'PLATFORM-TREASURY')
@@ -1692,7 +2343,7 @@ export const supabaseDb = {
       throw new Error('تعذر العثور على حساب خزينة المنصة لإرجاع رصيد المهمة.');
     }
 
-    const { data: txId, error: postErr } = await rpcClient.rpc('post_ledger_transaction', {
+    const { data: txId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
       p_transaction_type: 'TASK_BUDGET_REFUND',
       p_idempotency_key: idempotencyKey,
       p_reference: `TASK:${params.taskId}`,
@@ -1713,7 +2364,7 @@ export const supabaseDb = {
       throw new Error(postErr.message || 'فشل تسجيل قيد استرجاع ضمان المهمة.');
     }
 
-    await db.from('admin_logs').insert({
+    await adminClient.from('admin_logs').insert({
       actor_id: params.actorId || null,
       action: 'TASK_ESCROW_RELEASE',
       entity_type: 'task',
@@ -3352,19 +4003,28 @@ export const supabaseDb = {
       balanceSheet: {
         assets: {
           cashVault: summary.cashVaultTotal || 0,
+          externalAccounts: summary.externalAccountsTotal || 0,
+          externalPlatformAccounts: summary.externalPlatformBalance || 0,
+          externalAdvertiserCustodyAccounts: summary.externalAdvertiserCustodyBalance || 0,
           virtualIssuanceControl: summary.totalIssuedUnits || 0,
-          totalRealAssets: summary.cashVaultTotal || 0,
+          totalRealAssets: (summary.cashVaultTotal || 0) + (summary.externalAccountsTotal || 0),
         },
         liabilities: {
           userWalletBalances: summary.userAvailableTotal || 0,
+          advertiserWalletBalances: summary.advertiserWalletTotal || 0,
+          workerWalletBalances: summary.workerWalletTotal || 0,
           withdrawalReserved: summary.withdrawalReservedTotal || 0,
           taskEscrowBalances: summary.taskBudgetReserved || 0,
+          campaignBudgetEscrows: summary.campaignBudgetReserved || 0,
+          campaignFeeEscrows: summary.campaignFeeReserved || 0,
           taxesPayable: summary.taxPayableTotal || 0,
           expenseClearing: expenseClearingBal,
           totalUserAndExternalLiabilities:
             (summary.userAvailableTotal || 0) +
             (summary.withdrawalReservedTotal || 0) +
             (summary.taskBudgetReserved || 0) +
+            (summary.campaignBudgetReserved || 0) +
+            (summary.campaignFeeReserved || 0) +
             (summary.taxPayableTotal || 0),
         },
         equity: {
@@ -3375,6 +4035,7 @@ export const supabaseDb = {
           totalOwnerEquity: ownerCapitalBal + retainedAccBal + cumulativeNetIncome - ownerWithdrawalsBal,
         },
       },
+      fundSegregation: summary.fundSegregation,
       revenueBySource: Object.entries(revSourceMap).map(([accountCode, v]) => ({
         accountCode,
         label: v.label,
@@ -3424,6 +4085,7 @@ export const supabaseDb = {
       maxWithdrawal: 500000,
       dailyWithdrawalLimit: 1000000,
       defaultFeePercentage: 1.5,
+      advertiserCampaignFeePercentage: 20,
       referralBonus: 30,
       taskSubmissionLimit: 10,
       isRegistrationOpen: true,
@@ -3444,6 +4106,7 @@ export const supabaseDb = {
       // Support single-row column-based platform_settings (Migration 005)
       const first = data[0] as any;
       if (first && first.setting_key === undefined && first.referral_bonus !== undefined) {
+        const rawCampaignFee = Number(first.advertiser_campaign_fee_percentage);
         return {
           ...defaultSettings,
           id: String(first.id || defaultSettings.id),
@@ -3452,6 +4115,10 @@ export const supabaseDb = {
           maxWithdrawal: Number(first.max_withdrawal ?? defaultSettings.maxWithdrawal),
           dailyWithdrawalLimit: Number(first.daily_withdrawal_limit ?? defaultSettings.dailyWithdrawalLimit),
           defaultFeePercentage: Number(first.default_fee_percentage ?? defaultSettings.defaultFeePercentage),
+          advertiserCampaignFeePercentage:
+            Number.isFinite(rawCampaignFee) && rawCampaignFee >= 0 && rawCampaignFee <= 50
+              ? rawCampaignFee
+              : defaultSettings.advertiserCampaignFeePercentage,
           referralBonus: Number(first.referral_bonus ?? defaultSettings.referralBonus),
           taskSubmissionLimit: Number(first.task_submission_limit ?? defaultSettings.taskSubmissionLimit),
           isRegistrationOpen: first.is_registration_open !== undefined ? Boolean(first.is_registration_open) : true,
@@ -3472,6 +4139,8 @@ export const supabaseDb = {
         }
       }
 
+      const rawKvCampaignFee = Number(map.get('advertiser_campaign_fee_percentage'));
+
       return {
         ...defaultSettings,
         platformName: String(map.get('platform_name') || defaultSettings.platformName),
@@ -3479,6 +4148,10 @@ export const supabaseDb = {
         maxWithdrawal: Number(map.get('max_withdrawal') ?? defaultSettings.maxWithdrawal),
         dailyWithdrawalLimit: Number(map.get('daily_withdrawal_limit') ?? defaultSettings.dailyWithdrawalLimit),
         defaultFeePercentage: Number(map.get('default_fee_percentage') ?? defaultSettings.defaultFeePercentage),
+        advertiserCampaignFeePercentage:
+          Number.isFinite(rawKvCampaignFee) && rawKvCampaignFee >= 0 && rawKvCampaignFee <= 50
+            ? rawKvCampaignFee
+            : defaultSettings.advertiserCampaignFeePercentage,
         referralBonus: Number(map.get('referral_bonus') ?? defaultSettings.referralBonus),
         taskSubmissionLimit: Number(map.get('task_submission_limit') ?? defaultSettings.taskSubmissionLimit),
         isRegistrationOpen: map.has('is_registration_open') ? Boolean(map.get('is_registration_open')) : true,
@@ -3494,14 +4167,46 @@ export const supabaseDb = {
 
   async updateSettings(payload: any): Promise<PlatformSettings> {
     const db = getDbClient();
+    if (payload.advertiserCampaignFeePercentage !== undefined) {
+      const pct = Number(payload.advertiserCampaignFeePercentage);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 50) {
+        throw new Error('نسبة رسوم حملات المعلنين يجب أن تكون رقماً بين 0% و 50%.');
+      }
+    }
+
     try {
       const now = new Date().toISOString();
+      const { data: rows } = await db.from('platform_settings').select('*').limit(1);
+      const first = rows?.[0] as any;
+
+      if (first && first.setting_key === undefined && first.referral_bonus !== undefined) {
+        const updateColPayload: Record<string, any> = { updated_at: now };
+        if (payload.platformName !== undefined) updateColPayload.platform_name = payload.platformName;
+        if (payload.minWithdrawal !== undefined) updateColPayload.min_withdrawal = Number(payload.minWithdrawal);
+        if (payload.maxWithdrawal !== undefined) updateColPayload.max_withdrawal = Number(payload.maxWithdrawal);
+        if (payload.dailyWithdrawalLimit !== undefined) updateColPayload.daily_withdrawal_limit = Number(payload.dailyWithdrawalLimit);
+        if (payload.defaultFeePercentage !== undefined) updateColPayload.default_fee_percentage = Number(payload.defaultFeePercentage);
+        if (payload.referralBonus !== undefined) updateColPayload.referral_bonus = Number(payload.referralBonus);
+        if (payload.isRegistrationOpen !== undefined) updateColPayload.is_registration_open = Boolean(payload.isRegistrationOpen);
+        if (payload.maintenanceMode !== undefined) updateColPayload.maintenance_mode = Boolean(payload.maintenanceMode);
+        if (payload.contactPhone !== undefined) updateColPayload.contact_phone = payload.contactPhone;
+        if (payload.contactEmail !== undefined) updateColPayload.contact_email = payload.contactEmail;
+        if (payload.advertiserCampaignFeePercentage !== undefined && first.advertiser_campaign_fee_percentage !== undefined) {
+          updateColPayload.advertiser_campaign_fee_percentage = Number(payload.advertiserCampaignFeePercentage);
+        }
+
+        const { error: colErr } = await db.from('platform_settings').update(updateColPayload).eq('id', first.id);
+        if (colErr) throw colErr;
+        return this.getSettings();
+      }
+
       const pairs: Array<[string, any]> = [
         ['platform_name', payload.platformName],
         ['min_withdrawal', payload.minWithdrawal],
         ['max_withdrawal', payload.maxWithdrawal],
         ['daily_withdrawal_limit', payload.dailyWithdrawalLimit],
         ['default_fee_percentage', payload.defaultFeePercentage],
+        ['advertiser_campaign_fee_percentage', payload.advertiserCampaignFeePercentage],
         ['referral_bonus', payload.referralBonus],
         ['is_registration_open', payload.isRegistrationOpen],
         ['maintenance_mode', payload.maintenanceMode],
@@ -3511,9 +4216,10 @@ export const supabaseDb = {
 
       for (const [key, val] of pairs) {
         if (val !== undefined) {
-          await db
+          const { error: kvErr } = await db
             .from('platform_settings')
             .upsert({ setting_key: key, setting_value: val, updated_at: now }, { onConflict: 'setting_key' });
+          if (kvErr) throw kvErr;
         }
       }
 
@@ -3809,4 +4515,1684 @@ export const supabaseDb = {
       return null;
     }
   },
+
+  /**
+   * 8. ADVERTISER CAMPAIGNS & ESCROW FUNDING (PHASE 3)
+   */
+  async getCampaignsForAdvertiser(advertiserId: string, authToken?: string): Promise<CampaignItem[]> {
+    const db = getActorOrAdminClient(authToken);
+    const { data, error } = await db
+      .from('campaigns')
+      .select('*')
+      .eq('advertiser_id', advertiserId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      if (error.code === '42P01' || String(error.message || '').includes('does not exist')) {
+        return [];
+      }
+      throw new Error(`فشل جلب حملات المعلن: ${error.message}`);
+    }
+
+    return this._hydrateCampaignRows(data || [], db);
+  },
+
+  async getAllAdminCampaigns(authToken?: string): Promise<CampaignItem[]> {
+    const db = getActorOrAdminClient(authToken);
+    const { data, error } = await db
+      .from('campaigns')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      if (error.code === '42P01' || String(error.message || '').includes('does not exist')) {
+        return [];
+      }
+      throw new Error(`فشل جلب جميع الحملات الإعلانية: ${error.message}`);
+    }
+
+    return this._hydrateCampaignRows(data || [], db);
+  },
+
+  async _hydrateCampaignRows(rows: any[], db: any): Promise<CampaignItem[]> {
+    if (!rows || rows.length === 0) return [];
+    const advIds = Array.from(new Set(rows.map((r) => r.advertiser_id).filter(Boolean)));
+    const accIds = Array.from(
+      new Set(rows.flatMap((r) => [r.budget_escrow_account_id, r.fee_escrow_account_id]).filter(Boolean))
+    );
+    const taskIds = Array.from(new Set(rows.map((r) => r.linked_task_id).filter(Boolean)));
+
+    const [profilesRes, accountsRes, tasksRes] = await Promise.all([
+      advIds.length > 0
+        ? db.from('profiles').select('id, full_name, company_name').in('id', advIds)
+        : Promise.resolve({ data: [] }),
+      accIds.length > 0
+        ? db.from('financial_accounts').select('id, balance_units').in('id', accIds)
+        : Promise.resolve({ data: [] }),
+      taskIds.length > 0
+        ? db.from('tasks').select('id, approved_count').in('id', taskIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const profileMap = new Map<string, any>();
+    for (const p of profilesRes.data || []) profileMap.set(p.id, p);
+    const accMap = new Map<string, number>();
+    for (const a of accountsRes.data || []) accMap.set(a.id, Number(a.balance_units || 0));
+    const taskMap = new Map<string, number>();
+    for (const t of tasksRes.data || []) taskMap.set(t.id, Number(t.approved_count || 0));
+
+    return rows.map((r) => {
+      const prof = profileMap.get(r.advertiser_id);
+      const rawReqs = r.proof_requirements || {};
+      const campaignMeta = rawReqs._campaignMeta || {};
+      const { _campaignMeta: _strip, ...cleanProofReqs } = rawReqs;
+      const hideAdvertiserName = Boolean(
+        r.hide_advertiser_name ?? campaignMeta.hideAdvertiserName ?? false
+      );
+      const advertiserDisplayName =
+        (typeof (r.advertiser_display_name ?? campaignMeta.advertiserDisplayName) === 'string' &&
+          String(r.advertiser_display_name ?? campaignMeta.advertiserDisplayName).trim()) ||
+        prof?.company_name ||
+        prof?.full_name ||
+        'معلن';
+      const advertiserLogoUrl = sanitizeAdvertiserLogoUrl(
+        r.advertiser_logo_url ?? campaignMeta.advertiserLogoUrl
+      );
+
+      return {
+        id: r.id,
+        advertiserId: r.advertiser_id,
+        advertiserName: prof?.full_name || 'معلن',
+        advertiserCompany: prof?.company_name || undefined,
+        hideAdvertiserName,
+        advertiserDisplayName,
+        advertiserLogoUrl,
+        isExternalCampaign: true,
+        title: r.title,
+        description: r.description,
+        category: (r.category || 'app_testing') as CampaignItem['category'],
+        rewardUnits: Number(r.reward_units || 0),
+        slots: Number(r.slots || 0),
+        budgetUnits: Number(r.budget_units || 0),
+        feePercentage: Number(r.fee_percentage ?? 20),
+        feeUnits: Number(r.fee_units || 0),
+        totalUnits: Number(r.total_units || 0),
+        refundedUnits: Number(r.refunded_units || 0),
+        budgetEscrowBalance: accMap.get(r.budget_escrow_account_id) ?? 0,
+        feeEscrowBalance: accMap.get(r.fee_escrow_account_id) ?? 0,
+        status: (r.status || 'pending_start') as CampaignStatus,
+        creationKey: r.creation_key,
+        fundingTransactionId: r.funding_transaction_id || null,
+        feeRevenueTransactionId: r.fee_revenue_transaction_id || null,
+        settlementTransactionId: r.settlement_transaction_id || null,
+        linkedTaskId: r.linked_task_id || null,
+        approvedCount: r.linked_task_id ? (taskMap.get(r.linked_task_id) ?? 0) : 0,
+        timeEstimateMinutes: Number(r.time_estimate_minutes || 10),
+        proofRequirements: {
+          requireImage: cleanProofReqs.requireImage ?? true,
+          requireText: cleanProofReqs.requireText ?? true,
+          requireUrl: cleanProofReqs.requireUrl,
+          instructions: cleanProofReqs.instructions,
+        },
+        deadlineAt: r.deadline_at || null,
+        startedAt: r.started_at || null,
+        settledAt: r.settled_at || null,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      };
+    });
+  },
+
+  async createAdvertiserCampaign(params: {
+    advertiserId: string;
+    title: string;
+    description: string;
+    category?: string;
+    rewardUnits: number;
+    slots: number;
+    timeEstimateMinutes?: number;
+    proofRequirements?: Record<string, any>;
+    hideAdvertiserName?: boolean;
+    advertiserDisplayName?: string;
+    advertiserLogoUrl?: string | null;
+    deadlineAt?: string | null;
+    creationKey?: string;
+    authToken?: string;
+  }) {
+    const cleanTitle = String(params.title || '').trim();
+    const cleanDesc = String(params.description || '').trim();
+    if (!cleanTitle || !cleanDesc) {
+      throw new Error('عنوان الحملة ووصف المهمة مطلوبان.');
+    }
+
+    const settings = await this.getSettings(params.authToken);
+    const costs = calculateCampaignFundingCosts({
+      rewardUnits: params.rewardUnits,
+      slots: params.slots,
+      feePercentage: settings.advertiserCampaignFeePercentage,
+    });
+    const creationKey = String(params.creationKey || '').trim() || `CAMP-${crypto.randomUUID()}`;
+
+    const advertiserProfile = await this.findUserById(params.advertiserId);
+    if (!advertiserProfile || advertiserProfile.role !== 'advertiser') {
+      throw new Error('هذا الإجراء متاح لحسابات المعلنين فقط.');
+    }
+    if (advertiserProfile.status !== 'active') {
+      throw new Error('حساب المعلن قيد المراجعة ولم يتم اعتماده من الإدارة بعد.');
+    }
+
+    const hideAdvertiserName = Boolean(params.hideAdvertiserName);
+    const cleanDisplayName =
+      typeof params.advertiserDisplayName === 'string' && params.advertiserDisplayName.trim()
+        ? params.advertiserDisplayName.trim().slice(0, 100)
+        : advertiserProfile.companyName || advertiserProfile.fullName;
+    const cleanLogoUrl = sanitizeAdvertiserLogoUrl(params.advertiserLogoUrl);
+    const mergedProofRequirements = {
+      ...(params.proofRequirements || { requireImage: true, requireText: true }),
+      _campaignMeta: {
+        isExternalCampaign: true,
+        hideAdvertiserName,
+        advertiserDisplayName: cleanDisplayName,
+        advertiserLogoUrl: cleanLogoUrl || null,
+      },
+    };
+
+    // Check balance upfront for precise deficit message (still re-validated inside atomic lock/RPC)
+    const preWallet = await this.getWallet(params.advertiserId);
+    const preCheck = checkCampaignBalanceSufficiency(preWallet.availableBalance, costs.totalUnits);
+    if (!preCheck.sufficient) {
+      throw new Error(
+        `رصيد محفظتك المتاح (${preCheck.availableBalance.toLocaleString()} ر.ي) لا يغطي إجمالي تكلفة الحملة (${preCheck.totalRequired.toLocaleString()} ر.ي). العجز المطلوب شحنه: ${preCheck.deficitUnits.toLocaleString()} ر.ي.`
+      );
+    }
+
+    // 1. Try Migration 020 atomic PostgreSQL RPC first
+    const rpcClient = getRpcClient(params.authToken);
+    const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('create_funded_campaign', {
+      p_title: cleanTitle,
+      p_description: cleanDesc,
+      p_category: params.category || 'app_testing',
+      p_reward_units: costs.rewardUnits,
+      p_slots: costs.slots,
+      p_creation_key: creationKey,
+      p_time_estimate_minutes: Math.max(1, Math.round(Number(params.timeEstimateMinutes || 10))),
+      p_proof_requirements: mergedProofRequirements,
+      p_deadline_at: params.deadlineAt || null,
+      p_advertiser_id: params.advertiserId,
+    });
+
+    if (!rpcErr && rpcRes) {
+      // Best-effort sync of optional Migration 021 columns without failing if pre-021
+      if (rpcRes?.campaignId) {
+        try {
+          const adminClient = getSupabaseAdminClient();
+          await adminClient
+            .from('campaigns')
+            .update({
+              hide_advertiser_name: hideAdvertiserName,
+              advertiser_display_name: cleanDisplayName,
+              advertiser_logo_url: cleanLogoUrl || null,
+            })
+            .eq('id', rpcRes.campaignId);
+        } catch {}
+      }
+      return rpcRes;
+    }
+
+    const isMissingRpc =
+      rpcErr?.code === 'PGRST202' ||
+      String(rpcErr?.message || '').toLowerCase().includes('could not find the function');
+    if (rpcErr && !isMissingRpc) {
+      throw new Error(rpcErr.message || 'فشل إنشاء الحملة وتمويلها من المحفظة.');
+    }
+
+    // 2. Serialized Service-Role fallback if campaigns table exists without Migration 020 RPC
+    return withAdvertiserLock(params.advertiserId, async () => {
+      const adminClient = getSupabaseAdminClient();
+      const { data: existingCamp, error: checkErr } = await adminClient
+        .from('campaigns')
+        .select('*')
+        .eq('creation_key', creationKey)
+        .maybeSingle();
+
+      if (checkErr && (checkErr.code === '42P01' || String(checkErr.message || '').includes('does not exist'))) {
+        throw new Error('جدول الحملات غير مهيأ بعد في قاعدة البيانات (يرجى تطبيق الترحيل 020).');
+      }
+      if (existingCamp) {
+        const latestWallet = await this.getWallet(params.advertiserId);
+        return {
+          success: true,
+          idempotent: true,
+          campaignId: existingCamp.id,
+          status: existingCamp.status,
+          budgetUnits: Number(existingCamp.budget_units),
+          feePercentage: Number(existingCamp.fee_percentage),
+          feeUnits: Number(existingCamp.fee_units),
+          totalUnits: Number(existingCamp.total_units),
+          fundingTransactionId: existingCamp.funding_transaction_id,
+          newAvailableBalance: latestWallet.availableBalance,
+        };
+      }
+
+      const { accountRow: walletAcc } = await this.ensureUserFinancialAccount(params.advertiserId);
+      const { data: freshWalletAcc } = await adminClient
+        .from('financial_accounts')
+        .select('id, balance_units')
+        .eq('id', walletAcc.id)
+        .single();
+
+      const available = Number(freshWalletAcc?.balance_units || 0);
+      const check = checkCampaignBalanceSufficiency(available, costs.totalUnits);
+      if (!check.sufficient) {
+        throw new Error(
+          `رصيد محفظتك المتاح (${check.availableBalance.toLocaleString()} ر.ي) لا يغطي إجمالي تكلفة الحملة (${check.totalRequired.toLocaleString()} ر.ي). العجز المطلوب شحنه: ${check.deficitUnits.toLocaleString()} ر.ي.`
+        );
+      }
+
+      const campaignId = crypto.randomUUID();
+      const now = new Date().toISOString();
+
+      const createEscrowAcc = async (code: string) => {
+        const firstAttempt = await adminClient
+          .from('financial_accounts')
+          .insert({
+            account_code: code,
+            account_type: 'escrow',
+            owner_user_id: null,
+            wallet_id: null,
+            normal_side: 'credit',
+            balance_units: 0,
+            status: 'active',
+            created_at: now,
+          })
+          .select('id')
+          .single();
+        if (!firstAttempt.error && firstAttempt.data) return firstAttempt.data.id;
+        // Pre-013 constraint compatibility fallback
+        const compatAttempt = await adminClient
+          .from('financial_accounts')
+          .insert({
+            account_code: code,
+            account_type: 'treasury',
+            owner_user_id: null,
+            wallet_id: null,
+            normal_side: 'credit',
+            balance_units: 0,
+            status: 'active',
+            created_at: now,
+          })
+          .select('id')
+          .single();
+        if (compatAttempt.error || !compatAttempt.data) {
+          throw new Error(compatAttempt.error?.message || firstAttempt.error?.message || 'تعذر إنشاء حساب الضمان.');
+        }
+        return compatAttempt.data.id;
+      };
+
+      const budgetEscrowId = await createEscrowAcc(`CAMPAIGN-ESCROW-${campaignId}`);
+      const feeEscrowId = await createEscrowAcc(`CAMPAIGN-FEE-ESCROW-${campaignId}`);
+
+      const entries = buildCampaignReserveEntries({
+        title: cleanTitle,
+        walletAccountId: walletAcc.id,
+        budgetEscrowAccountId: budgetEscrowId,
+        feeEscrowAccountId: feeEscrowId,
+        budgetUnits: costs.budgetUnits,
+        feeUnits: costs.feeUnits,
+        feePercentage: costs.feePercentage,
+      });
+
+      const { data: txId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
+        p_transaction_type: 'CAMPAIGN_FUNDING_RESERVE',
+        p_idempotency_key: `CAMPAIGN-FUND-RESERVE:${campaignId}`,
+        p_reference: `CAMPAIGN:${campaignId}`,
+        p_metadata: {
+          campaign_id: campaignId,
+          advertiser_id: params.advertiserId,
+          budget_units: costs.budgetUnits,
+          fee_percentage: costs.feePercentage,
+          fee_units: costs.feeUnits,
+          total_units: costs.totalUnits,
+          creation_key: creationKey,
+          description: `حجز تمويل حملة إعلانية ورسوم المنصة لحين التشغيل: ${cleanTitle}`,
+        },
+        p_entries: entries,
+      });
+
+      if (postErr || !txId) {
+        throw new Error(postErr?.message || 'فشل حجز تمويل الحملة في دفتر الأستاذ.');
+      }
+
+      const { error: insertErr } = await adminClient.from('campaigns').insert({
+        id: campaignId,
+        advertiser_id: params.advertiserId,
+        title: cleanTitle,
+        description: cleanDesc,
+        category: params.category || 'app_testing',
+        reward_units: costs.rewardUnits,
+        slots: costs.slots,
+        budget_units: costs.budgetUnits,
+        fee_percentage: costs.feePercentage,
+        fee_units: costs.feeUnits,
+        total_units: costs.totalUnits,
+        status: 'pending_start',
+        creation_key: creationKey,
+        budget_escrow_account_id: budgetEscrowId,
+        fee_escrow_account_id: feeEscrowId,
+        funding_transaction_id: String(txId),
+        time_estimate_minutes: Math.max(1, Math.round(Number(params.timeEstimateMinutes || 10))),
+        proof_requirements: mergedProofRequirements,
+        deadline_at: params.deadlineAt || null,
+        created_at: now,
+        updated_at: now,
+      });
+
+      if (insertErr) {
+        throw new Error(insertErr.message);
+      }
+
+      // Best-effort sync of optional Migration 021 columns without failing if pre-021
+      try {
+        await adminClient
+          .from('campaigns')
+          .update({
+            hide_advertiser_name: hideAdvertiserName,
+            advertiser_display_name: cleanDisplayName,
+            advertiser_logo_url: cleanLogoUrl || null,
+          })
+          .eq('id', campaignId);
+      } catch {}
+
+      const updatedWallet = await this.getWallet(params.advertiserId);
+      return {
+        success: true,
+        idempotent: false,
+        campaignId,
+        status: 'pending_start',
+        budgetUnits: costs.budgetUnits,
+        feePercentage: costs.feePercentage,
+        feeUnits: costs.feeUnits,
+        totalUnits: costs.totalUnits,
+        fundingTransactionId: String(txId),
+        newAvailableBalance: updatedWallet.availableBalance,
+      };
+    });
+  },
+
+  async startAdvertiserCampaign(params: {
+    campaignId: string;
+    actorId: string;
+    isAdmin?: boolean;
+    authToken?: string;
+  }) {
+    const adminClient = getSupabaseAdminClient();
+    const { data: camp, error: campErr } = await adminClient
+      .from('campaigns')
+      .select('id, advertiser_id, status')
+      .eq('id', params.campaignId)
+      .maybeSingle();
+
+    if (campErr) {
+      throw new Error(campErr.message);
+    }
+    if (!camp) {
+      throw new Error('الحملة الإعلانية غير موجودة.');
+    }
+    if (!params.isAdmin && camp.advertiser_id !== params.actorId) {
+      throw new Error('ليست لديك صلاحية تشغيل هذه الحملة.');
+    }
+
+    const rpcClient = getRpcClient(params.authToken);
+    const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('start_advertiser_campaign', {
+      p_campaign_id: params.campaignId,
+      p_actor_id: params.actorId,
+    });
+
+    if (!rpcErr && rpcRes) {
+      // Ensure linked task reflects campaign identity metadata cleanly across pre-021 & 021 schemas
+      if (rpcRes?.linkedTaskId) {
+        try {
+          const { data: campRow } = await adminClient
+            .from('campaigns')
+            .select('*')
+            .eq('id', params.campaignId)
+            .maybeSingle();
+          const cMeta = campRow?.proof_requirements?._campaignMeta || {};
+          const hideName = Boolean(campRow?.hide_advertiser_name ?? cMeta.hideAdvertiserName ?? false);
+          const dispName = campRow?.advertiser_display_name ?? cMeta.advertiserDisplayName ?? null;
+          const logoUrl = campRow?.advertiser_logo_url ?? cMeta.advertiserLogoUrl ?? null;
+          await adminClient
+            .from('tasks')
+            .update({
+              proof_requirements: campRow?.proof_requirements || undefined,
+              time_estimate_minutes: campRow?.time_estimate_minutes || 10,
+            })
+            .eq('id', rpcRes.linkedTaskId);
+          await adminClient
+            .from('tasks')
+            .update({
+              is_external_campaign: true,
+              hide_advertiser_name: hideName,
+              advertiser_display_name: dispName,
+              advertiser_logo_url: logoUrl,
+            })
+            .eq('id', rpcRes.linkedTaskId);
+        } catch {}
+      }
+      return rpcRes;
+    }
+
+    const isMissingRpc =
+      rpcErr?.code === 'PGRST202' ||
+      String(rpcErr?.message || '').toLowerCase().includes('could not find the function');
+    if (rpcErr && !isMissingRpc) {
+      throw new Error(rpcErr.message || 'فشل بدء الحملة الإعلانية.');
+    }
+
+    // Fallback via post_ledger_transaction
+    const { data: fullCamp } = await adminClient
+      .from('campaigns')
+      .select('*')
+      .eq('id', params.campaignId)
+      .single();
+
+    if (fullCamp.status === 'active') {
+      return {
+        success: true,
+        idempotent: true,
+        campaignId: fullCamp.id,
+        status: 'active',
+        feeRevenueTransactionId: fullCamp.fee_revenue_transaction_id,
+        linkedTaskId: fullCamp.linked_task_id,
+      };
+    }
+    if (fullCamp.status === 'cancelled' || fullCamp.status === 'completed') {
+      throw new Error('لا يمكن تشغيل حملة منتهية أو ملغاة.');
+    }
+
+    let revTxId: string | null = fullCamp.fee_revenue_transaction_id || null;
+    if (Number(fullCamp.fee_units) > 0 && !fullCamp.started_at) {
+      const { data: revAdsAcc } = await adminClient
+        .from('financial_accounts')
+        .select('id')
+        .eq('account_code', 'PLATFORM-REVENUE-ADS')
+        .single();
+      if (!revAdsAcc) {
+        throw new Error('حساب إيرادات الإعلانات PLATFORM-REVENUE-ADS غير مهيأ.');
+      }
+
+      const feeEntries = buildCampaignFeeRecognitionEntries({
+        title: fullCamp.title,
+        feeEscrowAccountId: fullCamp.fee_escrow_account_id,
+        adsRevenueAccountId: revAdsAcc.id,
+        feeUnits: Number(fullCamp.fee_units),
+      });
+
+      const { data: txId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
+        p_transaction_type: 'AD_REVENUE',
+        p_idempotency_key: `CAMPAIGN-FEE-REVENUE:${fullCamp.id}`,
+        p_reference: `CAMPAIGN:${fullCamp.id}`,
+        p_metadata: {
+          campaign_id: fullCamp.id,
+          advertiser_id: fullCamp.advertiser_id,
+          source: 'campaign_fee_escrow',
+          fee_percentage: Number(fullCamp.fee_percentage),
+          fee_units: Number(fullCamp.fee_units),
+          description: `إثبات إيراد رسوم منصة على بدء الحملة الإعلانية: ${fullCamp.title}`,
+        },
+        p_entries: feeEntries,
+      });
+
+      if (postErr) throw new Error(postErr.message);
+      revTxId = String(txId);
+    }
+
+    let linkedTaskId: string | null = fullCamp.linked_task_id || null;
+    if (!linkedTaskId) {
+      const { data: insertedTask, error: taskErr } = await adminClient
+        .from('tasks')
+        .insert({
+          title: fullCamp.title,
+          description: fullCamp.description,
+          category: fullCamp.category || 'app_testing',
+          reward_units: Number(fullCamp.reward_units),
+          slots: Number(fullCamp.slots),
+          approved_count: 0,
+          total_budget_units: Number(fullCamp.budget_units),
+          budget_spent_yer: 0,
+          commission_units: 0,
+          escrow_account_id: fullCamp.budget_escrow_account_id,
+          funding_transaction_id: fullCamp.funding_transaction_id,
+          creation_key: `CAMPAIGN-TASK:${fullCamp.id}`,
+          time_estimate_minutes: Number(fullCamp.time_estimate_minutes || 10),
+          proof_requirements: fullCamp.proof_requirements || { requireImage: true, requireText: true },
+          deadline_at: fullCamp.deadline_at,
+          status: 'active',
+          created_by: fullCamp.advertiser_id,
+          campaign_id: fullCamp.id,
+        })
+        .select('id')
+        .single();
+      if (taskErr) throw new Error(taskErr.message);
+      linkedTaskId = insertedTask.id;
+
+      try {
+        const cMeta = fullCamp.proof_requirements?._campaignMeta || {};
+        await adminClient
+          .from('tasks')
+          .update({
+            is_external_campaign: true,
+            hide_advertiser_name: Boolean(fullCamp.hide_advertiser_name ?? cMeta.hideAdvertiserName ?? false),
+            advertiser_display_name: fullCamp.advertiser_display_name ?? cMeta.advertiserDisplayName ?? null,
+            advertiser_logo_url: fullCamp.advertiser_logo_url ?? cMeta.advertiserLogoUrl ?? null,
+          })
+          .eq('id', linkedTaskId);
+      } catch {}
+    } else {
+      await adminClient.from('tasks').update({ status: 'active' }).eq('id', linkedTaskId);
+    }
+
+    const now = new Date().toISOString();
+    await adminClient
+      .from('campaigns')
+      .update({
+        status: 'active',
+        started_at: fullCamp.started_at || now,
+        fee_revenue_transaction_id: revTxId,
+        linked_task_id: linkedTaskId,
+        updated_at: now,
+      })
+      .eq('id', fullCamp.id);
+
+    return {
+      success: true,
+      idempotent: false,
+      campaignId: fullCamp.id,
+      status: 'active',
+      feeRevenueTransactionId: revTxId,
+      linkedTaskId,
+    };
+  },
+
+  async settleAdvertiserCampaign(params: {
+    campaignId: string;
+    targetStatus?: 'cancelled' | 'completed';
+    reason?: string;
+    actorId: string;
+    isAdmin?: boolean;
+    authToken?: string;
+  }) {
+    const adminClient = getSupabaseAdminClient();
+    const { data: camp, error: campErr } = await adminClient
+      .from('campaigns')
+      .select('id, advertiser_id, status')
+      .eq('id', params.campaignId)
+      .maybeSingle();
+
+    if (campErr) throw new Error(campErr.message);
+    if (!camp) throw new Error('الحملة الإعلانية غير موجودة.');
+    if (!params.isAdmin && camp.advertiser_id !== params.actorId) {
+      throw new Error('ليست لديك صلاحية تسوية هذه الحملة.');
+    }
+
+    const targetStatus = params.targetStatus === 'completed' ? 'completed' : 'cancelled';
+    const cleanReason = String(params.reason || '').trim() || 'تسوية وإغلاق الحملة وإرجاع المتبقي لمحفظة المعلن';
+
+    const rpcClient = getRpcClient(params.authToken);
+    const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('settle_advertiser_campaign', {
+      p_campaign_id: params.campaignId,
+      p_target_status: targetStatus,
+      p_reason: cleanReason,
+      p_actor_id: params.actorId,
+    });
+
+    if (!rpcErr && rpcRes) {
+      return rpcRes;
+    }
+
+    const isMissingRpc =
+      rpcErr?.code === 'PGRST202' ||
+      String(rpcErr?.message || '').toLowerCase().includes('could not find the function');
+    if (rpcErr && !isMissingRpc) {
+      throw new Error(rpcErr.message || 'فشل تسوية الحملة وإرجاع الفائض.');
+    }
+
+    const { data: fullCamp } = await adminClient
+      .from('campaigns')
+      .select('*')
+      .eq('id', params.campaignId)
+      .single();
+
+    if (fullCamp.status === 'cancelled' || fullCamp.status === 'completed') {
+      return {
+        success: true,
+        idempotent: true,
+        campaignId: fullCamp.id,
+        status: fullCamp.status,
+        refundedUnits: Number(fullCamp.refunded_units || 0),
+        settlementTransactionId: fullCamp.settlement_transaction_id,
+      };
+    }
+
+    const { accountRow: walletAcc } = await this.ensureUserFinancialAccount(fullCamp.advertiser_id);
+    const [{ data: bEscrow }, { data: fEscrow }] = await Promise.all([
+      adminClient.from('financial_accounts').select('id, balance_units').eq('id', fullCamp.budget_escrow_account_id).single(),
+      adminClient.from('financial_accounts').select('id, balance_units').eq('id', fullCamp.fee_escrow_account_id).single(),
+    ]);
+
+    const refundBudget = Math.max(0, Number(bEscrow?.balance_units || 0));
+    const refundFee = fullCamp.started_at ? 0 : Math.max(0, Number(fEscrow?.balance_units || 0));
+    const totalRefund = refundBudget + refundFee;
+
+    let settlementTxId: string | null = null;
+    if (totalRefund > 0) {
+      const entries = buildCampaignSettlementRefundEntries({
+        title: fullCamp.title,
+        walletAccountId: walletAcc.id,
+        budgetEscrowAccountId: fullCamp.budget_escrow_account_id,
+        feeEscrowAccountId: fullCamp.fee_escrow_account_id,
+        refundBudgetUnits: refundBudget,
+        refundFeeUnits: refundFee,
+      });
+
+      const { data: txId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
+        p_transaction_type: 'CAMPAIGN_ESCROW_REFUND',
+        p_idempotency_key: `CAMPAIGN-REFUND:${fullCamp.id}`,
+        p_reference: `CAMPAIGN:${fullCamp.id}`,
+        p_metadata: {
+          campaign_id: fullCamp.id,
+          advertiser_id: fullCamp.advertiser_id,
+          refund_budget_units: refundBudget,
+          refund_fee_units: refundFee,
+          total_refund_units: totalRefund,
+          reason: cleanReason,
+          description: `استرجاع الفائض من الحملة الإعلانية لمحفظة المعلن: ${fullCamp.title}`,
+        },
+        p_entries: entries,
+      });
+      if (postErr) throw new Error(postErr.message);
+      settlementTxId = String(txId);
+    }
+
+    if (fullCamp.linked_task_id) {
+      await adminClient
+        .from('tasks')
+        .update({ status: targetStatus === 'completed' ? 'completed' : 'paused' })
+        .eq('id', fullCamp.linked_task_id);
+    }
+
+    const now = new Date().toISOString();
+    await adminClient
+      .from('campaigns')
+      .update({
+        status: targetStatus,
+        refunded_units: totalRefund,
+        settlement_transaction_id: settlementTxId,
+        settled_at: now,
+        updated_at: now,
+      })
+      .eq('id', fullCamp.id);
+
+    const updatedWallet = await this.getWallet(fullCamp.advertiser_id);
+    return {
+      success: true,
+      idempotent: false,
+      campaignId: fullCamp.id,
+      status: targetStatus,
+      refundedBudgetUnits: refundBudget,
+      refundedFeeUnits: refundFee,
+      refundedUnits: totalRefund,
+      settlementTransactionId: settlementTxId,
+      newAvailableBalance: updatedWallet.availableBalance,
+    };
+  },
+
+  async syncCampaignCompletionAfterSubmissionApproval(params: {
+    taskId: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const adminClient = getSupabaseAdminClient();
+    const { data: taskRow } = await adminClient
+      .from('tasks')
+      .select('id, campaign_id, slots, approved_count, status')
+      .eq('id', params.taskId)
+      .maybeSingle();
+
+    if (!taskRow?.campaign_id) return null;
+    const isTaskCompleted =
+      String(taskRow.status || '').toLowerCase() === 'completed' ||
+      Number(taskRow.approved_count || 0) >= Number(taskRow.slots || 0);
+
+    if (!isTaskCompleted) return null;
+
+    const { data: camp } = await adminClient
+      .from('campaigns')
+      .select('id, status')
+      .eq('id', taskRow.campaign_id)
+      .maybeSingle();
+
+    if (!camp || camp.status === 'completed' || camp.status === 'cancelled') {
+      return null;
+    }
+
+    return this.settleAdvertiserCampaign({
+      campaignId: camp.id,
+      targetStatus: 'completed',
+      reason: 'اكتمال كافة مهام الحملة وصرف المكافآت المعتمدة',
+      actorId: params.actorId,
+      isAdmin: true,
+      authToken: params.authToken,
+    });
+  },
+
+  // ============================================================================
+  // PHASE 5: EXTERNAL ACCOUNTS, DEPOSIT RECEIPT APPROVALS, INTERNAL TRANSFERS,
+  // RECONCILIATION & 3-WAY FUND SEGREGATION
+  // ============================================================================
+
+  async getExternalAccountsOverview(authToken?: string): Promise<{
+    externalAccountsReady: boolean;
+    accounts: ExternalAccount[];
+    deposits: ExternalDeposit[];
+    transfers: ExternalAccountTransfer[];
+    reconciliations: ExternalAccountReconciliation[];
+    advertisers: Array<{ id: string; fullName: string; companyName?: string; phone: string; status: string }>;
+    cashVaultAccount: { financialAccountId: string; accountCode: string; balanceUnits: number } | null;
+    fundSegregation?: FundSegregationSummary;
+  }> {
+    const db = getActorOrAdminClient(authToken);
+    const adminClient = getSupabaseAdminClient();
+
+    const [
+      treasurySummary,
+      extAccRes,
+      extDepRes,
+      extXferRes,
+      extRecRes,
+      finAccRes,
+      profilesRes,
+      userRolesRes,
+    ] = await Promise.all([
+      this.getTreasurySummary(authToken),
+      db.from('external_accounts').select('*').order('created_at', { ascending: false }),
+      db.from('external_deposits').select('*').order('created_at', { ascending: false }).limit(200),
+      db.from('external_account_transfers').select('*').order('created_at', { ascending: false }).limit(200),
+      db.from('external_account_reconciliations').select('*').order('created_at', { ascending: false }).limit(200),
+      db.from('financial_accounts').select('id, account_code, account_type, balance_units, status'),
+      adminClient.from('profiles').select('id, full_name, company_name, phone, status, role'),
+      adminClient.from('user_roles').select('user_id, role'),
+    ]);
+
+    const externalAccountsReady =
+      !isMissingRelationError(extAccRes.error) &&
+      !isMissingRelationError(extDepRes.error) &&
+      !isMissingRelationError(extXferRes.error) &&
+      !isMissingRelationError(extRecRes.error);
+
+    const finById = new Map<string, any>();
+    let cashVaultAccount: { financialAccountId: string; accountCode: string; balanceUnits: number } | null = null;
+    for (const fa of finAccRes.data || []) {
+      finById.set(String(fa.id), fa);
+      if (fa.account_code === 'PLATFORM-CASH-VAULT') {
+        cashVaultAccount = {
+          financialAccountId: fa.id,
+          accountCode: fa.account_code,
+          balanceUnits: Number(fa.balance_units || 0),
+        };
+      }
+    }
+
+    const profById = new Map<string, any>();
+    for (const p of profilesRes.data || []) {
+      profById.set(String(p.id), p);
+    }
+
+    const advertiserIds = new Set<string>();
+    for (const p of profilesRes.data || []) {
+      if (String(p.role || '').toLowerCase() === 'advertiser') advertiserIds.add(String(p.id));
+    }
+    for (const ur of userRolesRes.data || []) {
+      if (String(ur.role || '').toLowerCase() === 'advertiser') advertiserIds.add(String(ur.user_id));
+    }
+
+    const advertisers = Array.from(advertiserIds)
+      .map((id) => profById.get(id))
+      .filter(Boolean)
+      .map((p: any) => ({
+        id: p.id,
+        fullName: p.full_name || 'معلن',
+        companyName: p.company_name || undefined,
+        phone: p.phone || '---',
+        status: String(p.status || 'pending').toLowerCase(),
+      }));
+
+    if (!externalAccountsReady) {
+      return {
+        externalAccountsReady: false,
+        accounts: [],
+        deposits: [],
+        transfers: [],
+        reconciliations: [],
+        advertisers,
+        cashVaultAccount,
+        fundSegregation: treasurySummary.fundSegregation,
+      };
+    }
+
+    const extById = new Map<string, any>();
+    const accounts: ExternalAccount[] = (extAccRes.data || []).map((row: any) => {
+      extById.set(String(row.id), row);
+      const fin = finById.get(String(row.financial_account_id));
+      const accountingBalance = Number(fin?.balance_units || 0);
+      const actualBalance = Number(row.actual_balance_units || 0);
+      return {
+        id: row.id,
+        accountName: row.account_name,
+        ownerName: row.owner_name,
+        ownerRole: (row.owner_role || 'owner') as ExternalAccountOwnerRole,
+        accountType: (row.account_type || 'bank') as ExternalAccountType,
+        providerName: row.provider_name,
+        accountNumber: row.account_number,
+        currency: row.currency || 'YER',
+        fundScope: (row.fund_scope || 'mixed') as ExternalFundScope,
+        financialAccountId: row.financial_account_id,
+        accountCode: fin?.account_code || `EXT-ACC-${String(row.id).slice(0, 8)}`,
+        accountingBalance,
+        actualBalance,
+        discrepancyUnits: actualBalance - accountingBalance,
+        lastReconciledAt: row.last_reconciled_at || null,
+        status: (row.status || 'active') as 'active' | 'frozen',
+        notes: row.notes || null,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    });
+
+    const deposits: ExternalDeposit[] = (extDepRes.data || []).map((d: any) => {
+      const ext = extById.get(String(d.external_account_id));
+      const fin = ext ? finById.get(String(ext.financial_account_id)) : null;
+      const adv = d.advertiser_id ? profById.get(String(d.advertiser_id)) : null;
+      const rev = d.reviewed_by ? profById.get(String(d.reviewed_by)) : null;
+      return {
+        id: d.id,
+        externalAccountId: d.external_account_id,
+        externalAccountName: ext?.account_name || 'حساب خارجي',
+        externalAccountCode: fin?.account_code || '',
+        depositPurpose: d.deposit_purpose || 'advertiser_wallet',
+        advertiserId: d.advertiser_id || null,
+        advertiserName: adv?.full_name || null,
+        advertiserCompany: adv?.company_name || null,
+        amountUnits: Number(d.amount_units || 0),
+        referenceNumber: d.reference_number,
+        receiptUrl: d.receipt_url,
+        depositorName: d.depositor_name || null,
+        depositorPhone: d.depositor_phone || null,
+        notes: d.notes || null,
+        status: d.status || 'pending',
+        reviewedBy: d.reviewed_by || null,
+        reviewedByName: rev?.full_name || null,
+        reviewedAt: d.reviewed_at || null,
+        rejectionReason: d.rejection_reason || null,
+        ledgerTransactionId: d.ledger_transaction_id || null,
+        createdAt: d.created_at,
+      };
+    });
+
+    const transfers: ExternalAccountTransfer[] = (extXferRes.data || []).map((t: any) => {
+      const fromExt = t.from_external_account_id ? extById.get(String(t.from_external_account_id)) : null;
+      const toExt = t.to_external_account_id ? extById.get(String(t.to_external_account_id)) : null;
+      const fromFin = finById.get(String(t.from_financial_account_id));
+      const toFin = finById.get(String(t.to_financial_account_id));
+      const actor = t.created_by ? profById.get(String(t.created_by)) : null;
+      return {
+        id: t.id,
+        fromExternalAccountId: t.from_external_account_id || null,
+        toExternalAccountId: t.to_external_account_id || null,
+        fromFinancialAccountId: t.from_financial_account_id,
+        toFinancialAccountId: t.to_financial_account_id,
+        fromAccountName:
+          fromExt?.account_name ||
+          (fromFin?.account_code === 'PLATFORM-CASH-VAULT' ? 'الخزينة النقدية الرئيسية (Cash Vault)' : fromFin?.account_code || 'حساب'),
+        fromAccountCode: fromFin?.account_code || '',
+        toAccountName:
+          toExt?.account_name ||
+          (toFin?.account_code === 'PLATFORM-CASH-VAULT' ? 'الخزينة النقدية الرئيسية (Cash Vault)' : toFin?.account_code || 'حساب'),
+        toAccountCode: toFin?.account_code || '',
+        amountUnits: Number(t.amount_units || 0),
+        referenceNumber: t.reference_number || null,
+        reason: t.reason,
+        ledgerTransactionId: t.ledger_transaction_id,
+        createdBy: t.created_by || null,
+        createdByName: actor?.full_name || 'النظام',
+        createdAt: t.created_at,
+      };
+    });
+
+    const reconciliations: ExternalAccountReconciliation[] = (extRecRes.data || []).map((r: any) => {
+      const ext = extById.get(String(r.external_account_id));
+      const actor = r.reconciled_by ? profById.get(String(r.reconciled_by)) : null;
+      return {
+        id: r.id,
+        externalAccountId: r.external_account_id,
+        externalAccountName: ext?.account_name || 'حساب خارجي',
+        accountingBalanceUnits: Number(r.accounting_balance_units || 0),
+        actualBalanceUnits: Number(r.actual_balance_units || 0),
+        discrepancyUnits: Number(r.discrepancy_units || 0),
+        adjustmentTransactionId: r.adjustment_transaction_id || null,
+        adjustmentReason: r.adjustment_reason || null,
+        status: r.status || 'matched',
+        reconciledBy: r.reconciled_by || null,
+        reconciledByName: actor?.full_name || 'النظام',
+        createdAt: r.created_at,
+      };
+    });
+
+    return {
+      externalAccountsReady: true,
+      accounts,
+      deposits,
+      transfers,
+      reconciliations,
+      advertisers,
+      cashVaultAccount,
+      fundSegregation: treasurySummary.fundSegregation,
+    };
+  },
+
+  async createExternalAccount(params: {
+    accountName: string;
+    ownerName: string;
+    ownerRole: ExternalAccountOwnerRole;
+    accountType: ExternalAccountType;
+    providerName: string;
+    accountNumber: string;
+    fundScope: ExternalFundScope;
+    notes?: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const cleanName = String(params.accountName || '').trim();
+    const cleanOwner = String(params.ownerName || '').trim();
+    const cleanProvider = String(params.providerName || '').trim();
+    const cleanNumber = String(params.accountNumber || '').trim();
+    if (!cleanName || !cleanOwner || !cleanProvider || !cleanNumber) {
+      throw new Error('اسم الحساب، صاحب الحساب، اسم البنك/المزود، ورقم الحساب حقول إلزامية.');
+    }
+
+    const rpcClient = getRpcClient(params.authToken);
+    const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('create_external_account', {
+      p_account_name: cleanName,
+      p_owner_name: cleanOwner,
+      p_owner_role: params.ownerRole || 'owner',
+      p_account_type: params.accountType || 'bank',
+      p_provider_name: cleanProvider,
+      p_account_number: cleanNumber,
+      p_fund_scope: params.fundScope || 'mixed',
+      p_notes: params.notes ? String(params.notes).trim() : null,
+      p_actor_id: params.actorId,
+    });
+
+    if (!rpcErr && rpcRes) {
+      return rpcRes;
+    }
+
+    const isMissingRpc =
+      rpcErr?.code === 'PGRST202' ||
+      String(rpcErr?.message || '').toLowerCase().includes('could not find the function');
+    if (rpcErr && !isMissingRpc) {
+      throw new Error(rpcErr.message || 'فشل إنشاء الحساب الخارجي.');
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const extId = crypto.randomUUID();
+    const finId = crypto.randomUUID();
+    const finCode = `EXT-ACC-${extId.replace(/-/g, '').slice(0, 10).toUpperCase()}`;
+    const now = new Date().toISOString();
+
+    const { error: finErr } = await adminClient.from('financial_accounts').insert({
+      id: finId,
+      account_code: finCode,
+      account_type: 'asset',
+      normal_side: 'debit',
+      balance_units: 0,
+      status: 'active',
+      created_at: now,
+    });
+    if (finErr) throw new Error(finErr.message);
+
+    const { error: extErr } = await adminClient.from('external_accounts').insert({
+      id: extId,
+      account_name: cleanName,
+      owner_name: cleanOwner,
+      owner_role: params.ownerRole || 'owner',
+      account_type: params.accountType || 'bank',
+      provider_name: cleanProvider,
+      account_number: cleanNumber,
+      currency: 'YER',
+      fund_scope: params.fundScope || 'mixed',
+      financial_account_id: finId,
+      actual_balance_units: 0,
+      status: 'active',
+      notes: params.notes ? String(params.notes).trim() : null,
+      created_by: params.actorId,
+      created_at: now,
+      updated_at: now,
+    });
+    if (extErr) throw new Error(extErr.message);
+
+    await this.writeFinancialAuditLog({
+      actionType: 'EXTERNAL_ACCOUNT_CREATED',
+      actorId: params.actorId,
+      details: { external_account_id: extId, account_code: finCode, owner_name: cleanOwner, fund_scope: params.fundScope },
+      authToken: params.authToken,
+    });
+
+    return { success: true, id: extId, financialAccountId: finId, accountCode: finCode };
+  },
+
+  async createExternalDeposit(params: {
+    externalAccountId: string;
+    depositPurpose: 'advertiser_wallet' | 'platform_capital';
+    advertiserId?: string | null;
+    amountUnits: number;
+    referenceNumber: string;
+    receiptUrl: string;
+    depositorName?: string;
+    depositorPhone?: string;
+    notes?: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const amountUnits = Math.round(Number(params.amountUnits));
+    if (!Number.isFinite(amountUnits) || amountUnits <= 0) {
+      throw new Error('مبلغ الإيداع يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
+    }
+    const cleanRef = String(params.referenceNumber || '').trim();
+    const normRef = normalizeReceiptReference(cleanRef);
+    if (!normRef || normRef.length < 3) {
+      throw new Error('الرقم المرجعي للإيصال إلزامي ويجب أن يحتوي على 3 خانات على الأقل.');
+    }
+    const safeReceipt = sanitizeDepositReceiptUrl(params.receiptUrl);
+    if (!safeReceipt) {
+      throw new Error('صورة الإيصال مطلوبة وبصيغة صورة آمنة صالحة.');
+    }
+    if (params.depositPurpose === 'advertiser_wallet' && !params.advertiserId) {
+      throw new Error('يجب تحديد المعلن المستفيد عند تسجيل إيداع شحن محفظة معلن.');
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data: extAcc, error: extErr } = await adminClient
+      .from('external_accounts')
+      .select('id, status')
+      .eq('id', params.externalAccountId)
+      .maybeSingle();
+
+    if (extErr) {
+      if (isMissingRelationError(extErr)) {
+        throw new Error('جداول الحسابات الخارجية غير مُنشأة بعد. يرجى تنفيذ Migration 022 في Supabase أولاً.');
+      }
+      throw new Error(extErr.message);
+    }
+    if (!extAcc) throw new Error('الحساب الخارجي المختار غير موجود.');
+    if (extAcc.status !== 'active') throw new Error('الحساب الخارجي المختار مجمد حالياً.');
+
+    // Block duplicate active or previously approved receipt reference numbers
+    const { data: dupRow } = await adminClient
+      .from('external_deposits')
+      .select('id, status, reference_number')
+      .eq('reference_number_normalized', normRef)
+      .neq('status', 'rejected')
+      .maybeSingle();
+
+    if (dupRow?.id) {
+      throw new Error(
+        `الرقم المرجعي (${cleanRef}) مستخدم مسبقاً في إيصال آخر بحالة (${
+          dupRow.status === 'approved' ? 'معتمد' : 'قيد المراجعة'
+        }) ولا يمكن تكراره.`
+      );
+    }
+
+    if (params.depositPurpose === 'advertiser_wallet' && params.advertiserId) {
+      const { data: advProf } = await adminClient
+        .from('profiles')
+        .select('id, role')
+        .eq('id', params.advertiserId)
+        .maybeSingle();
+      if (!advProf) throw new Error('حساب المعلن المحدد غير موجود.');
+    }
+
+    const depositId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const { error: insErr } = await adminClient.from('external_deposits').insert({
+      id: depositId,
+      external_account_id: params.externalAccountId,
+      deposit_purpose: params.depositPurpose,
+      advertiser_id: params.depositPurpose === 'advertiser_wallet' ? params.advertiserId : null,
+      amount_units: amountUnits,
+      reference_number: cleanRef,
+      reference_number_normalized: normRef,
+      receipt_url: safeReceipt,
+      depositor_name: params.depositorName ? String(params.depositorName).trim() : null,
+      depositor_phone: params.depositorPhone ? String(params.depositorPhone).trim() : null,
+      notes: params.notes ? String(params.notes).trim() : null,
+      status: 'pending',
+      created_by: params.actorId,
+      created_at: now,
+      updated_at: now,
+    });
+
+    if (insErr) {
+      if (String(insErr.code) === '23505') {
+        throw new Error(`الرقم المرجعي (${cleanRef}) مستخدم مسبقاً ولا يمكن تكراره.`);
+      }
+      throw new Error(insErr.message);
+    }
+
+    await this.writeFinancialAuditLog({
+      actionType: 'EXTERNAL_DEPOSIT_RECORDED',
+      actorId: params.actorId,
+      details: {
+        deposit_id: depositId,
+        external_account_id: params.externalAccountId,
+        deposit_purpose: params.depositPurpose,
+        advertiser_id: params.advertiserId || null,
+        amount_units: amountUnits,
+        reference_number: cleanRef,
+      },
+      authToken: params.authToken,
+    });
+
+    return { success: true, depositId, status: 'pending' as const };
+  },
+
+  async approveExternalDeposit(params: {
+    depositId: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const adminClient = getSupabaseAdminClient();
+    const rpcClient = getRpcClient(params.authToken);
+
+    const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('approve_external_deposit', {
+      p_deposit_id: params.depositId,
+      p_actor_id: params.actorId,
+    });
+
+    if (!rpcErr && rpcRes) {
+      return rpcRes;
+    }
+
+    const isMissingRpc =
+      rpcErr?.code === 'PGRST202' ||
+      String(rpcErr?.message || '').toLowerCase().includes('could not find the function');
+    if (rpcErr && !isMissingRpc) {
+      throw new Error(rpcErr.message || 'فشل اعتماد الإيداع الخارجي.');
+    }
+
+    // Fallback atomic approval using post_ledger_transaction (NEVER touches PLATFORM-TREASURY or REVENUE)
+    const { data: dep, error: depErr } = await adminClient
+      .from('external_deposits')
+      .select('*')
+      .eq('id', params.depositId)
+      .maybeSingle();
+
+    if (depErr) throw new Error(depErr.message);
+    if (!dep) throw new Error('سجل الإيداع غير موجود.');
+
+    if (dep.status === 'approved' && dep.ledger_transaction_id) {
+      return {
+        success: true,
+        idempotent: true,
+        depositId: dep.id,
+        status: 'approved',
+        transactionId: dep.ledger_transaction_id,
+      };
+    }
+
+    if (dep.status !== 'pending') {
+      throw new Error(`لا يمكن اعتماد إيداع حالته الحالية (${dep.status}).`);
+    }
+
+    const { data: dupApproved } = await adminClient
+      .from('external_deposits')
+      .select('id')
+      .eq('reference_number_normalized', dep.reference_number_normalized)
+      .eq('status', 'approved')
+      .neq('id', dep.id)
+      .maybeSingle();
+
+    if (dupApproved?.id) {
+      throw new Error(`الرقم المرجعي (${dep.reference_number}) معتمد مسبقاً لإيصال آخر ولا يمكن اعتماده مرتين.`);
+    }
+
+    const { data: extAcc } = await adminClient
+      .from('external_accounts')
+      .select('id, account_name, financial_account_id, status')
+      .eq('id', dep.external_account_id)
+      .single();
+
+    if (!extAcc || extAcc.status !== 'active') {
+      throw new Error('الحساب الخارجي غير موجود أو مجمد.');
+    }
+
+    let targetFinId: string;
+    let txType: string;
+    if (dep.deposit_purpose === 'advertiser_wallet') {
+      const { accountRow: advWalletAcc } = await this.ensureUserFinancialAccount(dep.advertiser_id);
+      targetFinId = advWalletAcc.id;
+      txType = 'EXTERNAL_ADVERTISER_DEPOSIT';
+    } else {
+      const { data: capAcc } = await adminClient
+        .from('financial_accounts')
+        .select('id')
+        .eq('account_code', 'OWNER-CAPITAL')
+        .single();
+      if (!capAcc) throw new Error('حساب رأس مال المالك OWNER-CAPITAL غير موجود.');
+      targetFinId = capAcc.id;
+      txType = 'EXTERNAL_CAPITAL_DEPOSIT';
+    }
+
+    const entries = buildExternalDepositApprovalEntries({
+      externalFinAccountId: extAcc.financial_account_id,
+      targetFinAccountId: targetFinId,
+      amountUnits: Number(dep.amount_units),
+      externalAccountName: extAcc.account_name,
+      referenceNumber: dep.reference_number,
+      depositPurpose: dep.deposit_purpose,
+    });
+
+    const idemKey = `EXT-DEP-APPROVE:${dep.id}`;
+    const { data: txId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
+      p_transaction_type: txType,
+      p_idempotency_key: idemKey,
+      p_reference: dep.reference_number,
+      p_metadata: {
+        deposit_id: dep.id,
+        external_account_id: extAcc.id,
+        external_account_name: extAcc.account_name,
+        advertiser_id: dep.advertiser_id,
+        deposit_purpose: dep.deposit_purpose,
+        reference_number: dep.reference_number,
+        receipt_url: dep.receipt_url,
+        accounting_classification:
+          dep.deposit_purpose === 'advertiser_wallet' ? 'ADVERTISER_LIABILITY' : 'OWNER_EQUITY',
+        description:
+          dep.deposit_purpose === 'advertiser_wallet'
+            ? `اعتماد تحصيل وشحن محفظة معلن (التزام للغير) عبر ${extAcc.account_name} - مرجع: ${dep.reference_number}`
+            : `اعتماد إيداع رأسمالي بالحساب الخارجي ${extAcc.account_name} - مرجع: ${dep.reference_number}`,
+      },
+      p_entries: entries,
+    });
+
+    if (postErr) throw new Error(postErr.message);
+
+    const now = new Date().toISOString();
+    await adminClient
+      .from('external_deposits')
+      .update({
+        status: 'approved',
+        reviewed_by: params.actorId,
+        reviewed_at: now,
+        ledger_transaction_id: String(txId),
+        idempotency_key: idemKey,
+        updated_at: now,
+      })
+      .eq('id', dep.id);
+
+    if (dep.deposit_purpose === 'advertiser_wallet' && dep.advertiser_id) {
+      await adminClient
+        .from('notifications')
+        .insert({
+          id: crypto.randomUUID(),
+          user_id: dep.advertiser_id,
+          title: 'تم اعتماد إيداعك وشحن محفظتك',
+          message: `تم التحقق من الإيصال رقم (${dep.reference_number}) وشحن مبلغ ${Number(dep.amount_units).toLocaleString()} ر.ي في محفظتك.`,
+          type: 'WALLET_DEPOSIT_APPROVED',
+          link: '/advertiser',
+          created_at: now,
+        })
+        .then(() => {}, () => {});
+    }
+
+    await this.writeFinancialAuditLog({
+      actionType: txType,
+      actorId: params.actorId,
+      transactionId: String(txId),
+      details: {
+        deposit_id: dep.id,
+        external_account_id: extAcc.id,
+        advertiser_id: dep.advertiser_id,
+        amount_units: Number(dep.amount_units),
+        reference_number: dep.reference_number,
+      },
+      authToken: params.authToken,
+    });
+
+    return {
+      success: true,
+      idempotent: false,
+      depositId: dep.id,
+      status: 'approved',
+      transactionId: String(txId),
+    };
+  },
+
+  async rejectExternalDeposit(params: {
+    depositId: string;
+    reason: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const cleanReason = String(params.reason || '').trim();
+    if (!cleanReason) {
+      throw new Error('يجب إدخال سبب رفض الإيصال.');
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data: dep, error: depErr } = await adminClient
+      .from('external_deposits')
+      .select('id, status, reference_number, advertiser_id, amount_units')
+      .eq('id', params.depositId)
+      .maybeSingle();
+
+    if (depErr) throw new Error(depErr.message);
+    if (!dep) throw new Error('سجل الإيداع غير موجود.');
+    if (dep.status !== 'pending') {
+      throw new Error(`لا يمكن رفض إيداع حالته الحالية (${dep.status}).`);
+    }
+
+    const now = new Date().toISOString();
+    const { error: updErr } = await adminClient
+      .from('external_deposits')
+      .update({
+        status: 'rejected',
+        rejection_reason: cleanReason,
+        reviewed_by: params.actorId,
+        reviewed_at: now,
+        updated_at: now,
+      })
+      .eq('id', dep.id)
+      .eq('status', 'pending');
+
+    if (updErr) throw new Error(updErr.message);
+
+    await this.writeFinancialAuditLog({
+      actionType: 'EXTERNAL_DEPOSIT_REJECTED',
+      actorId: params.actorId,
+      details: {
+        deposit_id: dep.id,
+        reference_number: dep.reference_number,
+        amount_units: dep.amount_units,
+        reason: cleanReason,
+      },
+      authToken: params.authToken,
+    });
+
+    return { success: true, depositId: dep.id, status: 'rejected' as const };
+  },
+
+  async transferBetweenExternalAccounts(params: {
+    fromFinancialAccountId: string;
+    toFinancialAccountId: string;
+    amountUnits: number;
+    reason: string;
+    referenceNumber?: string;
+    idempotencyKey?: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const amountUnits = Math.round(Number(params.amountUnits));
+    const cleanReason = String(params.reason || '').trim();
+    if (!Number.isFinite(amountUnits) || amountUnits <= 0) {
+      throw new Error('مبلغ التحويل الداخلي يجب أن يكون عدداً صحيحاً موجباً.');
+    }
+    if (!cleanReason) {
+      throw new Error('سبب التحويل الداخلي مطلوب.');
+    }
+    if (!params.fromFinancialAccountId || !params.toFinancialAccountId || params.fromFinancialAccountId === params.toFinancialAccountId) {
+      throw new Error('يجب اختيار حسابين مختلفين للتحويل الداخلي.');
+    }
+
+    const rpcClient = getRpcClient(params.authToken);
+    const cleanKey = params.idempotencyKey?.trim() || `INT-XFER:${crypto.randomUUID()}`;
+    const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('execute_internal_account_transfer', {
+      p_from_financial_account_id: params.fromFinancialAccountId,
+      p_to_financial_account_id: params.toFinancialAccountId,
+      p_amount_units: amountUnits,
+      p_reason: cleanReason,
+      p_reference_number: params.referenceNumber ? String(params.referenceNumber).trim() : null,
+      p_idempotency_key: cleanKey,
+      p_actor_id: params.actorId,
+    });
+
+    if (!rpcErr && rpcRes) {
+      return rpcRes;
+    }
+
+    const isMissingRpc =
+      rpcErr?.code === 'PGRST202' ||
+      String(rpcErr?.message || '').toLowerCase().includes('could not find the function');
+    if (rpcErr && !isMissingRpc) {
+      throw new Error(rpcErr.message || 'فشل تنفيذ التحويل الداخلي.');
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data: accs } = await adminClient
+      .from('financial_accounts')
+      .select('id, account_code, account_type, balance_units')
+      .in('id', [params.fromFinancialAccountId, params.toFinancialAccountId]);
+
+    const fromAcc = (accs || []).find((a: any) => a.id === params.fromFinancialAccountId);
+    const toAcc = (accs || []).find((a: any) => a.id === params.toFinancialAccountId);
+    if (!fromAcc || !toAcc) throw new Error('أحد حسابي التحويل الداخلي غير موجود.');
+    if (String(fromAcc.account_type).toLowerCase() !== 'asset' || String(toAcc.account_type).toLowerCase() !== 'asset') {
+      throw new Error('التحويل الداخلي مسموح فقط بين حسابات الأصول النقدية والحسابات الخارجية.');
+    }
+    if (Number(fromAcc.balance_units || 0) < amountUnits) {
+      throw new Error(`رصيد الحساب المصدر (${fromAcc.account_code}) غير كافٍ للتحويل.`);
+    }
+
+    const entries = buildInternalAccountTransferEntries({
+      fromFinAccountId: fromAcc.id,
+      toFinAccountId: toAcc.id,
+      fromAccountCode: fromAcc.account_code,
+      toAccountCode: toAcc.account_code,
+      amountUnits,
+      reason: cleanReason,
+    });
+
+    const { data: txId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
+      p_transaction_type: 'INTERNAL_ACCOUNT_TRANSFER',
+      p_idempotency_key: cleanKey,
+      p_reference: params.referenceNumber ? String(params.referenceNumber).trim() : 'INT-TRANSFER',
+      p_metadata: {
+        from_account_code: fromAcc.account_code,
+        to_account_code: toAcc.account_code,
+        amount_units: amountUnits,
+        reason: cleanReason,
+        description: `تحويل داخلي بين حسابات المنصة: من ${fromAcc.account_code} إلى ${toAcc.account_code} — ${cleanReason}`,
+      },
+      p_entries: entries,
+    });
+    if (postErr) throw new Error(postErr.message);
+
+    const [{ data: fromExt }, { data: toExt }] = await Promise.all([
+      adminClient.from('external_accounts').select('id').eq('financial_account_id', fromAcc.id).maybeSingle(),
+      adminClient.from('external_accounts').select('id').eq('financial_account_id', toAcc.id).maybeSingle(),
+    ]);
+
+    const transferId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    await adminClient.from('external_account_transfers').insert({
+      id: transferId,
+      from_external_account_id: fromExt?.id || null,
+      to_external_account_id: toExt?.id || null,
+      from_financial_account_id: fromAcc.id,
+      to_financial_account_id: toAcc.id,
+      amount_units: amountUnits,
+      reference_number: params.referenceNumber ? String(params.referenceNumber).trim() : null,
+      reason: cleanReason,
+      ledger_transaction_id: String(txId),
+      idempotency_key: cleanKey,
+      created_by: params.actorId,
+      created_at: now,
+    });
+
+    await this.writeFinancialAuditLog({
+      actionType: 'INTERNAL_ACCOUNT_TRANSFER',
+      actorId: params.actorId,
+      transactionId: String(txId),
+      details: { transfer_id: transferId, from: fromAcc.account_code, to: toAcc.account_code, amount_units: amountUnits, reason: cleanReason },
+      authToken: params.authToken,
+    });
+
+    return { success: true, idempotent: false, transferId, transactionId: String(txId) };
+  },
+
+  async reconcileExternalAccount(params: {
+    externalAccountId: string;
+    actualBalanceUnits: number;
+    applyAdjustment: boolean;
+    adjustmentReason?: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const actualUnits = Math.round(Number(params.actualBalanceUnits));
+    if (!Number.isFinite(actualUnits) || actualUnits < 0) {
+      throw new Error('الرصيد الفعلي يجب أن يكون عدداً صحيحاً غير سالب.');
+    }
+
+    const rpcClient = getRpcClient(params.authToken);
+    const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('reconcile_external_account', {
+      p_external_account_id: params.externalAccountId,
+      p_actual_balance_units: actualUnits,
+      p_apply_adjustment: Boolean(params.applyAdjustment),
+      p_adjustment_reason: params.adjustmentReason ? String(params.adjustmentReason).trim() : null,
+      p_actor_id: params.actorId,
+    });
+
+    if (!rpcErr && rpcRes) {
+      return rpcRes;
+    }
+
+    const isMissingRpc =
+      rpcErr?.code === 'PGRST202' ||
+      String(rpcErr?.message || '').toLowerCase().includes('could not find the function');
+    if (rpcErr && !isMissingRpc) {
+      throw new Error(rpcErr.message || 'فشل تنفيذ مطابقة الحساب الخارجي.');
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data: extAcc } = await adminClient
+      .from('external_accounts')
+      .select('*')
+      .eq('id', params.externalAccountId)
+      .maybeSingle();
+    if (!extAcc) throw new Error('الحساب الخارجي غير موجود.');
+
+    const { data: finAcc } = await adminClient
+      .from('financial_accounts')
+      .select('id, account_code, balance_units')
+      .eq('id', extAcc.financial_account_id)
+      .single();
+
+    const accounting = Number(finAcc?.balance_units || 0);
+    const diff = actualUnits - accounting;
+    const recId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    let status: 'matched' | 'discrepancy' | 'adjusted' = diff === 0 ? 'matched' : 'discrepancy';
+    let txId: string | null = null;
+
+    if (diff !== 0 && params.applyAdjustment) {
+      const cleanReason = String(params.adjustmentReason || '').trim();
+      if (!cleanReason) {
+        throw new Error('يجب كتابة سبب التسوية المحاسبية عند تطبيق تسوية الفارق.');
+      }
+      const contraCode =
+        diff > 0
+          ? extAcc.fund_scope === 'platform'
+            ? 'OWNER-CAPITAL'
+            : 'PLATFORM-EXPENSE-CLEARING'
+          : 'PLATFORM-EXPENSES';
+      const { data: contraAcc } = await adminClient
+        .from('financial_accounts')
+        .select('id')
+        .eq('account_code', contraCode)
+        .single();
+      if (!contraAcc) throw new Error(`حساب التسوية (${contraCode}) غير موجود.`);
+
+      const built = buildReconciliationAdjustmentEntries({
+        externalFinAccountId: finAcc.id,
+        contraFinAccountId: contraAcc.id,
+        accountingBalance: accounting,
+        actualBalance: actualUnits,
+        reason: cleanReason,
+        accountName: extAcc.account_name,
+      });
+
+      const { data: postedTxId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
+        p_transaction_type: 'EXTERNAL_RECONCILIATION_ADJUSTMENT',
+        p_idempotency_key: `EXT-RECON:${recId}`,
+        p_reference: `RECON:${recId}`,
+        p_metadata: {
+          reconciliation_id: recId,
+          external_account_id: extAcc.id,
+          accounting_before: accounting,
+          actual_balance: actualUnits,
+          discrepancy: diff,
+          reason: cleanReason,
+          description: `تسوية مطابقة حساب خارجي (${extAcc.account_name}): ${cleanReason}`,
+        },
+        p_entries: built.entries,
+      });
+      if (postErr) throw new Error(postErr.message);
+      txId = String(postedTxId);
+      status = 'adjusted';
+    }
+
+    await adminClient
+      .from('external_accounts')
+      .update({ actual_balance_units: actualUnits, last_reconciled_at: now, updated_at: now })
+      .eq('id', extAcc.id);
+
+    await adminClient.from('external_account_reconciliations').insert({
+      id: recId,
+      external_account_id: extAcc.id,
+      accounting_balance_units: status === 'adjusted' ? actualUnits : accounting,
+      actual_balance_units: actualUnits,
+      discrepancy_units: diff,
+      adjustment_transaction_id: txId,
+      adjustment_reason: params.adjustmentReason ? String(params.adjustmentReason).trim() : null,
+      status,
+      reconciled_by: params.actorId,
+      created_at: now,
+    });
+
+    await this.writeFinancialAuditLog({
+      actionType: 'EXTERNAL_ACCOUNT_RECONCILED',
+      actorId: params.actorId,
+      transactionId: txId,
+      details: {
+        reconciliation_id: recId,
+        external_account_id: extAcc.id,
+        accounting_balance: accounting,
+        actual_balance: actualUnits,
+        discrepancy_units: diff,
+        status,
+      },
+      authToken: params.authToken,
+    });
+
+    return {
+      success: true,
+      reconciliationId: recId,
+      status,
+      accountingBalanceUnits: status === 'adjusted' ? actualUnits : accounting,
+      actualBalanceUnits: actualUnits,
+      discrepancyUnits: diff,
+      adjustmentTransactionId: txId,
+    };
+  },
 };
+

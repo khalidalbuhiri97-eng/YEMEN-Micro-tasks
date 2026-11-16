@@ -16,12 +16,13 @@ import { DashboardLayout } from './components/dashboard/DashboardLayout.tsx';
 import { TasksView } from './components/dashboard/TasksView.tsx';
 import { WalletView } from './components/dashboard/WalletView.tsx';
 import { AdminDashboard } from './components/admin/AdminDashboard.tsx';
+import { AdvertiserPortal } from './components/advertiser/AdvertiserPortal.tsx';
 import { LegalModal } from './components/public/LegalPages.tsx';
-import { Home, CheckSquare, Wallet, User, Shield } from 'lucide-react';
+import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
   const { user, isAdmin } = useAuth();
-  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'how_it_works' | 'dashboard' | 'admin'>('home');
+  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin'>('home');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   
@@ -39,6 +40,32 @@ function MainApp() {
       localStorage.setItem('kasb_theme', 'light');
     }
   }, [isDark]);
+
+  useEffect(() => {
+    const handleAuthSuccess = (event: Event) => {
+      const loggedUser = (event as CustomEvent)?.detail?.user;
+      if (!loggedUser) return;
+      if (loggedUser.role === 'advertiser') {
+        setCurrentTab('advertiser');
+      } else if (loggedUser.role === 'admin') {
+        setCurrentTab('admin');
+      } else {
+        setCurrentTab('dashboard');
+      }
+    };
+    window.addEventListener('kasb:auth_success', handleAuthSuccess);
+    return () => window.removeEventListener('kasb:auth_success', handleAuthSuccess);
+  }, []);
+
+  useEffect(() => {
+    if (!user && (currentTab === 'advertiser' || currentTab === 'admin' || currentTab === 'dashboard')) {
+      setCurrentTab('home');
+    } else if (user && currentTab === 'advertiser' && user.role !== 'advertiser') {
+      setCurrentTab('dashboard');
+    } else if (user && currentTab === 'admin' && !isAdmin) {
+      setCurrentTab(user.role === 'advertiser' ? 'advertiser' : 'dashboard');
+    }
+  }, [user, isAdmin, currentTab]);
 
   const toggleDark = () => {
     setIsDark((prev) => !prev);
@@ -111,6 +138,12 @@ function MainApp() {
           />
         )}
 
+        {currentTab === 'advertiser' && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <AdvertiserPortal onNavigateWallet={() => setCurrentTab('wallet')} />
+          </div>
+        )}
+
         {currentTab === 'admin' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <AdminDashboard />
@@ -168,6 +201,18 @@ function MainApp() {
           <User className="w-4 h-4" />
           <span>لوحتي</span>
         </button>
+
+        {user?.role === 'advertiser' && (
+          <button
+            onClick={() => setCurrentTab('advertiser')}
+            className={`flex flex-col items-center gap-1 transition-colors ${
+              currentTab === 'advertiser' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'
+            }`}
+          >
+            <Megaphone className="w-4 h-4" />
+            <span>الحملات</span>
+          </button>
+        )}
 
         {isAdmin && (
           <button

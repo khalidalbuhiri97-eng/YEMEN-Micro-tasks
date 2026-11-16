@@ -188,6 +188,8 @@ export const api = {
     request<{ signedUrl: string; token: string; path: string }>('/upload/signed-url', { method: 'POST', body: JSON.stringify(payload) }),
   getViewSignedUrl: (storagePath: string) =>
     request<{ signedUrl: string }>('/storage/signed-url', { method: 'POST', body: JSON.stringify({ storagePath }) }),
+  getPublicAdvertiserLogoUrl: (storagePath: string) =>
+    request<{ signedUrl: string }>('/public/advertiser-logo-url', { method: 'POST', body: JSON.stringify({ storagePath }) }),
   getMySubmissions: () => request<any>('/submissions/my'),
 
   // Wallet & Withdrawals
@@ -332,8 +334,40 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
+  // Advertiser Campaign Funding & Lifecycle (Phase 3 & 4)
+  getAdvertiserLogoUploadUrl: (payload: { fileName: string; contentType: string; fileSize: number }) =>
+    request<{ signedUrl: string; token: string; path: string }>('/advertiser/logo/signed-url', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getAdvertiserCampaigns: () =>
+    request<{ campaigns: any[]; feePercentage: number; walletBalance: number; accountStatus: string }>('/advertiser/campaigns'),
+  createAdvertiserCampaign: (payload: {
+    title: string;
+    description: string;
+    category: string;
+    rewardUnits: number;
+    slots: number;
+    timeEstimateMinutes?: number;
+    proofRequirements?: Record<string, any>;
+    hideAdvertiserName?: boolean;
+    advertiserDisplayName?: string;
+    advertiserLogoUrl?: string;
+    deadlineAt?: string | null;
+    creationKey: string;
+  }) => request<any>('/advertiser/campaigns', { method: 'POST', body: JSON.stringify(payload) }),
+  startAdvertiserCampaign: (id: string) =>
+    request<any>(`/advertiser/campaigns/${id}/start`, { method: 'POST' }),
+  settleAdvertiserCampaign: (id: string, payload?: { targetStatus?: 'cancelled' | 'completed'; reason?: string }) =>
+    request<any>(`/advertiser/campaigns/${id}/settle`, { method: 'POST', body: JSON.stringify(payload || {}) }),
+
   // Single Authorized Owner Admin APIs
   getAdminOverview: () => request<any>('/admin/overview'),
+  getAdminCampaigns: () => request<{ campaigns: any[] }>('/admin/campaigns'),
+  startAdminCampaign: (id: string) =>
+    request<any>(`/admin/campaigns/${id}/start`, { method: 'POST' }),
+  settleAdminCampaign: (id: string, payload?: { targetStatus?: 'cancelled' | 'completed'; reason?: string }) =>
+    request<any>(`/admin/campaigns/${id}/settle`, { method: 'POST', body: JSON.stringify(payload || {}) }),
   getAdminTasks: () => request<any>('/admin/tasks'),
   createAdminTask: (payload: any) => request<any>('/admin/tasks', { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminTask: (id: string, payload: any) =>
@@ -375,4 +409,57 @@ export const api = {
   resolveDatabaseError: (id: string, resolutionNote?: string) =>
     request<any>(`/admin/database-errors/${id}/resolve`, { method: 'POST', body: JSON.stringify({ resolutionNote }) }),
   testSupabaseConnection: () => request<any>('/admin/database-errors/test-connection', { method: 'POST' }),
+
+  // Phase 5: External Accounts, Receipt-Backed Deposits, Internal Transfers & Reconciliation
+  getExternalAccountsOverview: () => request<any>('/admin/finance/external-accounts'),
+  createExternalAccount: (payload: {
+    accountName: string;
+    ownerName: string;
+    ownerRole: 'owner' | 'admin' | 'company';
+    accountType: 'bank' | 'exchange' | 'ewallet' | 'cash';
+    providerName: string;
+    accountNumber: string;
+    fundScope: 'platform' | 'advertiser' | 'mixed';
+    notes?: string;
+  }) => request<any>('/admin/finance/external-accounts', { method: 'POST', body: JSON.stringify(payload) }),
+  getExternalDepositReceiptUploadUrl: (payload: { fileName: string; contentType: string; fileSize: number }) =>
+    request<{ signedUrl: string; token: string; path: string }>('/admin/finance/external-deposits/receipt-signed-url', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  createExternalDeposit: (payload: {
+    externalAccountId: string;
+    depositPurpose: 'advertiser_wallet' | 'platform_capital';
+    advertiserId?: string | null;
+    amountUnits: number;
+    referenceNumber: string;
+    receiptUrl: string;
+    depositorName?: string;
+    depositorPhone?: string;
+    notes?: string;
+  }) => request<any>('/admin/finance/external-deposits', { method: 'POST', body: JSON.stringify(payload) }),
+  approveExternalDeposit: (depositId: string) =>
+    request<any>(`/admin/finance/external-deposits/${depositId}/approve`, { method: 'POST' }),
+  rejectExternalDeposit: (depositId: string, reason: string) =>
+    request<any>(`/admin/finance/external-deposits/${depositId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  executeInternalAccountTransfer: (payload: {
+    fromFinancialAccountId: string;
+    toFinancialAccountId: string;
+    amountUnits: number;
+    reason: string;
+    referenceNumber?: string;
+    idempotencyKey?: string;
+  }) => request<any>('/admin/finance/external-transfers', { method: 'POST', body: JSON.stringify(payload) }),
+  reconcileExternalAccount: (
+    externalAccountId: string,
+    payload: { actualBalanceUnits: number; applyAdjustment: boolean; adjustmentReason?: string }
+  ) =>
+    request<any>(`/admin/finance/external-accounts/${externalAccountId}/reconcile`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
+

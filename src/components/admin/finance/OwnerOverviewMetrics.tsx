@@ -217,48 +217,114 @@ export const OwnerOverviewMetrics: React.FC<OwnerOverviewMetricsProps> = ({
         </div>
       </section>
 
-      {/* Section 2: User Liabilities, Task Escrows & Virtual Issued Units (Strict Separation) */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* User Liabilities & Task Escrows */}
-        <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">
+      {/* Section 2: 3-Way Fund Segregation (Platform vs Advertisers vs Workers) */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* 1. Platform Private Funds & External Platform Accounts */}
+        <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-emerald-600" />
+                <span>أموال المنصة الخاصة</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                النقد الفعلي + الحسابات الخارجية للمنصة + الأرباح المحققة.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('external_accounts')}
+              className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline whitespace-nowrap"
+            >
+              الحسابات الخارجية
+            </button>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/70 flex justify-between items-center">
+              <span className="text-slate-500 dark:text-slate-400">الخزينة النقدية + حسابات المنصة</span>
+              <strong className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                {fmtYer(cashVault + (treasury?.externalPlatformBalance ?? 0))} ر.ي
+              </strong>
+            </div>
+            <div className="flex justify-between text-[11px] text-slate-500 px-1 font-mono">
+              <span className="font-sans">صافي حقوق المالك والمنصة:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">
+                {fmtYer(treasury?.fundSegregation?.platformFunds.netOwnerEquity ?? (ownerCapital + netProfitLoss - ownerWithdrawals))} ر.ي
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. Advertiser Liabilities (STRICTLY NOT REVENUE) */}
+        <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
           <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Lock className="w-4 h-4 text-blue-600" />
-                <span>التزامات المستخدمين وضمان المهام (أموال للغير)</span>
+                <span>أموال المعلنين (التزامات)</span>
               </h3>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                لا تُحتسب ضمن أرباح المنصة أو السيولة الحرة للمالك.
+                أمانات وإيداعات المعلنين — لا تُحتسب أرباحاً أو إيرادات للمنصة.
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/70">
-              <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                الالتزامات المستحقة للمستخدمين
-              </span>
-              <div className="text-lg font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-                {fmtYer(userLiabilities)} <span className="text-xs font-normal">ر.ي</span>
-              </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-1">
-                محافظ: {fmtYer(treasury?.userAvailableTotal)} | سحوبات محجوزة: {fmtYer(treasury?.withdrawalReservedTotal)}
-              </div>
+          <div className="space-y-2 text-xs">
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/70 flex justify-between items-center">
+              <span className="text-slate-500 dark:text-slate-400">إجمالي التزامات المعلنين</span>
+              <strong className="font-mono tabular-nums text-blue-600 dark:text-blue-400">
+                {fmtYer(
+                  treasury?.fundSegregation?.advertiserFunds.totalAdvertiserLiabilities ??
+                    ((treasury?.advertiserWalletTotal ?? 0) +
+                      (treasury?.campaignBudgetReserved ?? 0) +
+                      (treasury?.campaignFeeReserved ?? 0))
+                )}{' '}
+                ر.ي
+              </strong>
             </div>
-
-            <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/70">
-              <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                الأموال المحجوزة في ضمان المهام
-              </span>
-              <div className="text-lg font-extrabold font-mono tabular-nums text-blue-600 dark:text-blue-400">
-                {fmtYer(taskEscrowReserved)} <span className="text-xs font-normal">ر.ي</span>
-              </div>
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-1">
-                مكافآت المهام المعتمدة: {fmtYer(stats?.totalApprovedRewards)} ر.ي
-              </div>
+            <div className="flex justify-between text-[11px] text-slate-500 px-1 font-mono">
+              <span className="font-sans">محافظ المعلنين: {fmtYer(treasury?.advertiserWalletTotal)} ر.ي</span>
+              <span>ضمان حملات: {fmtYer((treasury?.campaignBudgetReserved ?? 0) + (treasury?.campaignFeeReserved ?? 0))} ر.ي</span>
             </div>
           </div>
         </div>
+
+        {/* 3. Worker User Liabilities */}
+        <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                <span>أموال المستخدمين المنفذين</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                أرصدة محافظ المستخدمين والسحوبات قيد التحويل.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 text-xs">
+            <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/70 flex justify-between items-center">
+              <span className="text-slate-500 dark:text-slate-400">إجمالي مستحقات المستخدمين</span>
+              <strong className="font-mono tabular-nums text-slate-900 dark:text-white">
+                {fmtYer(
+                  treasury?.fundSegregation?.userFunds.totalUserLiabilities ??
+                    ((treasury?.workerWalletTotal ?? userLiabilities) + taskEscrowReserved)
+                )}{' '}
+                ر.ي
+              </strong>
+            </div>
+            <div className="flex justify-between text-[11px] text-slate-500 px-1 font-mono">
+              <span className="font-sans">محافظ: {fmtYer(treasury?.workerWalletTotal ?? treasury?.userAvailableTotal)}</span>
+              <span>سحوبات/مهام: {fmtYer((treasury?.withdrawalReservedTotal ?? 0) + taskEscrowReserved)}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Virtual Units vs Real Cash Reconciliation */}
+      <section className="grid grid-cols-1 gap-4">
 
         {/* Virtual Units vs Real Cash Reconciliation */}
         <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-4">

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { OverviewView } from './OverviewView.tsx';
 import { TasksView } from './TasksView.tsx';
@@ -7,6 +7,7 @@ import { WalletView } from './WalletView.tsx';
 import { WithdrawView } from './WithdrawView.tsx';
 import { ReferralView } from './ReferralView.tsx';
 import { SupportView } from './SupportView.tsx';
+import { AdvertiserPortal } from '../advertiser/AdvertiserPortal.tsx';
 import {
   LayoutDashboard,
   CheckSquare,
@@ -15,6 +16,7 @@ import {
   Banknote,
   Users,
   HelpCircle,
+  Megaphone,
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -23,21 +25,39 @@ interface DashboardLayoutProps {
 }
 
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
-  initialSubTab = 'overview',
+  initialSubTab,
   onNavigateHome,
 }) => {
   const { user, wallet, openAuthModal } = useAuth();
-  const [subTab, setSubTab] = useState(initialSubTab);
+  const [subTab, setSubTab] = useState(
+    initialSubTab || (user?.role === 'advertiser' ? 'advertiser' : 'overview')
+  );
 
-  const menuItems = [
-    { id: 'overview', label: 'نظرة عامة', icon: LayoutDashboard },
-    { id: 'tasks', label: 'المهام المتاحة', icon: CheckSquare },
-    { id: 'submissions', label: 'إثباتاتي المرفوعة', icon: FileCheck },
-    { id: 'wallet', label: 'المحفظة وسجل الحركات', icon: Wallet },
-    { id: 'withdraw', label: 'سحب الأرباح نقداً', icon: Banknote },
-    { id: 'referrals', label: 'دعوة الأصدقاء والإحالة', icon: Users },
-    { id: 'support', label: 'مركز الدعم والمساعدة', icon: HelpCircle },
-  ];
+  useEffect(() => {
+    if (!initialSubTab && user?.role === 'advertiser' && subTab === 'overview') {
+      setSubTab('advertiser');
+    } else if (!initialSubTab && user?.role !== 'advertiser' && subTab === 'advertiser') {
+      setSubTab('overview');
+    }
+  }, [user?.role, initialSubTab, subTab]);
+
+  const menuItems =
+    user?.role === 'advertiser'
+      ? [
+          { id: 'advertiser', label: 'بوابة الحملات الإعلانية', icon: Megaphone },
+          { id: 'wallet', label: 'محفظة المعلن والحركات', icon: Wallet },
+          { id: 'overview', label: 'نظرة عامة', icon: LayoutDashboard },
+          { id: 'support', label: 'مركز الدعم والمساعدة', icon: HelpCircle },
+        ]
+      : [
+          { id: 'overview', label: 'نظرة عامة', icon: LayoutDashboard },
+          { id: 'tasks', label: 'المهام المتاحة', icon: CheckSquare },
+          { id: 'submissions', label: 'إثباتاتي المرفوعة', icon: FileCheck },
+          { id: 'wallet', label: 'المحفظة وسجل الحركات', icon: Wallet },
+          { id: 'withdraw', label: 'سحب الأرباح نقداً', icon: Banknote },
+          { id: 'referrals', label: 'دعوة الأصدقاء والإحالة', icon: Users },
+          { id: 'support', label: 'مركز الدعم والمساعدة', icon: HelpCircle },
+        ];
 
   if (!user) {
     return (
@@ -100,8 +120,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             </div>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="space-y-1">
+          {/* Navigation Links: responsive compact grid on mobile, vertical stack on lg */}
+          <nav className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-1 gap-1.5 lg:gap-1">
             {menuItems.map((item) => {
               const Icon = item.icon;
               const isActive = subTab === item.id;
@@ -109,7 +129,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
                 <button
                   key={item.id}
                   onClick={() => setSubTab(item.id)}
-                  className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all text-right ${
+                  className={`min-h-[44px] w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold transition-all text-right ${
                     isActive
                       ? 'bg-emerald-600 text-white shadow-sm'
                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -125,6 +145,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
         {/* Main Content Area */}
         <main className="lg:col-span-9 min-h-[500px]">
+          {subTab === 'advertiser' && (
+            <AdvertiserPortal onNavigateWallet={() => setSubTab('wallet')} />
+          )}
           {subTab === 'overview' && (
             <OverviewView onNavigateTab={(tab) => setSubTab(tab)} />
           )}

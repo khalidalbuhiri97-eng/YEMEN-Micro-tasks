@@ -14,8 +14,22 @@ import path from 'node:path';
 import app, { supabaseServer } from './app.js';
 import {
   buildDoubleEntryForOperation,
+  calculateCampaignFundingCosts,
+  checkCampaignBalanceSufficiency,
+  buildCampaignReserveEntries,
+  buildCampaignFeeRecognitionEntries,
+  buildCampaignSettlementRefundEntries,
   computeReferralSummary,
   generateReferralCode,
+  sanitizeAdvertiserLogoUrl,
+  resolvePublicTaskAdvertiserIdentity,
+  normalizeReceiptReference,
+  sanitizeDepositReceiptUrl,
+  buildExternalDepositApprovalEntries,
+  buildInternalAccountTransferEntries,
+  buildReconciliationAdjustmentEntries,
+  computeFundSegregationSummary,
+  withAdvertiserLock,
   MIGRATION_011_CORE_ACCOUNTS,
   supabaseDb,
   type LedgerEntryDraft,
@@ -192,6 +206,38 @@ async function runLiveReadOnlyProbe() {
   assert.ok(liveStatus.create_funded_task.startsWith('LIVE_EXISTS'), 'Live DB must have create_funded_task');
   assert.ok(liveStatus.review_task_submission.startsWith('LIVE_EXISTS'), 'Live DB must have review_task_submission');
   assert.ok(liveStatus.transfer_wallet_units.startsWith('LIVE_EXISTS'), 'Live DB must have transfer_wallet_units');
+
+  // Read-only probe for Phase 2-5 tables & RPCs (Migrations 019-022) - strictly zero mutations
+  const phase25Rpcs = [
+    ['create_funded_campaign', { p_title: 'X', p_description: 'X', p_category: 'app_testing', p_reward_units: 1, p_slots: 1, p_creation_key: 'X' }],
+    ['start_advertiser_campaign', { p_campaign_id: '00000000-0000-0000-0000-000000000000' }],
+    ['settle_advertiser_campaign', { p_campaign_id: '00000000-0000-0000-0000-000000000000', p_target_status: 'cancelled' }],
+    ['create_external_account', { p_account_name: 'X', p_owner_name: 'X', p_owner_role: 'owner', p_account_type: 'bank', p_fund_scope: 'advertiser' }],
+    ['approve_external_deposit', { p_deposit_id: '00000000-0000-0000-0000-000000000000' }],
+    ['execute_internal_account_transfer', { p_from_external_account_id: '00000000-0000-0000-0000-000000000000', p_to_fin_account_id: '00000000-0000-0000-0000-000000000000', p_amount_units: 1, p_reason: 'X', p_idempotency_key: 'X' }],
+    ['reconcile_external_account', { p_external_account_id: '00000000-0000-0000-0000-000000000000', p_actual_balance_units: 0, p_reason: 'X' }],
+  ] as const;
+
+  for (const [fn, args] of phase25Rpcs) {
+    const res = await supabaseServer.rpc(fn, args as any);
+    const code = res.error?.code || 'OK';
+    const status = code === 'PGRST202' ? 'PENDING_MIGRATION_020_022' : `LIVE_EXISTS (${code})`;
+    console.log(`  - Phase2-5 RPC ${fn}: ${status}`);
+  }
+
+  const phaseTables: Array<[string, string, string]> = [
+    ['profiles', 'company_name', 'Migration 019'],
+    ['campaigns', 'id, fee_percentage', 'Migration 020'],
+    ['campaigns', 'hide_advertiser_name', 'Migration 021'],
+    ['external_accounts', 'id', 'Migration 022'],
+    ['external_deposits', 'id, reference_number_normalized', 'Migration 022'],
+  ];
+  for (const [tbl, cols, label] of phaseTables) {
+    const res = await supabaseServer.from(tbl).select(cols, { head: true, count: 'exact' });
+    const code = res.error?.code || 'OK';
+    const missing = code === '42P01' || code === 'PGRST205' || code === '42703';
+    console.log(`  - ${label} (${tbl}.${cols}): ${missing ? `PENDING (${code})` : `LIVE_EXISTS (${code})`}`);
+  }
 }
 
 async function runHttpRouteAuthAndReferralIntegrationTests() {
@@ -226,6 +272,21 @@ async function runHttpRouteAuthAndReferralIntegrationTests() {
       ['POST', '/api/admin/finance/reverse'],
       ['POST', '/api/admin/tasks/00000000-0000-0000-0000-000000000000/release-escrow'],
       ['POST', '/api/admin/withdrawals/00000000-0000-0000-0000-000000000000/review'],
+      ['GET', '/api/advertiser/campaigns'],
+      ['POST', '/api/advertiser/campaigns'],
+      ['POST', '/api/advertiser/campaigns/00000000-0000-0000-0000-000000000000/start'],
+      ['POST', '/api/advertiser/campaigns/00000000-0000-0000-0000-000000000000/settle'],
+      ['GET', '/api/admin/campaigns'],
+      ['POST', '/api/admin/campaigns/00000000-0000-0000-0000-000000000000/start'],
+      ['POST', '/api/admin/campaigns/00000000-0000-0000-0000-000000000000/settle'],
+      ['GET', '/api/admin/finance/external-accounts'],
+      ['POST', '/api/admin/finance/external-accounts'],
+      ['POST', '/api/admin/finance/external-deposits/receipt-signed-url'],
+      ['POST', '/api/admin/finance/external-deposits'],
+      ['POST', '/api/admin/finance/external-deposits/00000000-0000-0000-0000-000000000000/approve'],
+      ['POST', '/api/admin/finance/external-deposits/00000000-0000-0000-0000-000000000000/reject'],
+      ['POST', '/api/admin/finance/external-transfers'],
+      ['POST', '/api/admin/finance/external-accounts/00000000-0000-0000-0000-000000000000/reconcile'],
     ];
 
     for (const [method, routePath] of protectedEndpoints) {
@@ -775,12 +836,1010 @@ function runMigration013And014SecurityAuditTests() {
 }
 
 async function runReadOnlyServerReferralProbe() {
-  console.log('\n[8/8] Server Settings & Referral Resolver Read-Only Integrity Check...');
+  console.log('\n[8/9] Server Settings & Referral Resolver Read-Only Integrity Check...');
   const settings = await supabaseDb.getSettings();
   assert.strictEqual(settings.referralBonus, 30, `Live/fallback referralBonus must be 30, got ${settings.referralBonus}`);
+  assert.strictEqual(
+    settings.advertiserCampaignFeePercentage,
+    20,
+    `Default advertiserCampaignFeePercentage must be 20, got ${settings.advertiserCampaignFeePercentage}`
+  );
   const missingCode = await supabaseDb.resolveReferralCode('DEFINITELY-DOES-NOT-EXIST-999999');
   assert.strictEqual(missingCode, null, 'Nonexistent referral code must resolve to null');
-  console.log(`  - Verified supabaseDb.getSettings().referralBonus === 30 & invalid referral resolution === null.`);
+  console.log(`  - Verified referralBonus === 30, advertiserCampaignFeePercentage === 20 & invalid referral === null.`);
+}
+
+function runPhase3CampaignFundingAndAccountingTests() {
+  console.log('\n[9/9] Phase 3 Advertiser Campaign Funding, Fee Escrow & Double-Entry Verification...');
+
+  // 1. Exact formula verification: 100 tasks × 100 YER = 10,000 budget + 20% = 2,000 fee = 12,000 total
+  const calc = calculateCampaignFundingCosts({ rewardUnits: 100, slots: 100, feePercentage: 20 });
+  assert.strictEqual(calc.budgetUnits, 10000);
+  assert.strictEqual(calc.feeUnits, 2000);
+  assert.strictEqual(calc.totalUnits, 12000);
+
+  // 2. Balance sufficiency & deficit verification
+  const shortCheck = checkCampaignBalanceSufficiency(8500, calc.totalUnits);
+  assert.strictEqual(shortCheck.sufficient, false);
+  assert.strictEqual(shortCheck.deficitUnits, 3500);
+  const okCheck = checkCampaignBalanceSufficiency(12000, calc.totalUnits);
+  assert.strictEqual(okCheck.sufficient, true);
+  assert.strictEqual(okCheck.deficitUnits, 0);
+
+  // 3. Closed-loop double-entry simulation (Campaign A: started & partially completed & settled; Campaign B: cancelled before start)
+  const v = new LedgerConsistencyVerifier();
+  const ids = v.accountIdsMap();
+  v.post('TREASURY_ISSUANCE', 'ISS-CAMP-1', [
+    { account_id: ids['VIRTUAL-ISSUANCE-CONTROL'], side: 'debit', amount_units: 50000, memo: 'Initial supply' },
+    { account_id: ids['PLATFORM-TREASURY'], side: 'credit', amount_units: 50000, memo: 'Treasury funded' },
+  ]);
+
+  const advWallet = v.createAccount('WALLET-ADV-1', 'wallet', 'credit');
+  const workerWallet = v.createAccount('WALLET-WORKER-1', 'wallet', 'credit');
+  // Top up advertiser wallet 15,000 YER with ZERO deposit fee
+  v.post('ADMIN_ADJUSTMENT', 'TOPUP-ADV-1', [
+    { account_id: ids['PLATFORM-TREASURY'], side: 'debit', amount_units: 15000, memo: 'Zero-fee advertiser top-up' },
+    { account_id: advWallet.id, side: 'credit', amount_units: 15000, memo: 'Advertiser wallet credit (0% top-up fee)' },
+  ]);
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 0, 'Top-up must NOT charge any deposit fee');
+
+  // Campaign A creation: 100 * 100 = 10,000 budget + 2,000 fee = 12,000 reserved
+  const campABudgetEscrow = v.createAccount('CAMPAIGN-ESCROW-A', 'escrow', 'credit');
+  const campAFeeEscrow = v.createAccount('CAMPAIGN-FEE-ESCROW-A', 'escrow', 'credit');
+  v.post(
+    'CAMPAIGN_FUNDING_RESERVE',
+    'CAMP-RESERVE-A',
+    buildCampaignReserveEntries({
+      title: 'حملة أ',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: campABudgetEscrow.id,
+      feeEscrowAccountId: campAFeeEscrow.id,
+      budgetUnits: calc.budgetUnits,
+      feeUnits: calc.feeUnits,
+      feePercentage: 20,
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 3000, 'Advertiser balance after Campaign A reserve must be 3,000');
+  assert.strictEqual(v.bal(campABudgetEscrow.code), 10000);
+  assert.strictEqual(v.bal(campAFeeEscrow.code), 2000);
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 0, 'CRITICAL: Platform fee MUST NOT be recognized before campaign starts');
+
+  // Concurrent second campaign attempt for another 12,000 must fail (balance is only 3,000 -> prevents double-spend)
+  assert.throws(() => {
+    const campBBudgetEscrow = v.createAccount('CAMPAIGN-ESCROW-B-FAIL', 'escrow', 'credit');
+    const campBFeeEscrow = v.createAccount('CAMPAIGN-FEE-ESCROW-B-FAIL', 'escrow', 'credit');
+    v.post(
+      'CAMPAIGN_FUNDING_RESERVE',
+      'CAMP-RESERVE-B-FAIL',
+      buildCampaignReserveEntries({
+        title: 'حملة مزدوجة مرفوضة',
+        walletAccountId: advWallet.id,
+        budgetEscrowAccountId: campBBudgetEscrow.id,
+        feeEscrowAccountId: campBFeeEscrow.id,
+        budgetUnits: 10000,
+        feeUnits: 2000,
+        feePercentage: 20,
+      })
+    );
+  }, /Negative balance prevented/);
+  assert.strictEqual(v.bal(advWallet.code), 3000);
+
+  // Campaign A starts -> moves held fee into PLATFORM-REVENUE-ADS ONCE ONLY
+  const feeRecEntries = buildCampaignFeeRecognitionEntries({
+    title: 'حملة أ',
+    feeEscrowAccountId: campAFeeEscrow.id,
+    adsRevenueAccountId: ids['PLATFORM-REVENUE-ADS'],
+    feeUnits: 2000,
+  });
+  const firstStart = v.post('AD_REVENUE', 'CAMPAIGN-FEE-REVENUE:A', feeRecEntries);
+  const dupStart = v.post('AD_REVENUE', 'CAMPAIGN-FEE-REVENUE:A', feeRecEntries);
+  assert.strictEqual(firstStart.idempotent, false);
+  assert.strictEqual(dupStart.idempotent, true);
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 2000, 'Fee recognized into PLATFORM-REVENUE-ADS strictly once');
+  assert.strictEqual(v.bal(campAFeeEscrow.code), 0);
+
+  // Worker completes 40 tasks (40 * 100 = 4,000 paid from Campaign A escrow, commission_units = 0)
+  v.post('TASK_REWARD_PAYOUT', 'PAY-CAMP-A-40', [
+    { account_id: campABudgetEscrow.id, side: 'debit', amount_units: 4000, memo: '40 approved submissions' },
+    { account_id: workerWallet.id, side: 'credit', amount_units: 4000, memo: 'Worker earnings from campaign' },
+  ]);
+  assert.strictEqual(v.bal(campABudgetEscrow.code), 6000);
+  assert.strictEqual(v.bal(workerWallet.code), 4000);
+
+  // Settle/Cancel Campaign A -> returns unused 6,000 budget (started fee stays with platform)
+  v.post(
+    'CAMPAIGN_ESCROW_REFUND',
+    'CAMPAIGN-REFUND:A',
+    buildCampaignSettlementRefundEntries({
+      title: 'حملة أ',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: campABudgetEscrow.id,
+      feeEscrowAccountId: campAFeeEscrow.id,
+      refundBudgetUnits: 6000,
+      refundFeeUnits: 0,
+    })
+  );
+  assert.strictEqual(v.bal(campABudgetEscrow.code), 0);
+  assert.strictEqual(v.bal(advWallet.code), 9000);
+
+  // Campaign C (fee snapshot 10%, 100 * 10 = 1,000 budget + 100 fee = 1,100) cancelled BEFORE starting -> refunds BOTH budget + fee!
+  const calcC = calculateCampaignFundingCosts({ rewardUnits: 100, slots: 10, feePercentage: 10 });
+  assert.strictEqual(calcC.totalUnits, 1100);
+  const campCBudgetEscrow = v.createAccount('CAMPAIGN-ESCROW-C', 'escrow', 'credit');
+  const campCFeeEscrow = v.createAccount('CAMPAIGN-FEE-ESCROW-C', 'escrow', 'credit');
+  v.post(
+    'CAMPAIGN_FUNDING_RESERVE',
+    'CAMP-RESERVE-C',
+    buildCampaignReserveEntries({
+      title: 'حملة ج غير مبدوءة',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: campCBudgetEscrow.id,
+      feeEscrowAccountId: campCFeeEscrow.id,
+      budgetUnits: calcC.budgetUnits,
+      feeUnits: calcC.feeUnits,
+      feePercentage: 10,
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 7900);
+  v.post(
+    'CAMPAIGN_ESCROW_REFUND',
+    'CAMPAIGN-REFUND:C',
+    buildCampaignSettlementRefundEntries({
+      title: 'حملة ج غير مبدوءة',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: campCBudgetEscrow.id,
+      feeEscrowAccountId: campCFeeEscrow.id,
+      refundBudgetUnits: 1000,
+      refundFeeUnits: 100,
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 9000, 'Cancelling unstarted campaign refunds BOTH budget and reserved fee');
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 2000, 'Historical fee snapshot & revenue untouched by unstarted cancellation');
+
+  // Assert closed-loop accounting integrity including PLATFORM-REVENUE-ADS from supply loop
+  v.assertReconciled(
+    [campABudgetEscrow.code, campAFeeEscrow.code, campCBudgetEscrow.code, campCFeeEscrow.code],
+    [advWallet.code, workerWallet.code],
+    v.bal('PLATFORM-REVENUE-ADS')
+  );
+
+  // 4. Audit Migration 020 SQL invariants
+  const sql020 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/020_advertiser_campaigns_and_fee_escrow.sql'),
+    'utf8'
+  );
+  assert.ok(sql020.includes('CREATE TABLE IF NOT EXISTS public.campaigns'), 'Migration 020 must define campaigns');
+  assert.ok(sql020.includes('fee_percentage NUMERIC(5,2) NOT NULL'), 'Migration 020 must snapshot fee_percentage');
+  assert.ok(sql020.includes('PLATFORM-REVENUE-ADS'), 'Migration 020 must route recognized fee to PLATFORM-REVENUE-ADS');
+  assert.ok(sql020.includes('pg_advisory_xact_lock'), 'Migration 020 must use advisory locks');
+  assert.ok(sql020.includes('FOR UPDATE'), 'Migration 020 must use row-level locking');
+  assert.ok(!sql020.includes('create_funded_task'), 'Migration 020 must NOT invoke admin treasury create_funded_task');
+
+  console.log('  - Verified Phase 3 calculator, deficit checks, deferred fee escrow, once-only revenue recognition, refunds & Migration 020 SQL invariants.');
+}
+
+function runPhase4AdvertiserIdentityAndUiTests() {
+  console.log('\n[10/10] Phase 4 Advertiser Identity Privacy, Fee Inclusions & Migration 021 Audit...');
+
+  // 1. sanitizeAdvertiserLogoUrl checks
+  assert.strictEqual(
+    sanitizeAdvertiserLogoUrl('https://cdn.example.com/logo.png'),
+    'https://cdn.example.com/logo.png'
+  );
+  assert.strictEqual(
+    sanitizeAdvertiserLogoUrl('advertiser-logos/user-1/logo.webp'),
+    'advertiser-logos/user-1/logo.webp'
+  );
+  assert.ok(
+    sanitizeAdvertiserLogoUrl('data:image/png;base64,iVBORw0KGgo='),
+    'Raster PNG base64 logo must be allowed'
+  );
+  assert.strictEqual(
+    sanitizeAdvertiserLogoUrl('data:image/svg+xml;base64,PHN2Zz4='),
+    undefined,
+    'SVG data URLs must be rejected for XSS safety'
+  );
+  assert.strictEqual(
+    sanitizeAdvertiserLogoUrl('javascript:alert(1)'),
+    undefined,
+    'javascript: URLs must be rejected'
+  );
+  assert.strictEqual(
+    sanitizeAdvertiserLogoUrl('advertiser-logos/../secret/file.png'),
+    undefined,
+    'Path traversal must be rejected'
+  );
+
+  // 2. resolvePublicTaskAdvertiserIdentity: hidden identity masked to workers, preserved for admin
+  const hiddenCampaignTask = {
+    campaign_id: '11111111-1111-1111-1111-111111111111',
+    created_by: 'adv-secret-uuid',
+    hide_advertiser_name: true,
+    advertiser_display_name: 'شركة النور السرية',
+    advertiser_logo_url: 'https://cdn.example.com/secret-logo.png',
+  };
+
+  const workerMasked = resolvePublicTaskAdvertiserIdentity(hiddenCampaignTask, { maskHiddenIdentity: true });
+  assert.strictEqual(workerMasked.isExternalCampaign, true);
+  assert.strictEqual(workerMasked.hideAdvertiserName, true);
+  assert.strictEqual(workerMasked.advertiserDisplayName, 'معلن عبر يمن تاسك');
+  assert.strictEqual(workerMasked.advertiserLogoUrl, undefined, 'Logo MUST be hidden when hideAdvertiserName=true');
+  assert.strictEqual(workerMasked.exposeCreatedBy, false, 'Real advertiser UUID MUST NOT leak on masked tasks');
+
+  const adminUnmasked = resolvePublicTaskAdvertiserIdentity(hiddenCampaignTask, { maskHiddenIdentity: false });
+  assert.strictEqual(adminUnmasked.isExternalCampaign, true);
+  assert.strictEqual(adminUnmasked.hideAdvertiserName, true);
+  assert.strictEqual(adminUnmasked.advertiserDisplayName, 'شركة النور السرية');
+  assert.strictEqual(adminUnmasked.advertiserLogoUrl, 'https://cdn.example.com/secret-logo.png');
+  assert.strictEqual(adminUnmasked.exposeCreatedBy, true);
+
+  // 3. Visible external campaign via _campaignMeta fallback (pre-021 DB schema support)
+  const visibleCampaignMetaTask = {
+    campaign_id: '22222222-2222-2222-2222-222222222222',
+    created_by: 'adv-public-uuid',
+    proof_requirements: {
+      requireImage: true,
+      requireText: true,
+      _campaignMeta: {
+        isExternalCampaign: true,
+        hideAdvertiserName: false,
+        advertiserDisplayName: 'متجر سبأ الإلكتروني',
+        advertiserLogoUrl: 'advertiser-logos/adv-public-uuid/saba.png',
+      },
+    },
+  };
+  const visibleResolved = resolvePublicTaskAdvertiserIdentity(visibleCampaignMetaTask, { maskHiddenIdentity: true });
+  assert.strictEqual(visibleResolved.isExternalCampaign, true);
+  assert.strictEqual(visibleResolved.hideAdvertiserName, false);
+  assert.strictEqual(visibleResolved.advertiserDisplayName, 'متجر سبأ الإلكتروني');
+  assert.strictEqual(visibleResolved.advertiserLogoUrl, 'advertiser-logos/adv-public-uuid/saba.png');
+
+  // 4. Platform-funded direct task (NOT external campaign)
+  const platformTask = {
+    campaign_id: null,
+    created_by: 'admin-uuid',
+    proof_requirements: { requireImage: true, requireText: true },
+  };
+  const platformResolved = resolvePublicTaskAdvertiserIdentity(platformTask, { maskHiddenIdentity: true });
+  assert.strictEqual(platformResolved.isExternalCampaign, false);
+  assert.strictEqual(platformResolved.hideAdvertiserName, false);
+  assert.strictEqual(platformResolved.advertiserDisplayName, undefined);
+
+  // 5. Verify exact Phase 4 Fee Inclusion heading & 7 points in CampaignServiceFeeDetails.tsx
+  const feeCompSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/components/advertiser/CampaignServiceFeeDetails.tsx'),
+    'utf8'
+  );
+  assert.ok(feeCompSrc.includes('ماذا تشمل رسوم خدمة يمن تاسك؟'), 'Missing exact Phase 4 heading');
+  const requiredPoints = [
+    'مقابل توفير الجمهور المناسب للحملة.',
+    'تشغيل المنصة والبنية التقنية والصيانة والتطوير وأرباح المنصة.',
+    'تدقيق ومراجعة المهمات.',
+    'تتبع المهمات ومراقبة الأداء.',
+    'التحقق من الإنجازات واعتمادها.',
+    'منع التلاعب والتكرار والإنجازات الوهمية.',
+    'حماية ميزانية المعلن ومراقبة تنفيذ الحملة.',
+  ];
+  for (const pt of requiredPoints) {
+    assert.ok(feeCompSrc.includes(pt), `Missing exact Phase 4 fee point: ${pt}`);
+  }
+  assert.ok(
+    feeCompSrc.includes('هذه النقاط توضيحية ضمن رسوم إجمالية واحدة') && feeCompSrc.includes('وليست رسوماً مستقلة.'),
+    'Missing Phase 4 single-fee clarification note'
+  );
+
+  // 6. Verify all 4 required UI surfaces include CampaignServiceFeeDetails or CampaignModals
+  for (const relPath of [
+    'src/components/advertiser/AdvertiserPortal.tsx',
+    'src/components/advertiser/CampaignModals.tsx',
+    'src/components/dashboard/WalletView.tsx',
+    'src/components/admin/finance/LedgerAuditView.tsx',
+  ]) {
+    const content = fs.readFileSync(path.resolve(process.cwd(), relPath), 'utf8');
+    assert.ok(
+      content.includes('CampaignServiceFeeDetails') || content.includes('CampaignLedgerTxModal'),
+      `${relPath} must wire Phase 4 fee details UI`
+    );
+  }
+
+  // 7. Audit Migration 021 SQL invariants
+  const sql021 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/021_campaign_advertiser_identity.sql'),
+    'utf8'
+  );
+  assert.ok(sql021.includes('hide_advertiser_name'), 'Migration 021 must add hide_advertiser_name');
+  assert.ok(sql021.includes('advertiser_display_name'), 'Migration 021 must add advertiser_display_name');
+  assert.ok(sql021.includes('advertiser_logo_url'), 'Migration 021 must add advertiser_logo_url');
+  assert.ok(sql021.includes('is_external_campaign'), 'Migration 021 must add is_external_campaign');
+
+  console.log('  - Verified Phase 4 identity masking, URL/XSS sanitization, exact 7 fee inclusions, all 4 UI surfaces & Migration 021 invariants.');
+}
+
+function runPhase5ExternalAccountsAndSegregationTests() {
+  console.log('\n[11/11] Phase 5 External Accounts, Receipt-Backed Advertiser Custody, Internal Transfers, Reconciliation & Segregation...');
+
+  // 1. Receipt reference normalization & duplicate prevention logic
+  assert.strictEqual(normalizeReceiptReference(' kur-00912 a '), 'KUR00912A');
+  assert.strictEqual(normalizeReceiptReference('KUR00912A'), normalizeReceiptReference('kur - 00912a'));
+  assert.strictEqual(normalizeReceiptReference('   '), '');
+
+  // 2. Receipt image URL / XSS sanitization
+  assert.strictEqual(
+    sanitizeDepositReceiptUrl('external-receipts/admin-1/receipt_1.png'),
+    'external-receipts/admin-1/receipt_1.png'
+  );
+  assert.ok(
+    sanitizeDepositReceiptUrl('data:image/jpeg;base64,/9j/4AAQSkZJRg=='),
+    'Raster JPEG data URL must be allowed'
+  );
+  assert.strictEqual(sanitizeDepositReceiptUrl('data:image/svg+xml;base64,PHN2Zz4='), '', 'SVG receipt must be rejected');
+  assert.strictEqual(sanitizeDepositReceiptUrl('javascript:alert(1)'), '', 'javascript: receipt must be rejected');
+  assert.strictEqual(sanitizeDepositReceiptUrl('external-receipts/../secret.png'), '', 'Path traversal must be rejected');
+
+  // 3. Closed-loop double-entry simulation for external accounts & advertiser liabilities
+  const v = new LedgerConsistencyVerifier();
+  const ids = v.accountIdsMap();
+  v.post('TREASURY_ISSUANCE', 'ISS-EXT-1', [
+    { account_id: ids['VIRTUAL-ISSUANCE-CONTROL'], side: 'debit', amount_units: 10000, memo: 'Initial platform supply' },
+    { account_id: ids['PLATFORM-TREASURY'], side: 'credit', amount_units: 10000, memo: 'Treasury initial funds' },
+  ]);
+  const treasuryBeforeDeposit = v.bal('PLATFORM-TREASURY');
+
+  // Create two external accounts (asset, normal_side=debit) + advertiser & worker wallets
+  const extKuraimi = v.createAccount('EXT-ACC-KURAIMI', 'asset', 'debit');
+  const extJeeb = v.createAccount('EXT-ACC-JEEB', 'asset', 'debit');
+  const advWallet = v.createAccount('WALLET-ADV-EXT', 'wallet', 'credit');
+  const workerWallet = v.createAccount('WALLET-WRK-EXT', 'wallet', 'credit');
+
+  // Approve advertiser deposit (12,000 YER) backed by receipt -> Debit EXT-ACC-KURAIMI, Credit WALLET-ADV-EXT
+  const depositEntries = buildExternalDepositApprovalEntries({
+    externalFinAccountId: extKuraimi.id,
+    targetFinAccountId: advWallet.id,
+    amountUnits: 12000,
+    externalAccountName: 'الكريمي - حساب المالك',
+    referenceNumber: 'KUR-2025-881',
+    depositPurpose: 'advertiser_wallet',
+  });
+  const depPost1 = v.post('EXTERNAL_ADVERTISER_DEPOSIT', 'EXT-DEP:dep-1', depositEntries);
+  const depPostDup = v.post('EXTERNAL_ADVERTISER_DEPOSIT', 'EXT-DEP:dep-1', depositEntries);
+  assert.strictEqual(depPost1.idempotent, false);
+  assert.strictEqual(depPostDup.idempotent, true, 'Duplicate approval idempotency key must NOT double-credit');
+
+  assert.strictEqual(v.bal(extKuraimi.code), 12000, 'External account debit asset must equal 12,000');
+  assert.strictEqual(v.bal(advWallet.code), 12000, 'Advertiser wallet liability must equal 12,000');
+  assert.strictEqual(
+    v.bal('PLATFORM-TREASURY'),
+    treasuryBeforeDeposit,
+    'CRITICAL: Approving external advertiser deposit MUST NOT increase PLATFORM-TREASURY'
+  );
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 0, 'CRITICAL: Advertiser deposit is a LIABILITY, not revenue');
+
+  // Invalid inputs on builders throw cleanly
+  assert.throws(
+    () =>
+      buildExternalDepositApprovalEntries({
+        externalFinAccountId: extKuraimi.id,
+        targetFinAccountId: advWallet.id,
+        amountUnits: 0,
+        externalAccountName: 'x',
+        referenceNumber: 'R1',
+        depositPurpose: 'advertiser_wallet',
+      }),
+    /عدداً صحيحاً موجباً/
+  );
+  assert.throws(
+    () =>
+      buildExternalDepositApprovalEntries({
+        externalFinAccountId: extKuraimi.id,
+        targetFinAccountId: advWallet.id,
+        amountUnits: 500,
+        externalAccountName: 'x',
+        referenceNumber: '   ',
+        depositPurpose: 'advertiser_wallet',
+      }),
+    /الرقم المرجعي/
+  );
+
+  // 4. Internal transfer between owner/admin external accounts (Asset -> Asset)
+  const transferEntries = buildInternalAccountTransferEntries({
+    fromFinAccountId: extKuraimi.id,
+    toFinAccountId: extJeeb.id,
+    fromAccountCode: extKuraimi.code,
+    toAccountCode: extJeeb.code,
+    amountUnits: 5000,
+    reason: 'نقل سيولة مالك من الكريمي إلى محفظة جيب',
+  });
+  v.post('INTERNAL_ACCOUNT_TRANSFER', 'INT-TRF:1', transferEntries);
+  assert.strictEqual(v.bal(extKuraimi.code), 7000);
+  assert.strictEqual(v.bal(extJeeb.code), 5000);
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 0, 'Internal transfer must NOT create revenue');
+  assert.strictEqual(v.bal('PLATFORM-TREASURY'), treasuryBeforeDeposit, 'Internal transfer must NOT alter treasury');
+
+  assert.throws(
+    () =>
+      buildInternalAccountTransferEntries({
+        fromFinAccountId: extKuraimi.id,
+        toFinAccountId: extKuraimi.id,
+        fromAccountCode: extKuraimi.code,
+        toAccountCode: extKuraimi.code,
+        amountUnits: 100,
+        reason: 'نفس الحساب',
+      }),
+    /حسابين مختلفين/
+  );
+
+  // 5. Campaign starts, completes 9 tasks (with 1 unused budget slot remainder) -> revenue recognized & dust refunded
+  const campBudget = v.createAccount('CAMPAIGN-ESCROW-EXT', 'escrow', 'credit');
+  const campFee = v.createAccount('CAMPAIGN-FEE-ESCROW-EXT', 'escrow', 'credit');
+  v.post(
+    'CAMPAIGN_FUNDING_RESERVE',
+    'CAMP-RES-EXT',
+    buildCampaignReserveEntries({
+      title: 'حملة ممولة خارجياً',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: campBudget.id,
+      feeEscrowAccountId: campFee.id,
+      budgetUnits: 10000,
+      feeUnits: 2000,
+      feePercentage: 20,
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 0);
+
+  v.post(
+    'AD_REVENUE',
+    'CAMP-START-EXT',
+    buildCampaignFeeRecognitionEntries({
+      title: 'حملة ممولة خارجياً',
+      feeEscrowAccountId: campFee.id,
+      adsRevenueAccountId: ids['PLATFORM-REVENUE-ADS'],
+      feeUnits: 2000,
+    })
+  );
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 2000);
+
+  // Payout 9 tasks * 1,000 = 9,000 to worker
+  v.post('TASK_REWARD_PAYOUT', 'CAMP-PAY-EXT-9', [
+    { account_id: campBudget.id, side: 'debit', amount_units: 9000, memo: '9 completed submissions' },
+    { account_id: workerWallet.id, side: 'credit', amount_units: 9000, memo: 'Worker earnings' },
+  ]);
+
+  // Auto-complete / settle remaining 1,000 unused budget dust back to advertiser wallet
+  v.post(
+    'CAMPAIGN_ESCROW_REFUND',
+    'CAMP-COMPLETE-DUST-EXT',
+    buildCampaignSettlementRefundEntries({
+      title: 'حملة ممولة خارجياً',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: campBudget.id,
+      feeEscrowAccountId: campFee.id,
+      refundBudgetUnits: 1000,
+      refundFeeUnits: 0,
+    })
+  );
+  assert.strictEqual(v.bal(campBudget.code), 0);
+  assert.strictEqual(v.bal(advWallet.code), 1000);
+  assert.strictEqual(v.bal(workerWallet.code), 9000);
+
+  // Verify ledger reconciliation across the entire system (virtual treasury + external deposits custody = liabilities + revenues)
+  const reconciledLiabilitiesAndRevenues =
+    v.bal('PLATFORM-TREASURY') +
+    v.bal(advWallet.code) +
+    v.bal(workerWallet.code) +
+    v.bal(campBudget.code) +
+    v.bal(campFee.code) +
+    v.bal('PLATFORM-REVENUE-ADS');
+  const totalBacking = v.bal('VIRTUAL-ISSUANCE-CONTROL') + v.bal(extKuraimi.code) + v.bal(extJeeb.code);
+  assert.strictEqual(
+    reconciledLiabilitiesAndRevenues,
+    totalBacking,
+    `Balanced double-entry equation violated: liabilities+rev=${reconciledLiabilitiesAndRevenues} vs virtual+extAssets=${totalBacking}`
+  );
+
+  // 6. Reconciliation adjustment builders (no discrepancy, surplus, shortage)
+  const zeroAdj = buildReconciliationAdjustmentEntries({
+    externalFinAccountId: extKuraimi.id,
+    contraFinAccountId: ids['OWNER-CAPITAL'],
+    accountingBalance: 7000,
+    actualBalance: 7000,
+    reason: 'مطابقة سليمة',
+    accountName: 'الكريمي',
+  });
+  assert.strictEqual(zeroAdj.discrepancy, 0);
+  assert.strictEqual(zeroAdj.entries.length, 0);
+
+  const surplusAdj = buildReconciliationAdjustmentEntries({
+    externalFinAccountId: extKuraimi.id,
+    contraFinAccountId: ids['OWNER-CAPITAL'],
+    accountingBalance: 7000,
+    actualBalance: 7500,
+    reason: 'فارق زيادة مطابقة بنكية',
+    accountName: 'الكريمي',
+  });
+  assert.strictEqual(surplusAdj.discrepancy, 500);
+  v.post('EXTERNAL_RECONCILIATION_ADJUSTMENT', 'REC-SURPLUS-1', surplusAdj.entries);
+  assert.strictEqual(v.bal(extKuraimi.code), 7500);
+
+  const shortageAdj = buildReconciliationAdjustmentEntries({
+    externalFinAccountId: extJeeb.id,
+    contraFinAccountId: ids['PLATFORM-EXPENSES'],
+    accountingBalance: 5000,
+    actualBalance: 4800,
+    reason: 'عمولة تحويل بنكي خصمت خارجياً',
+    accountName: 'جيب',
+  });
+  assert.strictEqual(shortageAdj.discrepancy, -200);
+  v.post('EXTERNAL_RECONCILIATION_ADJUSTMENT', 'REC-SHORTAGE-1', shortageAdj.entries);
+  assert.strictEqual(v.bal(extJeeb.code), 4800);
+  assert.strictEqual(v.bal('PLATFORM-EXPENSES'), 200);
+
+  // 7. Three-way Fund Segregation mathematical consistency
+  const seg = computeFundSegregationSummary({
+    cashVaultTotal: 1000,
+    externalPlatformBalance: 4800,
+    externalAccountsTotal: 12300,
+    externalActualTotal: 12300,
+    activeExternalCount: 2,
+    realizedRevenuesTotal: 2000,
+    operationalExpensesTotal: 200,
+    ownerCapitalTotal: 5000,
+    ownerWithdrawalsTotal: 300,
+    virtualTreasuryAvailable: 10000,
+    advertiserWalletsTotal: 1000,
+    campaignBudgetEscrow: 4000,
+    campaignFeeEscrow: 800,
+    pendingExternalDepositsCount: 1,
+    pendingExternalDepositsAmount: 2500,
+    approvedExternalDepositsTotal: 12000,
+    workerWalletsTotal: 9000,
+    withdrawalReservedTotal: 1500,
+    adminTaskEscrowTotal: 2000,
+  });
+  assert.strictEqual(seg.platformFunds.netOwnerEquity, 5000 + (2000 - 200) - 300);
+  assert.strictEqual(seg.advertiserFunds.totalAdvertiserLiabilities, 1000 + 4000 + 800);
+  assert.strictEqual(seg.userFunds.totalUserLiabilities, 9000 + 1500 + 2000);
+  assert.strictEqual(seg.externalAccountsSummary.totalDiscrepancy, 0);
+
+  // 8. Migration 022 SQL security & structure audit
+  const sql022 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/022_external_accounts_and_advertiser_custody.sql'),
+    'utf8'
+  );
+  assert.ok(sql022.includes('CREATE TABLE IF NOT EXISTS public.external_accounts'), 'Migration 022 must define external_accounts');
+  assert.ok(sql022.includes('CREATE TABLE IF NOT EXISTS public.external_deposits'), 'Migration 022 must define external_deposits');
+  assert.ok(sql022.includes('CREATE TABLE IF NOT EXISTS public.external_account_transfers'), 'Migration 022 must define external_account_transfers');
+  assert.ok(sql022.includes('CREATE TABLE IF NOT EXISTS public.external_account_reconciliations'), 'Migration 022 must define external_account_reconciliations');
+  assert.ok(sql022.includes('idx_external_deposits_unique_active_ref'), 'Migration 022 must enforce unique non-rejected receipt reference');
+  assert.ok(sql022.includes('approve_external_deposit'), 'Migration 022 must define atomic approve_external_deposit RPC');
+  assert.ok(sql022.includes('execute_internal_account_transfer'), 'Migration 022 must define execute_internal_account_transfer RPC');
+  assert.ok(sql022.includes('reconcile_external_account'), 'Migration 022 must define reconcile_external_account RPC');
+  assert.ok(sql022.includes('REVOKE ALL ON public.external_accounts FROM PUBLIC, anon'), 'Migration 022 must revoke anon access');
+  assert.ok(sql022.includes('REVOKE ALL ON public.external_deposits FROM PUBLIC, anon'), 'Migration 022 must revoke anon access on deposits');
+  assert.ok(!sql022.includes('PLATFORM-REVENUE-ADS'), 'Deposit approval RPC in 022 MUST NOT route deposits into revenue');
+
+  console.log('  - Verified Phase 5 receipt deduplication, XSS receipt guard, liability-only custody deposits, internal transfers, reconciliation & 3-way segregation.');
+}
+
+async function runPhase6SecurityAndIntegrationTests() {
+  console.log('\n[12/12] Phase 6 End-to-End Financial & Security Integration Suite (All 17 Scenarios + RBAC + RLS + Auth UI)...');
+
+  // --- PART A: Scenarios 1-12, 15, 16, 17 in Closed-Loop Double-Entry Accounting Simulation ---
+  const v = new LedgerConsistencyVerifier();
+  const ids = v.accountIdsMap();
+
+  // Seed virtual treasury supply (25,000) to also test legacy direct tasks/referrals alongside advertiser external custody
+  v.post('TREASURY_ISSUANCE', 'P6-TREASURY-INIT', [
+    { account_id: ids['VIRTUAL-ISSUANCE-CONTROL'], side: 'debit', amount_units: 25000, memo: 'Initial virtual treasury supply' },
+    { account_id: ids['PLATFORM-TREASURY'], side: 'credit', amount_units: 25000, memo: 'Virtual treasury balance' },
+  ]);
+  const initialTreasury = v.bal('PLATFORM-TREASURY');
+  assert.strictEqual(initialTreasury, 25000);
+
+  const extKuraimi = v.createAccount('EXT-ACC-P6-KURAIMI', 'asset', 'debit');
+  const advWallet = v.createAccount('WALLET-ADV-P6', 'wallet', 'credit');
+  const workerWallet = v.createAccount('WALLET-WRK-P6', 'wallet', 'credit');
+  const referrerWallet = v.createAccount('WALLET-REF-P6', 'wallet', 'credit');
+  const seenNormalizedRefs = new Set<string>();
+
+  // Helper simulating external deposit approval with normalized-ref deduplication
+  const approveExternalDepositSim = (depId: string, rawRef: string, amountUnits: number) => {
+    const norm = normalizeReceiptReference(rawRef);
+    if (!norm) throw new Error('الرقم المرجعي إلزامي.');
+    if (seenNormalizedRefs.has(norm)) {
+      throw new Error(`الرقم المرجعي (${rawRef}) مستخدم ومعتمد مسبقاً.`);
+    }
+    const entries = buildExternalDepositApprovalEntries({
+      externalFinAccountId: extKuraimi.id,
+      targetFinAccountId: advWallet.id,
+      amountUnits,
+      externalAccountName: 'الكريمي - عهدة المعلنين',
+      referenceNumber: rawRef,
+      depositPurpose: 'advertiser_wallet',
+    });
+    const res = v.post('EXTERNAL_ADVERTISER_DEPOSIT', `EXT-DEP:${depId}`, entries);
+    seenNormalizedRefs.add(norm);
+    return res;
+  };
+
+  // Scenario 1 & 16: Advertiser deposits 100,000 YER -> wallet = 100,000, Treasury UNCHANGED (25,000), Revenue = 0
+  approveExternalDepositSim('dep-p6-1', 'KUR-100K-001', 100000);
+  assert.strictEqual(v.bal(advWallet.code), 100000, 'Scenario 1: Advertiser wallet must equal 100,000 YER');
+  assert.strictEqual(v.bal(extKuraimi.code), 100000, 'External custody asset must equal 100,000 YER');
+  assert.strictEqual(v.bal('PLATFORM-TREASURY'), initialTreasury, 'Scenario 16: PLATFORM-TREASURY MUST NOT increase on external wallet top-up');
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 0, 'External advertiser deposit MUST NOT count as revenue');
+
+  // Scenario 12: Duplicate receipt attempt (same normalized ref or same idempotency key) MUST be rejected
+  assert.throws(
+    () => approveExternalDepositSim('dep-p6-2', ' kur 100k - 001 ', 100000),
+    /مستخدم ومعتمد مسبقاً/,
+    'Scenario 12: Duplicate normalized receipt reference must throw'
+  );
+  const dupKeyRes = v.post(
+    'EXTERNAL_ADVERTISER_DEPOSIT',
+    'EXT-DEP:dep-p6-1',
+    buildExternalDepositApprovalEntries({
+      externalFinAccountId: extKuraimi.id,
+      targetFinAccountId: advWallet.id,
+      amountUnits: 100000,
+      externalAccountName: 'الكريمي',
+      referenceNumber: 'KUR-100K-001',
+      depositPurpose: 'advertiser_wallet',
+    })
+  );
+  assert.strictEqual(dupKeyRes.idempotent, true, 'Scenario 12: Idempotency key prevents second credit');
+  assert.strictEqual(v.bal(advWallet.code), 100000, 'Scenario 12: Wallet remains 100,000 after duplicate approval attempt');
+
+  // Scenario 2 & 3: Create campaign budget 10,000 + fee 2,000 (100 * 100 @ 20%) -> remaining = 88,000
+  const camp1Costs = calculateCampaignFundingCosts({ rewardUnits: 100, slots: 100, feePercentage: 20 });
+  assert.strictEqual(camp1Costs.budgetUnits, 10000);
+  assert.strictEqual(camp1Costs.feeUnits, 2000);
+  assert.strictEqual(camp1Costs.totalUnits, 12000);
+
+  const camp1Budget = v.createAccount('CAMP-BUDGET-P6-1', 'escrow', 'credit');
+  const camp1Fee = v.createAccount('CAMP-FEE-P6-1', 'escrow', 'credit');
+  v.post(
+    'CAMPAIGN_FUNDING_RESERVE',
+    'CAMP-RES-P6-1',
+    buildCampaignReserveEntries({
+      title: 'حملة 1 - تجربة تطبيق',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: camp1Budget.id,
+      feeEscrowAccountId: camp1Fee.id,
+      budgetUnits: camp1Costs.budgetUnits,
+      feeUnits: camp1Costs.feeUnits,
+      feePercentage: 20,
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 88000, 'Scenario 3: Remaining advertiser balance must be exactly 88,000 YER');
+  assert.strictEqual(v.bal(camp1Budget.code), 10000);
+  assert.strictEqual(v.bal(camp1Fee.code), 2000);
+
+  // Scenario 4 & 5: Over-budget campaign (96,000 > 88,000) rejected with ZERO partial ledger entries
+  const txCountBeforeOver = v.txById.size;
+  const entryCountBeforeOver = v.allEntries.length;
+  const overCosts = calculateCampaignFundingCosts({ rewardUnits: 800, slots: 100, feePercentage: 20 });
+  assert.strictEqual(overCosts.totalUnits, 96000);
+  const overCheck = checkCampaignBalanceSufficiency(v.bal(advWallet.code), overCosts.totalUnits);
+  assert.strictEqual(overCheck.sufficient, false);
+  assert.strictEqual(overCheck.deficitUnits, 8000);
+
+  const overBudgetEscrow = v.createAccount('CAMP-BUDGET-P6-OVER', 'escrow', 'credit');
+  const overFeeEscrow = v.createAccount('CAMP-FEE-P6-OVER', 'escrow', 'credit');
+  assert.throws(() => {
+    v.post(
+      'CAMPAIGN_FUNDING_RESERVE',
+      'CAMP-RES-P6-OVER',
+      buildCampaignReserveEntries({
+        title: 'حملة تتجاوز الرصيد',
+        walletAccountId: advWallet.id,
+        budgetEscrowAccountId: overBudgetEscrow.id,
+        feeEscrowAccountId: overFeeEscrow.id,
+        budgetUnits: overCosts.budgetUnits,
+        feeUnits: overCosts.feeUnits,
+        feePercentage: 20,
+      })
+    );
+  }, /Negative balance prevented/);
+  assert.strictEqual(v.bal(advWallet.code), 88000, 'Scenario 5: Balance remains 88,000');
+  assert.strictEqual(v.bal(overBudgetEscrow.code), 0, 'Scenario 5: Zero partial escrow credit');
+  assert.strictEqual(v.txById.size, txCountBeforeOver, 'Scenario 5: Zero partial transactions recorded');
+  assert.strictEqual(v.allEntries.length, entryCountBeforeOver, 'Scenario 5: Zero partial entries recorded');
+
+  // Scenario 6 & 7: Two concurrent campaign creations trying to use the same 88,000 balance (each costs 60,000)
+  const concurrentCampA_Budget = v.createAccount('CAMP-BUDGET-P6-CONC-A', 'escrow', 'credit');
+  const concurrentCampA_Fee = v.createAccount('CAMP-FEE-P6-CONC-A', 'escrow', 'credit');
+  const concurrentCampB_Budget = v.createAccount('CAMP-BUDGET-P6-CONC-B', 'escrow', 'credit');
+  const concurrentCampB_Fee = v.createAccount('CAMP-FEE-P6-CONC-B', 'escrow', 'credit');
+
+  const attemptConcurrentCampaign = (key: string, bAcc: SimAccount, fAcc: SimAccount) =>
+    withAdvertiserLock('adv-p6-mutex', async () => {
+      await new Promise((r) => setTimeout(r, 15));
+      const c = calculateCampaignFundingCosts({ rewardUnits: 500, slots: 100, feePercentage: 20 }); // 50k + 10k = 60k
+      const avail = v.bal(advWallet.code);
+      const check = checkCampaignBalanceSufficiency(avail, c.totalUnits);
+      if (!check.sufficient) {
+        throw new Error(`INSUFFICIENT_FUNDS: رصيد محفظتك (${avail}) لا يكفي (${c.totalUnits})`);
+      }
+      v.post(
+        'CAMPAIGN_FUNDING_RESERVE',
+        key,
+        buildCampaignReserveEntries({
+          title: `حملة متزامنة ${key}`,
+          walletAccountId: advWallet.id,
+          budgetEscrowAccountId: bAcc.id,
+          feeEscrowAccountId: fAcc.id,
+          budgetUnits: c.budgetUnits,
+          feeUnits: c.feeUnits,
+          feePercentage: 20,
+        })
+      );
+      return key;
+    });
+
+  const concResults = await Promise.allSettled([
+    attemptConcurrentCampaign('CONC-A', concurrentCampA_Budget, concurrentCampA_Fee),
+    attemptConcurrentCampaign('CONC-B', concurrentCampB_Budget, concurrentCampB_Fee),
+  ]);
+  const fulfilledCount = concResults.filter((r) => r.status === 'fulfilled').length;
+  const rejectedCount = concResults.filter((r) => r.status === 'rejected').length;
+  assert.strictEqual(fulfilledCount, 1, 'Scenario 7: Exactly 1 concurrent campaign must succeed');
+  assert.strictEqual(rejectedCount, 1, 'Scenario 7: Exactly 1 concurrent campaign must be rejected to prevent double-spend');
+  assert.strictEqual(v.bal(advWallet.code), 28000, 'Scenario 7: Wallet after 1 concurrent 60k campaign must be 28,000');
+
+  // Scenario 9: Cancel unstarted concurrent winner campaign (60,000 = 50,000 budget + 10,000 fee) BEFORE start -> full refund!
+  const winnerWasA = concResults[0].status === 'fulfilled';
+  const winBudget = winnerWasA ? concurrentCampA_Budget : concurrentCampB_Budget;
+  const winFee = winnerWasA ? concurrentCampA_Fee : concurrentCampB_Fee;
+  v.post(
+    'CAMPAIGN_ESCROW_REFUND',
+    'CAMP-CANCEL-BEFORE-START-P6',
+    buildCampaignSettlementRefundEntries({
+      title: 'إلغاء حملة قبل البدء',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: winBudget.id,
+      feeEscrowAccountId: winFee.id,
+      refundBudgetUnits: 50000,
+      refundFeeUnits: 10000,
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 88000, 'Scenario 9: Full 60,000 (budget + fee) refunded before start -> wallet back to 88,000');
+  assert.strictEqual(v.bal(winBudget.code), 0);
+  assert.strictEqual(v.bal(winFee.code), 0);
+
+  // Scenario 8: Start Campaign 1 -> recognize 2,000 fee ONCE only
+  const startEntries = buildCampaignFeeRecognitionEntries({
+    title: 'حملة 1 - تجربة تطبيق',
+    feeEscrowAccountId: camp1Fee.id,
+    adsRevenueAccountId: ids['PLATFORM-REVENUE-ADS'],
+    feeUnits: 2000,
+  });
+  const start1 = v.post('AD_REVENUE', 'CAMP-START-P6-1', startEntries);
+  const startDup = v.post('AD_REVENUE', 'CAMP-START-P6-1', startEntries);
+  assert.strictEqual(start1.idempotent, false);
+  assert.strictEqual(startDup.idempotent, true, 'Scenario 8: Duplicate start cannot recognize fee twice');
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 2000, 'Scenario 8: Platform ad revenue = 2,000 once only');
+  assert.strictEqual(v.bal(camp1Fee.code), 0);
+
+  // Worker completes 40 tasks from Campaign 1 (40 * 100 = 4,000 YER)
+  v.post('TASK_REWARD_PAYOUT', 'CAMP-P6-PAYOUT-40', [
+    { account_id: camp1Budget.id, side: 'debit', amount_units: 4000, memo: '40 approved campaign submissions' },
+    { account_id: workerWallet.id, side: 'credit', amount_units: 4000, memo: 'Worker earnings from Campaign 1' },
+  ]);
+  assert.strictEqual(v.bal(workerWallet.code), 4000);
+  assert.strictEqual(v.bal(camp1Budget.code), 6000);
+
+  // Scenario 10 & 11: Cancel Campaign 1 AFTER start -> fee stays in PLATFORM-REVENUE-ADS, unused 6,000 returned to wallet!
+  v.post(
+    'CAMPAIGN_ESCROW_REFUND',
+    'CAMP-CANCEL-AFTER-START-P6-1',
+    buildCampaignSettlementRefundEntries({
+      title: 'حملة 1 - تسوية بعد البدء',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: camp1Budget.id,
+      feeEscrowAccountId: camp1Fee.id,
+      refundBudgetUnits: 6000,
+      refundFeeUnits: 0,
+    })
+  );
+  assert.strictEqual(v.bal('PLATFORM-REVENUE-ADS'), 2000, 'Scenario 10: Earned fee remains with platform');
+  assert.strictEqual(v.bal(camp1Budget.code), 0, 'Scenario 10: Campaign escrow zeroed out');
+  assert.strictEqual(v.bal(advWallet.code), 94000, 'Scenario 11: Unused 6,000 budget returned -> 88,000 + 6,000 = 94,000');
+
+  // Scenario 17: Legacy tasks + referral reward (30 YER) + P2P transfer + withdrawal reserve & settle coexist cleanly
+  const legacyEscrow = v.createAccount('LEGACY-TASK-ESCROW-P6', 'escrow', 'credit');
+  v.post('TASK_FUNDING_ESCROW', 'LEGACY-FUND-P6', [
+    { account_id: ids['PLATFORM-TREASURY'], side: 'debit', amount_units: 5000, memo: 'Legacy task escrow reserve' },
+    { account_id: legacyEscrow.id, side: 'credit', amount_units: 5000, memo: 'Legacy task 10 slots x 500' },
+  ]);
+  v.post('TASK_REWARD_PAYOUT', 'LEGACY-PAY-P6', [
+    { account_id: legacyEscrow.id, side: 'debit', amount_units: 500, memo: 'Legacy task completion' },
+    { account_id: workerWallet.id, side: 'credit', amount_units: 500, memo: 'Legacy worker reward' },
+  ]);
+  v.post('REFERRAL_REWARD', 'LEGACY-REF-P6', [
+    { account_id: ids['PLATFORM-TREASURY'], side: 'debit', amount_units: 30, memo: 'Referral reward 30 YER' },
+    { account_id: referrerWallet.id, side: 'credit', amount_units: 30, memo: 'Referrer bonus on first task' },
+  ]);
+  v.post('WALLET_TRANSFER', 'LEGACY-P2P-P6', [
+    { account_id: workerWallet.id, side: 'debit', amount_units: 500, memo: 'P2P transfer out' },
+    { account_id: referrerWallet.id, side: 'credit', amount_units: 500, memo: 'P2P transfer in' },
+  ]);
+  v.post('WITHDRAWAL_RESERVE', 'LEGACY-WD-RES-P6', [
+    { account_id: workerWallet.id, side: 'debit', amount_units: 1000, memo: 'Reserve withdrawal' },
+    { account_id: ids['WITHDRAWAL-RESERVED'], side: 'credit', amount_units: 1000, memo: 'Pending payout pool' },
+  ]);
+  v.post('WITHDRAWAL_SETTLE', 'LEGACY-WD-SET-P6', [
+    { account_id: ids['WITHDRAWAL-RESERVED'], side: 'debit', amount_units: 1000, memo: 'Settle withdrawal' },
+    { account_id: ids['WITHDRAWAL-SETTLED'], side: 'credit', amount_units: 1000, memo: 'Settled payout' },
+  ]);
+  assert.strictEqual(v.bal(workerWallet.code), 3000);
+  assert.strictEqual(v.bal(referrerWallet.code), 530);
+
+  // Scenario 15: Global balance check (Debits === Credits AND Backing === Liabilities + Revenues)
+  const totalDebits = v.allEntries.filter((e) => e.side === 'debit').reduce((s, e) => s + e.amount, 0);
+  const totalCredits = v.allEntries.filter((e) => e.side === 'credit').reduce((s, e) => s + e.amount, 0);
+  assert.strictEqual(totalDebits, totalCredits, 'Scenario 15: Every ledger transaction balanced (debits === credits)');
+
+  const totalBacking = v.bal('VIRTUAL-ISSUANCE-CONTROL') + v.bal(extKuraimi.code);
+  const totalUses =
+    v.bal('PLATFORM-TREASURY') +
+    v.bal(advWallet.code) +
+    v.bal(workerWallet.code) +
+    v.bal(referrerWallet.code) +
+    v.bal(legacyEscrow.code) +
+    v.bal(camp1Budget.code) +
+    v.bal(camp1Fee.code) +
+    v.bal('WITHDRAWAL-RESERVED') +
+    v.bal('WITHDRAWAL-SETTLED') +
+    v.bal('PLATFORM-REVENUE-ADS');
+  assert.strictEqual(totalUses, totalBacking, `Scenario 15: Closed-loop balance mismatch: ${totalUses} vs ${totalBacking}`);
+  assert.strictEqual(v.bal('PLATFORM-TREASURY'), 19970, 'Scenario 16: Treasury unaffected by 100k advertiser custody (25,000 - 5,000 - 30)');
+
+  // --- PART B: Scenarios 13 & 14 (Real Express HTTP RBAC Enforcement via ephemeral server) ---
+  const origGetUser = supabaseServer.auth.getUser.bind(supabaseServer.auth);
+  const origFindUser = supabaseDb.findUserById.bind(supabaseDb);
+  const testUsers: Record<string, any> = {
+    'tok-adv-active': {
+      id: '11111111-1111-1111-1111-111111111111',
+      email: 'adv-active@test.local',
+      role: 'advertiser',
+      status: 'active',
+      fullName: 'معلن معتمد',
+      phone: '771111111',
+    },
+    'tok-adv-pending': {
+      id: '22222222-2222-2222-2222-222222222222',
+      email: 'adv-pending@test.local',
+      role: 'advertiser',
+      status: 'pending',
+      fullName: 'معلن قيد المراجعة',
+      phone: '772222222',
+    },
+    'tok-worker-active': {
+      id: '33333333-3333-3333-3333-333333333333',
+      email: 'worker@test.local',
+      role: 'user',
+      status: 'active',
+      fullName: 'مستخدم منفذ',
+      phone: '773333333',
+    },
+  };
+
+  (supabaseServer.auth as any).getUser = async (token: string) => {
+    const u = testUsers[token];
+    if (!u) return { data: { user: null }, error: { message: 'invalid token' } };
+    return {
+      data: {
+        user: {
+          id: u.id,
+          email: u.email,
+          created_at: new Date().toISOString(),
+          user_metadata: { full_name: u.fullName, phone: u.phone, role: u.role },
+        },
+      },
+      error: null,
+    };
+  };
+  (supabaseDb as any).findUserById = async (id: string) => {
+    return Object.values(testUsers).find((u) => u.id === id) || null;
+  };
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const addr = server.address() as { port: number };
+  const baseUrl = `http://127.0.0.1:${addr.port}`;
+
+  try {
+    // Scenario 13: Active Advertiser & Worker blocked (403) from ALL admin endpoints
+    const adminRoutesForRbac: Array<[string, string]> = [
+      ['GET', '/api/admin/treasury'],
+      ['GET', '/api/admin/finance/external-accounts'],
+      ['POST', '/api/admin/finance/external-accounts'],
+      ['POST', '/api/admin/finance/external-deposits/00000000-0000-0000-0000-000000000000/approve'],
+      ['GET', '/api/admin/campaigns'],
+      ['POST', '/api/admin/campaigns/00000000-0000-0000-0000-000000000000/start'],
+    ];
+    for (const tok of ['tok-adv-active', 'tok-adv-pending', 'tok-worker-active']) {
+      for (const [method, routePath] of adminRoutesForRbac) {
+        const resp = await fetch(`${baseUrl}${routePath}`, {
+          method,
+          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+          body: method === 'POST' ? JSON.stringify({}) : undefined,
+        });
+        assert.strictEqual(
+          resp.status,
+          403,
+          `Scenario 13: ${tok} calling ${method} ${routePath} must return 403, got ${resp.status}`
+        );
+      }
+    }
+
+    // Scenario 14: Unapproved (pending) advertiser & worker blocked (403) from creating/starting/settling campaigns
+    const advertiserWriteRoutes: Array<[string, string]> = [
+      ['POST', '/api/advertiser/campaigns'],
+      ['POST', '/api/advertiser/campaigns/00000000-0000-0000-0000-000000000000/start'],
+      ['POST', '/api/advertiser/campaigns/00000000-0000-0000-0000-000000000000/settle'],
+      ['POST', '/api/advertiser/logo/signed-url'],
+    ];
+    for (const tok of ['tok-adv-pending', 'tok-worker-active']) {
+      for (const [method, routePath] of advertiserWriteRoutes) {
+        const resp = await fetch(`${baseUrl}${routePath}`, {
+          method,
+          headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        assert.strictEqual(
+          resp.status,
+          403,
+          `Scenario 14: ${tok} calling ${method} ${routePath} must return 403, got ${resp.status}`
+        );
+      }
+    }
+
+    // Also verify createAdvertiserCampaign server method rejects pending advertiser before touching DB
+    let pendingErr = '';
+    try {
+      await supabaseDb.createAdvertiserCampaign({
+        advertiserId: testUsers['tok-adv-pending'].id,
+        title: 'حملة غير معتمد',
+        description: 'محاولة إنشاء قبل الاعتماد',
+        rewardUnits: 100,
+        slots: 10,
+      });
+    } catch (e: any) {
+      pendingErr = String(e?.message || '');
+    }
+    assert.ok(pendingErr.includes('قيد المراجعة'), `Scenario 14 server check must reject pending advertiser, got: ${pendingErr}`);
+
+    // Verify receipt image access restriction: advertiser/worker cannot read external-receipts/* signed URLs (403)
+    const receiptResp = await fetch(`${baseUrl}/api/storage/signed-url`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer tok-adv-active', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ storagePath: 'external-receipts/admin/test.png' }),
+    });
+    assert.strictEqual(receiptResp.status, 403, 'Advertiser must get 403 on admin external-receipts/* signed-url');
+  } finally {
+    (supabaseServer.auth as any).getUser = origGetUser;
+    (supabaseDb as any).findUserById = origFindUser;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+
+  // --- PART C: RLS, SECURITY DEFINER RPC & Auth UI Routing Audit ---
+  const sqlFiles = ['013_financial_ledger_compatibility_and_task_accounting.sql', '014_referral_system_and_atomic_rewards.sql', '020_advertiser_campaigns_and_fee_escrow.sql', '022_external_accounts_and_advertiser_custody.sql'];
+  for (const f of sqlFiles) {
+    const content = fs.readFileSync(path.resolve(process.cwd(), 'supabase/migrations', f), 'utf8');
+    assert.ok(content.includes('ROW LEVEL SECURITY'), `${f} must enforce ROW LEVEL SECURITY`);
+    assert.ok(content.includes('SECURITY DEFINER'), `${f} must mark atomic RPCs SECURITY DEFINER`);
+    assert.ok(content.includes('search_path'), `${f} must pin search_path on SECURITY DEFINER functions`);
+    assert.ok(content.includes('REVOKE ALL'), `${f} must revoke public/anon privileges`);
+  }
+
+  // Verify AuthModal hides account-type switcher in login mode & keeps it strictly in register mode
+  const authModalSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/components/auth/AuthModal.tsx'), 'utf8');
+  assert.ok(authModalSrc.includes("mode === 'register' && (") && !authModalSrc.includes("mode !== 'owner' && (\n          <div className=\"grid grid-cols-2"), 'AuthModal must show user/advertiser switcher ONLY in register mode');
+  const appSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+  assert.ok(appSrc.includes('kasb:auth_success') && appSrc.includes("loggedUser.role === 'advertiser'"), 'App.tsx must auto-redirect user to their role workspace upon login');
+
+  console.log('  - Verified all 17 Phase 6 financial & security scenarios, Express 403 RBAC guards, SQL RLS/RPC permissions & AuthModal/App role routing.');
 }
 
 async function main() {
@@ -793,7 +1852,11 @@ async function main() {
   runReferralLifecycleTests();
   runMigration013And014SecurityAuditTests();
   await runReadOnlyServerReferralProbe();
-  console.log('\n=== VERIFICATION COMPLETED SUCCESSFULLY (ALL 8 SUITES PASSED) ===');
+  runPhase3CampaignFundingAndAccountingTests();
+  runPhase4AdvertiserIdentityAndUiTests();
+  runPhase5ExternalAccountsAndSegregationTests();
+  await runPhase6SecurityAndIntegrationTests();
+  console.log('\n=== VERIFICATION COMPLETED SUCCESSFULLY (ALL 12 SUITES PASSED) ===');
 }
 
 main().catch((err) => {

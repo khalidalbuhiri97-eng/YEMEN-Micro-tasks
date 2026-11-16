@@ -341,15 +341,19 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({ trea
                 </h3>
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
-                    <span>النقد الفعلي بالخزينة</span>
+                    <span>النقد الفعلي بالخزينة (Vault)</span>
                     <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.assets.cashVault)} ر.ي</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>أرصدة الحسابات الخارجية (EXT-ACC)</span>
+                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.assets.externalAccounts)} ر.ي</strong>
                   </div>
                   <div className="flex justify-between text-slate-500">
                     <span>رقابة الوحدات الافتراضية (مفصل)</span>
                     <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.assets.virtualIssuanceControl)} وحدة</strong>
                   </div>
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between font-extrabold">
-                    <span>إجمالي الأصول النقدية الفعلية</span>
+                    <span>إجمالي الأصول النقدية والخارجية</span>
                     <span className="font-mono tabular-nums text-emerald-600">{fmt(report.balanceSheet.assets.totalRealAssets)} ر.ي</span>
                   </div>
                 </div>
@@ -357,27 +361,35 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({ trea
 
               <div className="p-5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
                 <h3 className="text-sm font-bold text-blue-700 dark:text-blue-400 border-b border-slate-100 dark:border-slate-800 pb-2">
-                  الالتزامات للغير (Liabilities)
+                  الالتزامات للغير (Liabilities — مفصولة عن الأرباح)
                 </h3>
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
-                    <span>أرصدة محافظ المستخدمين</span>
-                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.liabilities.userWalletBalances)} ر.ي</strong>
+                    <span>محافظ المعلنين (التزامات)</span>
+                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.liabilities.advertiserWalletBalances)} ر.ي</strong>
                   </div>
                   <div className="flex justify-between">
-                    <span>سحوبات محجوزة قيد التنفيذ</span>
-                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.liabilities.withdrawalReserved)} ر.ي</strong>
+                    <span>محافظ المستخدمين المنفذين</span>
+                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.liabilities.workerWalletBalances ?? report.balanceSheet.liabilities.userWalletBalances)} ر.ي</strong>
                   </div>
                   <div className="flex justify-between">
-                    <span>أموال ضمان المهام</span>
-                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.liabilities.taskEscrowBalances)} ر.ي</strong>
+                    <span>ضمان الحملات الإعلانية (مكافآت + رسوم)</span>
+                    <strong className="font-mono tabular-nums">
+                      {fmt((report.balanceSheet.liabilities.campaignBudgetEscrows || 0) + (report.balanceSheet.liabilities.campaignFeeEscrows || 0))} ر.ي
+                    </strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>سحوبات محجوزة + ضمان المهام الإدارية</span>
+                    <strong className="font-mono tabular-nums">
+                      {fmt((report.balanceSheet.liabilities.withdrawalReserved || 0) + (report.balanceSheet.liabilities.taskEscrowBalances || 0))} ر.ي
+                    </strong>
                   </div>
                   <div className="flex justify-between">
                     <span>ضرائب مستحقة الدفع</span>
                     <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.liabilities.taxesPayable)} ر.ي</strong>
                   </div>
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between font-extrabold">
-                    <span>إجمالي التزامات المستخدمين والغير</span>
+                    <span>إجمالي التزامات المعلنين والمستخدمين</span>
                     <span className="font-mono tabular-nums text-blue-600">{fmt(report.balanceSheet.liabilities.totalUserAndExternalLiabilities)} ر.ي</span>
                   </div>
                 </div>

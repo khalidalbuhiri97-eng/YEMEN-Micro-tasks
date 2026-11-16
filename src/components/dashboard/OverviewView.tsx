@@ -179,14 +179,22 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
                   onClick={() => onNavigateTab('tasks')}
                   className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/80 hover:border-emerald-500/50 cursor-pointer transition-all flex items-center justify-between gap-4"
                 >
-                  <div>
-                    <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white mb-1">
+                  <div className="min-w-0">
+                    <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white mb-1 truncate">
                       {t.title}
                     </h3>
-                    <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
                       <span>الوقت: {t.timeEstimateMinutes} دقائق</span>
                       <span>·</span>
                       <span>المتبقي: {t.totalQuantity - t.completedQuantity}</span>
+                      <span>·</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        {t.isExternalCampaign
+                          ? t.hideAdvertiserName
+                            ? 'معلن عبر يمن تاسك (حملة خارجية)'
+                            : `${t.advertiserDisplayName || 'معلن عبر يمن تاسك'} (حملة خارجية)`
+                          : 'مهمة مباشرة من المنصة'}
+                      </span>
                     </div>
                   </div>
 

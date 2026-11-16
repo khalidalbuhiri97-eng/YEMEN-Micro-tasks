@@ -22,8 +22,11 @@ import {
   UserCheck,
   Sparkles,
   Lock,
+  FileText,
+  Eye,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { CampaignLedgerTxModal } from '../advertiser/CampaignModals.tsx';
 
 interface WalletViewProps {
   onGoToWithdraw: () => void;
@@ -51,6 +54,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
   // Receive Modal State
   const [isReceiveModalOpen, setIsReceiveModalOpen] = useState(false);
   const [hasCopiedAddress, setHasCopiedAddress] = useState(false);
+  const [selectedLedgerTx, setSelectedLedgerTx] = useState<WalletTransaction | null>(null);
 
   const loadData = async () => {
     if (!user) {
@@ -173,10 +177,19 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
     }
   };
 
+  const isCampaignTx = (tx: WalletTransaction) =>
+    tx.type === 'CAMPAIGN_FUNDING_RESERVE' ||
+    tx.type === 'CAMPAIGN_ESCROW_REFUND' ||
+    tx.type === 'AD_REVENUE' ||
+    String(tx.referenceId || '').startsWith('CAMPAIGN:') ||
+    Boolean(tx.metadata?.campaign_id);
+
   const filteredTransactions = transactions.filter((tx) => {
     if (filterType !== 'all') {
       if (filterType === 'TRANSFERS') {
         if (tx.type !== 'WALLET_TRANSFER_SENT' && tx.type !== 'WALLET_TRANSFER_RECEIVED') return false;
+      } else if (filterType === 'CAMPAIGNS') {
+        if (!isCampaignTx(tx)) return false;
       } else if (tx.type !== filterType) {
         return false;
       }
@@ -196,6 +209,12 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
     switch (type) {
       case 'TASK_REWARD':
         return 'مكافأة إنجاز مهمة';
+      case 'CAMPAIGN_FUNDING_RESERVE':
+        return 'تمويل وحجز حملة إعلانية';
+      case 'CAMPAIGN_ESCROW_REFUND':
+        return 'استرجاع فائض حملة إعلانية';
+      case 'AD_REVENUE':
+        return 'رسوم خدمة حملة إعلانية';
       case 'WITHDRAWAL_REQUEST':
         return 'حجز طلب سحب';
       case 'WITHDRAWAL_REFUND':
@@ -404,10 +423,10 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Filter Tabs */}
-            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
               <button
                 onClick={() => setFilterType('all')}
-                className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                className={`min-h-[36px] px-2.5 py-1 rounded font-medium transition-colors ${
                   filterType === 'all'
                     ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400'
@@ -416,8 +435,18 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
                 الكل
               </button>
               <button
+                onClick={() => setFilterType('CAMPAIGNS')}
+                className={`min-h-[36px] px-2.5 py-1 rounded font-medium transition-colors ${
+                  filterType === 'CAMPAIGNS'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                تمويل الحملات
+              </button>
+              <button
                 onClick={() => setFilterType('TASK_REWARD')}
-                className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                className={`min-h-[36px] px-2.5 py-1 rounded font-medium transition-colors ${
                   filterType === 'TASK_REWARD'
                     ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400'
@@ -427,7 +456,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
               </button>
               <button
                 onClick={() => setFilterType('TRANSFERS')}
-                className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                className={`min-h-[36px] px-2.5 py-1 rounded font-medium transition-colors ${
                   filterType === 'TRANSFERS'
                     ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400'
@@ -437,7 +466,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
               </button>
               <button
                 onClick={() => setFilterType('WITHDRAWAL_REQUEST')}
-                className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                className={`min-h-[36px] px-2.5 py-1 rounded font-medium transition-colors ${
                   filterType === 'WITHDRAWAL_REQUEST'
                     ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400'
@@ -448,21 +477,80 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
             </div>
 
             {/* Search */}
-            <div className="relative">
-              <Search className="absolute right-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
+            <div className="relative flex-1 sm:flex-initial">
+              <Search className="absolute right-2.5 top-2.5 w-3.5 h-3.5 text-slate-400" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="بحث في البيان أو الرقم..."
-                className="pr-8 pl-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 w-36 sm:w-48"
+                className="pr-8 pl-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500 w-full sm:w-48"
               />
             </div>
           </div>
         </div>
 
-        {/* High Density Table */}
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+        {/* Mobile Card Stack (< md) */}
+        <div className="md:hidden space-y-3">
+          {isLoading ? (
+            <div className="p-8 text-center text-xs text-slate-400 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+              جاري تحميل بيانات السجل المالي...
+            </div>
+          ) : filteredTransactions.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-400 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+              لا توجد حركات مالية مطابقة للبحث أو التصفية.
+            </div>
+          ) : (
+            filteredTransactions.map((tx) => {
+              const isCredit = tx.amount > 0;
+              const campaignTx = isCampaignTx(tx);
+              return (
+                <div
+                  key={tx.id}
+                  className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2.5"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 dark:text-white">
+                        {getTransactionTypeLabel(tx.type)}
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                        {new Date(tx.createdAt).toLocaleString('ar-YE')}
+                      </div>
+                    </div>
+                    <div
+                      className={`font-mono font-extrabold tabular-nums text-sm shrink-0 ${
+                        isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {isCredit ? '+' : ''}
+                      {tx.amount.toLocaleString()} ر.ي
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    {tx.description}
+                  </p>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono tabular-nums text-slate-500">
+                    <span>الرصيد: {tx.newBalance.toLocaleString()} ر.ي</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLedgerTx(tx)}
+                      className="min-h-[36px] px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-sans font-bold text-xs inline-flex items-center gap-1"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>{campaignTx ? 'تفاصيل الرسوم والتكلفة' : 'التفاصيل'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* High Density Desktop Table (>= md) */}
+        <div className="hidden md:block bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
             <table className="w-full text-right text-xs">
               <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800 font-medium">
@@ -474,24 +562,26 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
                   <th className="py-3 px-4 text-left font-mono">الرصيد السابق</th>
                   <th className="py-3 px-4 text-left font-mono">الرصيد الجديد</th>
                   <th className="py-3 px-4">التاريخ</th>
+                  <th className="py-3 px-4 text-left">التفاصيل</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={8} className="py-8 text-center text-slate-400">
                       جاري تحميل بيانات السجل المالي...
                     </td>
                   </tr>
                 ) : filteredTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                    <td colSpan={8} className="py-8 text-center text-slate-400">
                       لا توجد حركات مالية مطابقة للبحث أو التصفية.
                     </td>
                   </tr>
                 ) : (
                   filteredTransactions.map((tx) => {
                     const isCredit = tx.amount > 0;
+                    const campaignTx = isCampaignTx(tx);
                     return (
                       <tr
                         key={tx.id}
@@ -530,6 +620,16 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
+                        </td>
+                        <td className="py-3 px-4 text-left whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedLedgerTx(tx)}
+                            className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 inline-flex items-center gap-1"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>{campaignTx ? 'تفاصيل الرسوم' : 'عرض'}</span>
+                          </button>
                         </td>
                       </tr>
                     );
@@ -716,6 +816,11 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
           </div>
         </div>
       )}
+      {/* MODAL 3: TRANSACTION DETAILS & CAMPAIGN FEE BREAKDOWN */}
+      <CampaignLedgerTxModal
+        transaction={selectedLedgerTx}
+        onClose={() => setSelectedLedgerTx(null)}
+      />
     </div>
   );
 };

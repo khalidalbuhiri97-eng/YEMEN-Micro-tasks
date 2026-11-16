@@ -130,6 +130,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthTokens(res.token, res.refreshToken);
     setUser(res.user);
     setWallet(res.wallet);
+    if (typeof window !== 'undefined' && res.user) {
+      window.dispatchEvent(new CustomEvent('kasb:auth_success', { detail: { user: res.user } }));
+    }
     showToast(`مرحباً بك، ${res.user.fullName}`, 'success');
   };
 
@@ -139,6 +142,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthTokens(res.token, res.refreshToken);
       setUser(res.user);
       setWallet(res.wallet);
+      if (typeof window !== 'undefined' && res.user) {
+        window.dispatchEvent(new CustomEvent('kasb:auth_success', { detail: { user: res.user } }));
+      }
       showToast('تم إنشاء وتفعيل حسابك بنجاح!', 'success');
     } else {
       clearAuthToken();

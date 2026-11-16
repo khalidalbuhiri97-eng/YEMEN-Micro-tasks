@@ -13,6 +13,8 @@ import {
   FileText,
   AlertCircle,
   Eye,
+  Building2,
+  EyeOff,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SecureImageView } from '../common/SecureImageView.tsx';
@@ -360,6 +362,37 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                     {task.title}
                   </h3>
 
+                  {/* Advertiser Identity Attribution (§ Phase 4) */}
+                  <div className="mb-3 flex items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                    {task.isExternalCampaign ? (
+                      <div className="flex items-center gap-2 min-w-0">
+                        {!task.hideAdvertiserName && task.advertiserLogoUrl ? (
+                          <SecureImageView
+                            storagePathOrUrl={task.advertiserLogoUrl}
+                            alt={task.advertiserDisplayName || 'شعار المعلن'}
+                            className="w-5 h-5 rounded object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                          />
+                        ) : task.hideAdvertiserName ? (
+                          <EyeOff className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        ) : (
+                          <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        )}
+                        <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
+                          {task.hideAdvertiserName
+                            ? 'معلن عبر يمن تاسك'
+                            : task.advertiserDisplayName || 'معلن عبر يمن تاسك'}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                        مهمة مباشرة من المنصة
+                      </span>
+                    )}
+                    {task.isExternalCampaign && (
+                      <span className="shrink-0 text-[10px] text-slate-400">حملة معلن خارجي</span>
+                    )}
+                  </div>
+
                   {/* Description */}
                   <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-4 line-clamp-3">
                     {renderTextWithSafeLinks(task.description)}
@@ -406,12 +439,19 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
         </div>
       )}
 
-      {/* Task Details & Submission Modal */}
+      {/* Task Details & Submission Modal (Mobile-first bottom sheet) */}
       {activeTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden">
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={handleCloseModal}
+        >
+          <div
+            className="relative w-full sm:max-w-xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sm:hidden w-10 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mt-3 shrink-0" />
             {/* Header */}
-            <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
+            <div className="flex items-start justify-between px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
               <div>
                 <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
                   {getCategoryBadge(activeTask.category)} · {activeTask.timeEstimateMinutes} دقائق تقريباً
@@ -422,14 +462,53 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
               </div>
               <button
                 onClick={handleCloseModal}
-                className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="إغلاق"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Scrollable Content */}
-            <div className="p-6 overflow-y-auto space-y-6">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
+              {/* Advertiser Attribution Strip inside Task Modal */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {activeTask.isExternalCampaign && !activeTask.hideAdvertiserName && activeTask.advertiserLogoUrl ? (
+                    <SecureImageView
+                      storagePathOrUrl={activeTask.advertiserLogoUrl}
+                      alt={activeTask.advertiserDisplayName || 'شعار المعلن'}
+                      className="w-8 h-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-500 shrink-0">
+                      {activeTask.isExternalCampaign && activeTask.hideAdvertiserName ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Building2 className="w-4 h-4" />
+                      )}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {activeTask.isExternalCampaign ? 'الجهة المعلنة' : 'مصدر المهمة'}
+                    </div>
+                    <div className="font-bold text-slate-900 dark:text-white truncate">
+                      {activeTask.isExternalCampaign
+                        ? activeTask.hideAdvertiserName
+                          ? 'معلن عبر يمن تاسك'
+                          : activeTask.advertiserDisplayName || 'معلن عبر يمن تاسك'
+                        : 'مهمة مباشرة من المنصة'}
+                    </div>
+                  </div>
+                </div>
+                {activeTask.isExternalCampaign && (
+                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+                    حملة معلن خارجي
+                  </span>
+                )}
+              </div>
+
               {/* Reward Strip */}
               <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-between">
                 <div>

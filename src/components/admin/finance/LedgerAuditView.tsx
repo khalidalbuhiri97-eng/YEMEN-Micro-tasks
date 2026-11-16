@@ -13,6 +13,7 @@ import {
 import { api } from '../../../api/client.ts';
 import { useAuth } from '../../../context/AuthContext.tsx';
 import type { FinancialAuditLog, LedgerTransaction } from '../../../types/index.ts';
+import { CampaignServiceFeeDetails } from '../../advertiser/CampaignServiceFeeDetails.tsx';
 
 interface LedgerAuditViewProps {
   onRefreshAll: () => Promise<void>;
@@ -211,7 +212,13 @@ export const LedgerAuditView: React.FC<LedgerAuditViewProps> = ({ onRefreshAll }
               <option value="WITHDRAWAL_REQUEST">حجز طلب سحب</option>
               <option value="WITHDRAWAL_PAYOUT">إتمام صرف سحب</option>
               <option value="WITHDRAWAL_REFUND">استرجاع سحب مرفوض</option>
-              <option value="AD_REVENUE">إيراد إعلانات</option>
+              <option value="CAMPAIGN_FUNDING_RESERVE">تمويل وحجز حملة إعلانية</option>
+              <option value="CAMPAIGN_ESCROW_REFUND">تسوية واسترجاع حملة</option>
+              <option value="EXTERNAL_ADVERTISER_DEPOSIT">تحصيل خارجي لمحفظة معلن (التزام)</option>
+              <option value="EXTERNAL_CAPITAL_DEPOSIT">إيداع رأس مال بحساب خارجي</option>
+              <option value="INTERNAL_ACCOUNT_TRANSFER">تحويل داخلي بين حسابات الإدارة</option>
+              <option value="EXTERNAL_RECONCILIATION_ADJUSTMENT">قيد تسوية مطابقة حساب خارجي</option>
+              <option value="AD_REVENUE">إيراد إعلانات ورسوم حملات</option>
               <option value="SUBSCRIPTION_REVENUE">إيراد اشتراكات</option>
               <option value="SERVICE_REVENUE">إيراد خدمات</option>
               <option value="TAX_ACCRUAL">استحقاق ضريبي</option>
@@ -519,6 +526,48 @@ export const LedgerAuditView: React.FC<LedgerAuditViewProps> = ({ onRefreshAll }
                 </tbody>
               </table>
             </div>
+
+            {(() => {
+              const meta = (selectedTx.metadata || {}) as Record<string, any>;
+              const isCampaignLedger =
+                selectedTx.transactionType === 'CAMPAIGN_FUNDING_RESERVE' ||
+                selectedTx.transactionType === 'CAMPAIGN_ESCROW_REFUND' ||
+                selectedTx.transactionType === 'AD_REVENUE' ||
+                String(selectedTx.referenceId || '').startsWith('CAMPAIGN:') ||
+                Boolean(meta.campaign_id);
+
+              if (!isCampaignLedger) return null;
+
+              const feePct = Number(meta.fee_percentage ?? 20);
+              const budgetUnits = Number(meta.budget_units ?? meta.refund_budget_units ?? 0);
+              const feeUnits = Number(meta.fee_units ?? meta.refund_fee_units ?? 0);
+              const totalUnits = Number(meta.total_units ?? meta.total_refund_units ?? selectedTx.totalAmount ?? 0);
+
+              return (
+                <div className="space-y-3 pt-1">
+                  <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs space-y-1.5">
+                    <div className="font-bold text-slate-900 dark:text-white">ملخص تكلفة الحملة الإعلانية</div>
+                    {budgetUnits > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-600 dark:text-slate-300">ميزانية المهام</span>
+                        <span className="font-mono font-bold tabular-nums">{fmt(budgetUnits)} ر.ي</span>
+                      </div>
+                    )}
+                    {feeUnits > 0 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-600 dark:text-slate-300">رسوم خدمة يمن تاسك ({feePct}%)</span>
+                        <span className="font-mono font-bold tabular-nums">{fmt(feeUnits)} ر.ي</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between font-bold text-emerald-700 dark:text-emerald-400">
+                      <span>الإجمالي</span>
+                      <span className="font-mono tabular-nums">{fmt(totalUnits)} ر.ي</span>
+                    </div>
+                  </div>
+                  <CampaignServiceFeeDetails feePercentage={feePct} />
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
