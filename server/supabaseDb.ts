@@ -36,6 +36,8 @@ import type {
   ReferralRewardStatus,
   CampaignItem,
   CampaignStatus,
+  CampaignFeePolicy,
+  AdvertiserWalletSummary,
   ExternalAccount,
   ExternalAccountOwnerRole,
   ExternalAccountType,
@@ -45,6 +47,24 @@ import type {
   ExternalAccountReconciliation,
   FundSegregationSummary,
 } from '../src/types/index';
+import {
+  MONEY_SCALE,
+  parseMoneyStrict,
+  toMicros,
+  fromMicros,
+  fromMicrosFixed,
+  microsToNumber,
+  addMoney,
+  subMoney,
+  sumMoney,
+  calcPercentageMicros,
+  calcWalletTransferBreakdown,
+  calculateCampaignFeePolicyCosts,
+  calculateReferralNetProfitShare,
+  assertBalancedLedgerEntries,
+  normalizeCampaignFeePolicy,
+  formatYer,
+} from '../shared/money.js';
 
 const AUTHORIZED_OWNER_EMAIL = (process.env.ADMIN_EMAIL || 'khalidalbuhiri97@gmail.com').trim().toLowerCase();
 const AUTHORIZED_OWNER_ID = '00000000-0000-4000-8000-000000000001';
@@ -98,7 +118,7 @@ export function computeReferralSummary(params: {
 
     if (isActuallyPaid) {
       paidRewardsCount += 1;
-      totalEarnedYer += rewardEarned;
+      totalEarnedYer = addMoney(totalEarnedYer, rewardEarned);
     }
 
     let rewardStatus: ReferralRewardStatus;
@@ -210,9 +230,9 @@ export function buildDoubleEntryForOperation(params: {
   accountIds: Record<string, string>;
   creditToTreasury?: boolean;
 }): LedgerEntryDraft[] {
-  const amt = Math.round(Number(params.amountUnits));
+  const amt = parseMoneyStrict(params.amountUnits);
   if (!Number.isFinite(amt) || amt <= 0) {
-    throw new Error('المبلغ يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
+    throw new Error('المبلغ يجب أن يكون عدداً موجباً أكبر من صفر.');
   }
   const memo = params.description.trim();
   if (!memo) {
@@ -294,46 +314,40 @@ export interface CampaignFundingBreakdown {
   budgetUnits: number;
   feeUnits: number;
   totalUnits: number;
+  minFeeApplied?: boolean;
+  policySnapshot?: Record<string, any>;
 }
 
 export function calculateCampaignFundingCosts(params: {
   rewardUnits: number;
   slots: number;
   feePercentage?: number;
+  category?: string;
+  policy?: CampaignFeePolicy | null;
 }): CampaignFundingBreakdown {
-  const rewardUnits = Math.round(Number(params.rewardUnits));
-  const slots = Math.round(Number(params.slots));
-  const rawPct = params.feePercentage === undefined || params.feePercentage === null ? 20 : Number(params.feePercentage);
-
-  if (!Number.isFinite(rewardUnits) || rewardUnits <= 0) {
-    throw new Error('سعر المهمة يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
-  }
-  if (!Number.isFinite(slots) || slots <= 0) {
-    throw new Error('عدد المهمات يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
-  }
-  if (!Number.isFinite(rawPct) || rawPct < 0 || rawPct > 50) {
-    throw new Error('نسبة رسوم المنصة يجب أن تكون بين 0% و 50%.');
-  }
-
-  const feePercentage = Math.round(rawPct * 100) / 100;
-  const budgetUnits = rewardUnits * slots;
-  const feeUnits = Math.round((budgetUnits * feePercentage) / 100);
-  const totalUnits = budgetUnits + feeUnits;
+  const result = calculateCampaignFeePolicyCosts({
+    rewardYer: params.rewardUnits,
+    slots: params.slots,
+    category: params.category,
+    policy: params.policy || (params.feePercentage !== undefined ? { defaultFeePercentage: params.feePercentage } : undefined),
+  });
 
   return {
-    rewardUnits,
-    slots,
-    feePercentage,
-    budgetUnits,
-    feeUnits,
-    totalUnits,
+    rewardUnits: result.rewardUnits,
+    slots: result.slots,
+    feePercentage: result.effectiveFeePercentage,
+    budgetUnits: result.budgetUnits,
+    feeUnits: result.feeUnits,
+    totalUnits: result.totalUnits,
+    minFeeApplied: result.minFeeApplied,
+    policySnapshot: result.policySnapshot,
   };
 }
 
 export function checkCampaignBalanceSufficiency(availableBalance: number, totalRequired: number) {
-  const safeAvailable = Math.max(0, Math.round(Number(availableBalance || 0)));
-  const safeRequired = Math.max(0, Math.round(Number(totalRequired || 0)));
-  const deficitUnits = Math.max(0, safeRequired - safeAvailable);
+  const safeAvailable = Math.max(0, Number(availableBalance || 0));
+  const safeRequired = Math.max(0, Number(totalRequired || 0));
+  const deficitUnits = Math.max(0, subMoney(safeRequired, safeAvailable));
   return {
     sufficient: safeAvailable >= safeRequired && safeRequired > 0,
     availableBalance: safeAvailable,
@@ -351,15 +365,15 @@ export function buildCampaignReserveEntries(params: {
   feeUnits: number;
   feePercentage: number;
 }): LedgerEntryDraft[] {
-  const budget = Math.round(Number(params.budgetUnits));
-  const fee = Math.round(Number(params.feeUnits));
+  const budget = parseMoneyStrict(params.budgetUnits);
+  const fee = parseMoneyStrict(params.feeUnits);
   if (!Number.isFinite(budget) || budget <= 0) {
     throw new Error('ميزانية الحملة غير صالحة.');
   }
   if (!Number.isFinite(fee) || fee < 0) {
     throw new Error('قيمة رسوم المنصة غير صالحة.');
   }
-  const total = budget + fee;
+  const total = addMoney(budget, fee);
   const entries: LedgerEntryDraft[] = [
     {
       account_id: params.walletAccountId,
@@ -391,7 +405,7 @@ export function buildCampaignFeeRecognitionEntries(params: {
   adsRevenueAccountId: string;
   feeUnits: number;
 }): LedgerEntryDraft[] {
-  const fee = Math.round(Number(params.feeUnits));
+  const fee = parseMoneyStrict(params.feeUnits);
   if (!Number.isFinite(fee) || fee <= 0) {
     return [];
   }
@@ -419,9 +433,9 @@ export function buildCampaignSettlementRefundEntries(params: {
   refundBudgetUnits: number;
   refundFeeUnits: number;
 }): LedgerEntryDraft[] {
-  const refundBudget = Math.max(0, Math.round(Number(params.refundBudgetUnits || 0)));
-  const refundFee = Math.max(0, Math.round(Number(params.refundFeeUnits || 0)));
-  const totalRefund = refundBudget + refundFee;
+  const refundBudget = Math.max(0, parseMoneyStrict(params.refundBudgetUnits || 0));
+  const refundFee = Math.max(0, parseMoneyStrict(params.refundFeeUnits || 0));
+  const totalRefund = addMoney(refundBudget, refundFee);
   if (totalRefund <= 0) return [];
 
   const entries: LedgerEntryDraft[] = [];
@@ -476,9 +490,9 @@ export function buildExternalDepositApprovalEntries(params: {
   referenceNumber: string;
   depositPurpose: 'advertiser_wallet' | 'platform_capital';
 }): LedgerEntryDraft[] {
-  const amt = Math.round(Number(params.amountUnits));
+  const amt = parseMoneyStrict(params.amountUnits);
   if (!Number.isFinite(amt) || amt <= 0) {
-    throw new Error('مبلغ الإيداع يجب أن يكون عدداً صحيحاً موجباً.');
+    throw new Error('مبلغ الإيداع يجب أن يكون عدداً موجباً أكبر من صفر.');
   }
   const ref = String(params.referenceNumber || '').trim();
   if (!ref) {
@@ -511,9 +525,9 @@ export function buildInternalAccountTransferEntries(params: {
   amountUnits: number;
   reason: string;
 }): LedgerEntryDraft[] {
-  const amt = Math.round(Number(params.amountUnits));
+  const amt = parseMoneyStrict(params.amountUnits);
   if (!Number.isFinite(amt) || amt <= 0) {
-    throw new Error('مبلغ التحويل يجب أن يكون عدداً صحيحاً موجباً.');
+    throw new Error('مبلغ التحويل يجب أن يكون عدداً موجباً أكبر من صفر.');
   }
   if (!params.fromFinAccountId || !params.toFinAccountId || params.fromFinAccountId === params.toFinAccountId) {
     throw new Error('يجب اختيار حسابين مختلفين للتحويل الداخلي.');
@@ -542,9 +556,9 @@ export function buildReconciliationAdjustmentEntries(params: {
   reason: string;
   accountName: string;
 }): { discrepancy: number; entries: LedgerEntryDraft[] } {
-  const accounting = Math.round(Number(params.accountingBalance || 0));
-  const actual = Math.round(Number(params.actualBalance || 0));
-  const diff = actual - accounting;
+  const accounting = parseMoneyStrict(params.accountingBalance || 0);
+  const actual = parseMoneyStrict(params.actualBalance || 0);
+  const diff = subMoney(actual, accounting);
   if (diff === 0) {
     return { discrepancy: 0, entries: [] };
   }
@@ -2450,16 +2464,16 @@ export const supabaseDb = {
     idempotencyKey?: string | null;
     authToken?: string;
   }) {
-    const amountUnits = Math.round(Number(params.amount));
+    const amountUnits = parseMoneyStrict(params.amount);
     if (!Number.isFinite(amountUnits) || amountUnits <= 0) {
-      throw new Error('يرجى تحديد مبلغ صحيح أكبر من صفر للسحب.');
+      throw new Error('يرجى تحديد مبلغ محدد أكبر من صفر للسحب.');
     }
 
     const cleanMethod = params.method.trim().toUpperCase();
     const cleanKey = params.idempotencyKey?.trim() || `WITHDRAWAL-REQ:${crypto.randomUUID()}`;
     const rpcClient = getRpcClient(params.authToken);
 
-    // 1. Try Migration 011 atomic RPC first
+    // 1. Try Migration 011 / 025 atomic RPC first
     const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('reserve_withdrawal_ledger', {
       p_method: cleanMethod,
       p_amount_units: amountUnits,
@@ -2531,9 +2545,9 @@ export const supabaseDb = {
     }
 
     const fee = methodCfg
-      ? Math.round((amountUnits * methodCfg.feePercentage) / 100) + (methodCfg.feeFlat || 0)
-      : Math.round(amountUnits * 0.015);
-    const netAmount = amountUnits - fee;
+      ? addMoney(calcPercentageMicros(amountUnits, methodCfg.feePercentage), methodCfg.feeFlat || 0)
+      : calcPercentageMicros(amountUnits, 1.5);
+    const netAmount = subMoney(amountUnits, fee);
     if (netAmount <= 0) {
       throw new Error('صافي مبلغ السحب بعد الرسوم يجب أن يكون أكبر من صفر.');
     }
@@ -2617,14 +2631,14 @@ export const supabaseDb = {
   }) {
     const rpcClient = getRpcClient(params.authToken);
 
-    // 1. Try Migration 011 atomic RPC first
+    // 1. Try Migration 011 / 025 atomic RPC first
     const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('settle_withdrawal_ledger', {
       p_withdrawal_id: params.withdrawalId,
       p_decision: params.action,
       p_transfer_reference: params.transferReference?.trim() || null,
       p_receipt_url: params.receiptUrl?.trim() || null,
       p_reason: params.reason?.trim() || null,
-      p_provider_fee_units: Math.max(0, Math.round(Number(params.providerFeeUnits || 0))),
+      p_provider_fee_units: Math.max(0, parseMoneyStrict(params.providerFeeUnits || 0)),
     });
 
     if (!rpcErr && rpcRes) {
@@ -2676,13 +2690,16 @@ export const supabaseDb = {
       throw new Error('حساب WITHDRAWAL-RESERVED غير موجود. يرجى تطبيق الترحيل 011.');
     }
 
-    const totalAmount = Math.round(Number(withData.amount));
-    const fee = Math.round(Number(withData.fee || 0));
-    const netAmount = totalAmount - fee;
+    const totalAmount = parseMoneyStrict(withData.amount);
+    const fee = parseMoneyStrict(withData.fee || 0);
+    const netAmount = subMoney(totalAmount, fee);
 
     if (params.action === 'PAY') {
       if (!params.transferReference?.trim()) {
         throw new Error('يرجى إدخال رقم مرجع الحوالة البنكية.');
+      }
+      if (!params.receiptUrl?.trim()) {
+        throw new Error('إرفاق صورة إشعار التحويل البنكي إلزامي لاعتماد صرف السحب.');
       }
       if (!settledAcc || (fee > 0 && !revServicesAcc)) {
         throw new Error('حسابات تسوية السحب (WITHDRAWAL-SETTLED / PLATFORM-REVENUE-SERVICES) غير مكتملة. يرجى تطبيق الترحيل 011.');
@@ -4669,7 +4686,8 @@ export const supabaseDb = {
     const costs = calculateCampaignFundingCosts({
       rewardUnits: params.rewardUnits,
       slots: params.slots,
-      feePercentage: settings.advertiserCampaignFeePercentage,
+      category: params.category,
+      policy: settings.campaignFeePolicy || { defaultFeePercentage: settings.advertiserCampaignFeePercentage },
     });
     const creationKey = String(params.creationKey || '').trim() || `CAMP-${crypto.randomUUID()}`;
 
@@ -4706,7 +4724,7 @@ export const supabaseDb = {
       );
     }
 
-    // 1. Try Migration 020 atomic PostgreSQL RPC first
+    // 1. Try Migration 020 / 024 atomic PostgreSQL RPC first
     const rpcClient = getRpcClient(params.authToken);
     const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('create_funded_campaign', {
       p_title: cleanTitle,
@@ -4722,19 +4740,23 @@ export const supabaseDb = {
     });
 
     if (!rpcErr && rpcRes) {
-      // Best-effort sync of optional Migration 021 columns without failing if pre-021
+      // Ensure status is pending_approval and sync metadata
       if (rpcRes?.campaignId) {
         try {
           const adminClient = getSupabaseAdminClient();
           await adminClient
             .from('campaigns')
             .update({
+              status: 'pending_approval',
               hide_advertiser_name: hideAdvertiserName,
               advertiser_display_name: cleanDisplayName,
               advertiser_logo_url: cleanLogoUrl || null,
+              min_fee_applied: costs.minFeeApplied || false,
+              fee_policy_snapshot: costs.policySnapshot || null,
             })
             .eq('id', rpcRes.campaignId);
         } catch {}
+        rpcRes.status = 'pending_approval';
       }
       return rpcRes;
     }
@@ -4875,7 +4897,7 @@ export const supabaseDb = {
         fee_percentage: costs.feePercentage,
         fee_units: costs.feeUnits,
         total_units: costs.totalUnits,
-        status: 'pending_start',
+        status: 'pending_approval',
         creation_key: creationKey,
         budget_escrow_account_id: budgetEscrowId,
         fee_escrow_account_id: feeEscrowId,
@@ -4891,7 +4913,7 @@ export const supabaseDb = {
         throw new Error(insertErr.message);
       }
 
-      // Best-effort sync of optional Migration 021 columns without failing if pre-021
+      // Best-effort sync of optional Migration 021 & 024 columns without failing if pre-024
       try {
         await adminClient
           .from('campaigns')
@@ -4899,6 +4921,8 @@ export const supabaseDb = {
             hide_advertiser_name: hideAdvertiserName,
             advertiser_display_name: cleanDisplayName,
             advertiser_logo_url: cleanLogoUrl || null,
+            min_fee_applied: costs.minFeeApplied || false,
+            fee_policy_snapshot: costs.policySnapshot || null,
           })
           .eq('id', campaignId);
       } catch {}
@@ -4908,11 +4932,12 @@ export const supabaseDb = {
         success: true,
         idempotent: false,
         campaignId,
-        status: 'pending_start',
+        status: 'pending_approval',
         budgetUnits: costs.budgetUnits,
         feePercentage: costs.feePercentage,
         feeUnits: costs.feeUnits,
         totalUnits: costs.totalUnits,
+        minFeeApplied: costs.minFeeApplied,
         fundingTransactionId: String(txId),
         newAvailableBalance: updatedWallet.availableBalance,
       };
@@ -4928,7 +4953,7 @@ export const supabaseDb = {
     const adminClient = getSupabaseAdminClient();
     const { data: camp, error: campErr } = await adminClient
       .from('campaigns')
-      .select('id, advertiser_id, status')
+      .select('id, advertiser_id, status, approved_at')
       .eq('id', params.campaignId)
       .maybeSingle();
 
@@ -4940,6 +4965,12 @@ export const supabaseDb = {
     }
     if (!params.isAdmin && camp.advertiser_id !== params.actorId) {
       throw new Error('ليست لديك صلاحية تشغيل هذه الحملة.');
+    }
+    if (camp.status === 'pending_approval' && !params.isAdmin) {
+      throw new Error('الحملة الإعلانية بانتظار موافقة الإدارة قبل البدء. يرجى انتظار المراجعة والاعتماد.');
+    }
+    if (camp.status === 'rejected') {
+      throw new Error('تم رفض هذه الحملة الإعلانية ولا يمكن تشغيلها.');
     }
 
     const rpcClient = getRpcClient(params.authToken);
@@ -5005,6 +5036,12 @@ export const supabaseDb = {
         feeRevenueTransactionId: fullCamp.fee_revenue_transaction_id,
         linkedTaskId: fullCamp.linked_task_id,
       };
+    }
+    if (fullCamp.status === 'pending_approval' && !params.isAdmin) {
+      throw new Error('الحملة الإعلانية بانتظار موافقة الإدارة قبل البدء. يرجى انتظار المراجعة والاعتماد.');
+    }
+    if (fullCamp.status === 'rejected') {
+      throw new Error('تم رفض هذه الحملة الإعلانية ولا يمكن تشغيلها.');
     }
     if (fullCamp.status === 'cancelled' || fullCamp.status === 'completed') {
       throw new Error('لا يمكن تشغيل حملة منتهية أو ملغاة.');
@@ -5284,6 +5321,357 @@ export const supabaseDb = {
       isAdmin: true,
       authToken: params.authToken,
     });
+  },
+
+  async approveAdvertiserCampaign(params: {
+    campaignId: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const adminClient = getSupabaseAdminClient();
+    const { data: camp, error: fetchErr } = await adminClient
+      .from('campaigns')
+      .select('*')
+      .eq('id', params.campaignId)
+      .maybeSingle();
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!camp) throw new Error('الحملة الإعلانية غير موجودة.');
+
+    if (camp.status !== 'pending_approval') {
+      if (camp.status === 'pending_start' || camp.status === 'active') {
+        return { success: true, idempotent: true, campaignId: camp.id, status: camp.status };
+      }
+      throw new Error(`لا يمكن اعتماد حملة حالتها الحالية (${camp.status}).`);
+    }
+
+    const now = new Date().toISOString();
+    const { error: updErr } = await adminClient
+      .from('campaigns')
+      .update({
+        status: 'pending_start',
+        approved_at: now,
+        approved_by: params.actorId,
+        rejected_at: null,
+        rejected_by: null,
+        rejection_reason: null,
+        updated_at: now,
+      })
+      .eq('id', camp.id);
+
+    if (updErr) throw new Error(updErr.message);
+
+    if (camp.advertiser_id) {
+      await adminClient
+        .from('notifications')
+        .insert({
+          id: crypto.randomUUID(),
+          user_id: camp.advertiser_id,
+          title: 'تمت الموافقة على حملتك الإعلانية',
+          message: `وافقت الإدارة على حملتك "${camp.title}". يمكنك الآن بدء تشغيل الحملة لتصل للمستخدمين.`,
+          type: 'CAMPAIGN_APPROVED',
+          link: '/advertiser',
+          created_at: now,
+        })
+        .then(() => {}, () => {});
+    }
+
+    await this.writeFinancialAuditLog({
+      actionType: 'CAMPAIGN_APPROVED',
+      actorId: params.actorId,
+      details: {
+        campaign_id: camp.id,
+        advertiser_id: camp.advertiser_id,
+        title: camp.title,
+        budget_units: camp.budget_units,
+        fee_units: camp.fee_units,
+      },
+      authToken: params.authToken,
+    });
+
+    return { success: true, campaignId: camp.id, status: 'pending_start' as const };
+  },
+
+  async rejectAdvertiserCampaign(params: {
+    campaignId: string;
+    reason: string;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const cleanReason = String(params.reason || '').trim();
+    if (!cleanReason) {
+      throw new Error('يرجى تحديد سبب رفض الحملة الإعلانية.');
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const { data: camp, error: fetchErr } = await adminClient
+      .from('campaigns')
+      .select('*')
+      .eq('id', params.campaignId)
+      .maybeSingle();
+
+    if (fetchErr) throw new Error(fetchErr.message);
+    if (!camp) throw new Error('الحملة الإعلانية غير موجودة.');
+
+    if (camp.status === 'rejected') {
+      return { success: true, idempotent: true, campaignId: camp.id, status: 'rejected' };
+    }
+    if (camp.status !== 'pending_approval') {
+      throw new Error(`لا يمكن رفض حملة حالتها الحالية (${camp.status}).`);
+    }
+
+    // Refund 100% of reserved funds (budget + fee) from escrow back to advertiser wallet
+    const { accountRow: advWalletAcc } = await this.ensureUserFinancialAccount(camp.advertiser_id);
+    const refundBudget = parseMoneyStrict(camp.budget_units || 0);
+    const refundFee = parseMoneyStrict(camp.fee_units || 0);
+    const totalRefund = addMoney(refundBudget, refundFee);
+
+    const refundEntries = buildCampaignSettlementRefundEntries({
+      title: camp.title,
+      walletAccountId: advWalletAcc.id,
+      budgetEscrowAccountId: camp.budget_escrow_account_id,
+      feeEscrowAccountId: camp.fee_escrow_account_id,
+      refundBudgetUnits: refundBudget,
+      refundFeeUnits: refundFee,
+    });
+
+    const idemKey = `CAMPAIGN-REJECT-REFUND:${camp.id}`;
+    const { data: refundTxId, error: postErr } = await adminClient.rpc('post_ledger_transaction', {
+      p_transaction_type: 'CAMPAIGN_ESCROW_REFUND',
+      p_idempotency_key: idemKey,
+      p_reference: `CAMPAIGN:${camp.id}`,
+      p_metadata: {
+        campaign_id: camp.id,
+        advertiser_id: camp.advertiser_id,
+        reason: cleanReason,
+        refund_budget: refundBudget,
+        refund_fee: refundFee,
+        total_refund: totalRefund,
+        description: `استرداد كامل ميزانية ورسوم الحملة المرفوضة: ${camp.title}`,
+      },
+      p_entries: refundEntries,
+    });
+
+    if (postErr) throw new Error(postErr.message);
+
+    const now = new Date().toISOString();
+    const { error: updErr } = await adminClient
+      .from('campaigns')
+      .update({
+        status: 'rejected',
+        rejection_reason: cleanReason,
+        rejected_at: now,
+        rejected_by: params.actorId,
+        refunded_units: totalRefund,
+        settlement_transaction_id: String(refundTxId),
+        settled_at: now,
+        updated_at: now,
+      })
+      .eq('id', camp.id);
+
+    if (updErr) throw new Error(updErr.message);
+
+    if (camp.advertiser_id) {
+      await adminClient
+        .from('notifications')
+        .insert({
+          id: crypto.randomUUID(),
+          user_id: camp.advertiser_id,
+          title: 'تم رفض الحملة الإعلانية واسترداد الرصيد',
+          message: `تم رفض حملتك "${camp.title}" للسبب: ${cleanReason}. وقد تم إعادة كامل المبلغ المحجوز (${totalRefund.toLocaleString()} ر.ي) إلى محفظتك المتاحة.`,
+          type: 'CAMPAIGN_REJECTED',
+          link: '/advertiser',
+          created_at: now,
+        })
+        .then(() => {}, () => {});
+    }
+
+    await this.writeFinancialAuditLog({
+      actionType: 'CAMPAIGN_REJECTED',
+      actorId: params.actorId,
+      transactionId: String(refundTxId),
+      details: {
+        campaign_id: camp.id,
+        advertiser_id: camp.advertiser_id,
+        title: camp.title,
+        reason: cleanReason,
+        refund_total: totalRefund,
+      },
+      authToken: params.authToken,
+    });
+
+    return {
+      success: true,
+      campaignId: camp.id,
+      status: 'rejected' as const,
+      refundTransactionId: String(refundTxId),
+      refundedUnits: totalRefund,
+    };
+  },
+
+  async getAdvertiserWalletSummary(advertiserId: string, _authToken?: string): Promise<AdvertiserWalletSummary> {
+    const adminClient = getSupabaseAdminClient();
+    const wallet = await this.getWallet(advertiserId);
+
+    let reservedBudgetEscrow = 0;
+    let reservedFeeEscrow = 0;
+    let totalSpent = 0;
+    let totalRefunded = 0;
+
+    try {
+      const { data: camps } = await adminClient
+        .from('campaigns')
+        .select('status, budget_units, fee_units, refunded_units, fee_revenue_transaction_id')
+        .eq('advertiser_id', advertiserId);
+
+      if (camps) {
+        for (const c of camps) {
+          const budget = parseMoneyStrict(c.budget_units || 0);
+          const fee = parseMoneyStrict(c.fee_units || 0);
+          const refunded = parseMoneyStrict(c.refunded_units || 0);
+
+          totalRefunded = addMoney(totalRefunded, refunded);
+
+          if (c.status === 'pending_approval' || c.status === 'pending_start' || c.status === 'active') {
+            reservedBudgetEscrow = addMoney(reservedBudgetEscrow, budget);
+            if (!c.fee_revenue_transaction_id) {
+              reservedFeeEscrow = addMoney(reservedFeeEscrow, fee);
+            }
+          }
+          if (c.status === 'completed') {
+            const spent = Math.max(0, subMoney(budget, refunded));
+            totalSpent = addMoney(totalSpent, spent);
+          }
+        }
+      }
+    } catch {}
+
+    let totalDeposited = 0;
+    let pendingDepositsCount = 0;
+    let pendingDepositsAmount = 0;
+    let recentDeposits: ExternalDeposit[] = [];
+
+    try {
+      const { data: deps } = await adminClient
+        .from('external_deposits')
+        .select('*')
+        .eq('advertiser_id', advertiserId)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (deps) {
+        recentDeposits = deps.map((d: any) => ({
+          id: d.id,
+          externalAccountId: d.external_account_id,
+          depositPurpose: d.deposit_purpose || 'advertiser_wallet',
+          advertiserId: d.advertiser_id,
+          amountUnits: parseMoneyStrict(d.amount_units || 0),
+          referenceNumber: d.reference_number,
+          receiptUrl: d.receipt_url,
+          depositorName: d.depositor_name,
+          depositorPhone: d.depositor_phone,
+          status: d.status,
+          reviewedBy: d.reviewed_by,
+          reviewedAt: d.reviewed_at,
+          rejectionReason: d.rejection_reason,
+          ledgerTransactionId: d.ledger_transaction_id,
+          notes: d.notes,
+          createdAt: d.created_at,
+          updatedAt: d.updated_at,
+        }));
+
+        for (const d of deps) {
+          const amt = parseMoneyStrict(d.amount_units || 0);
+          if (d.status === 'approved') {
+            totalDeposited = addMoney(totalDeposited, amt);
+          } else if (d.status === 'pending') {
+            pendingDepositsCount += 1;
+            pendingDepositsAmount = addMoney(pendingDepositsAmount, amt);
+          }
+        }
+      }
+    } catch {}
+
+    const totalReserved = addMoney(reservedBudgetEscrow, reservedFeeEscrow);
+
+    return {
+      advertiserId,
+      availableBalance: wallet.availableBalance,
+      reservedBudgetEscrow,
+      reservedFeeEscrow,
+      totalReserved,
+      totalDeposited,
+      totalSpent,
+      totalRefunded,
+      pendingDepositsCount,
+      pendingDepositsAmount,
+      recentDeposits,
+    };
+  },
+
+  async getAdvertiserExternalAccounts(): Promise<ExternalAccount[]> {
+    const adminClient = getSupabaseAdminClient();
+    const { data, error } = await adminClient
+      .from('external_accounts')
+      .select('*')
+      .in('fund_scope', ['advertiser', 'mixed'])
+      .eq('status', 'active')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      if (error.code === '42P01' || error.message.includes('does not exist')) return [];
+      throw new Error(error.message);
+    }
+    return (data || []).map((r: any) => ({
+      id: r.id,
+      accountName: r.account_name,
+      ownerName: r.owner_name,
+      ownerRole: r.owner_role,
+      accountType: r.account_type,
+      providerName: r.provider_name,
+      accountNumber: r.account_number,
+      currency: r.currency || 'YER',
+      fundScope: r.fund_scope,
+      financialAccountId: r.financial_account_id,
+      status: r.status,
+      notes: r.notes,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  },
+
+  async getAdvertiserDeposits(advertiserId: string): Promise<ExternalDeposit[]> {
+    const adminClient = getSupabaseAdminClient();
+    const { data, error } = await adminClient
+      .from('external_deposits')
+      .select('*')
+      .eq('advertiser_id', advertiserId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      if (error.code === '42P01' || error.message.includes('does not exist')) return [];
+      throw new Error(error.message);
+    }
+    return (data || []).map((d: any) => ({
+      id: d.id,
+      externalAccountId: d.external_account_id,
+      depositPurpose: d.deposit_purpose || 'advertiser_wallet',
+      advertiserId: d.advertiser_id,
+      amountUnits: parseMoneyStrict(d.amount_units || 0),
+      referenceNumber: d.reference_number,
+      receiptUrl: d.receipt_url,
+      depositorName: d.depositor_name,
+      depositorPhone: d.depositor_phone,
+      status: d.status,
+      reviewedBy: d.reviewed_by,
+      reviewedAt: d.reviewed_at,
+      rejectionReason: d.rejection_reason,
+      ledgerTransactionId: d.ledger_transaction_id,
+      notes: d.notes,
+      createdAt: d.created_at,
+      updatedAt: d.updated_at,
+    }));
   },
 
   // ============================================================================
@@ -5916,6 +6304,21 @@ export const supabaseDb = {
       .eq('status', 'pending');
 
     if (updErr) throw new Error(updErr.message);
+
+    if (dep.advertiser_id) {
+      await adminClient
+        .from('notifications')
+        .insert({
+          id: crypto.randomUUID(),
+          user_id: dep.advertiser_id,
+          title: 'تم رفض إيصال الإيداع',
+          message: `تم رفض الإيصال رقم (${dep.reference_number}) للسبب التالي: ${cleanReason}`,
+          type: 'WALLET_DEPOSIT_REJECTED',
+          link: '/advertiser',
+          created_at: now,
+        })
+        .then(() => {}, () => {});
+    }
 
     await this.writeFinancialAuditLog({
       actionType: 'EXTERNAL_DEPOSIT_REJECTED',

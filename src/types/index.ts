@@ -597,6 +597,12 @@ export interface AppNotification {
   createdAt: string;
 }
 
+export interface CampaignFeePolicy {
+  defaultFeePercentage: number;
+  minFeeYer?: number;
+  categoryFeePercentages?: Record<string, number>;
+}
+
 export interface PlatformSettings {
   id: string;
   platformName: string;
@@ -606,6 +612,7 @@ export interface PlatformSettings {
   dailyWithdrawalLimit: number;
   defaultFeePercentage: number;
   advertiserCampaignFeePercentage: number;
+  campaignFeePolicy?: CampaignFeePolicy;
   referralBonus: number;
   taskSubmissionLimit: number;
   isRegistrationOpen: boolean;
@@ -615,7 +622,14 @@ export interface PlatformSettings {
   updatedAt: string;
 }
 
-export type CampaignStatus = 'pending_start' | 'active' | 'paused' | 'completed' | 'cancelled';
+export type CampaignStatus =
+  | 'pending_approval'
+  | 'pending_start'
+  | 'active'
+  | 'paused'
+  | 'completed'
+  | 'cancelled'
+  | 'rejected';
 
 export interface CampaignItem {
   id: string;
@@ -653,10 +667,31 @@ export interface CampaignItem {
     instructions?: string;
   };
   deadlineAt?: string | null;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+  rejectedAt?: string | null;
+  rejectedBy?: string | null;
+  rejectionReason?: string | null;
+  minFeeApplied?: boolean;
+  feePolicySnapshot?: Record<string, any> | null;
   startedAt?: string | null;
   settledAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AdvertiserWalletSummary {
+  advertiserId: string;
+  availableBalance: number;
+  reservedBudgetEscrow: number;
+  reservedFeeEscrow: number;
+  totalReserved: number;
+  totalDeposited: number;
+  totalSpent: number;
+  totalRefunded: number;
+  pendingDepositsCount: number;
+  pendingDepositsAmount: number;
+  recentDeposits: ExternalDeposit[];
 }
 
 export interface FinancialReportData {

@@ -28,10 +28,20 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 export function getCampaignStatusLabel(status: CampaignItem['status']): { label: string; cls: string } {
   switch (status) {
+    case 'pending_approval':
+      return {
+        label: 'بانتظار موافقة الإدارة',
+        cls: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/60 dark:text-yellow-300',
+      };
     case 'pending_start':
       return {
-        label: 'ممول — بانتظار البدء',
+        label: 'معتمدة — بانتظار البدء',
         cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
+      };
+    case 'rejected':
+      return {
+        label: 'مرفوضة من الإدارة',
+        cls: 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300',
       };
     case 'active':
       return {

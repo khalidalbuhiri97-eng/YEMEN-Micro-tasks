@@ -360,10 +360,31 @@ export const api = {
     request<any>(`/advertiser/campaigns/${id}/start`, { method: 'POST' }),
   settleAdvertiserCampaign: (id: string, payload?: { targetStatus?: 'cancelled' | 'completed'; reason?: string }) =>
     request<any>(`/advertiser/campaigns/${id}/settle`, { method: 'POST', body: JSON.stringify(payload || {}) }),
+  getAdvertiserWalletSummary: () => request<any>('/advertiser/wallet-summary'),
+  getAdvertiserExternalAccounts: () => request<{ accounts: any[] }>('/advertiser/external-accounts'),
+  getAdvertiserDeposits: () => request<{ deposits: any[] }>('/advertiser/deposits'),
+  createAdvertiserDeposit: (payload: {
+    externalAccountId: string;
+    amountUnits: number;
+    referenceNumber: string;
+    receiptUrl: string;
+    depositorName?: string;
+    depositorPhone?: string;
+    notes?: string;
+  }) => request<any>('/advertiser/deposits', { method: 'POST', body: JSON.stringify(payload) }),
+  getAdvertiserDepositReceiptUploadUrl: (payload: { fileName: string; contentType: string; fileSize: number }) =>
+    request<{ signedUrl: string; token: string; path: string }>('/advertiser/deposits/receipt-signed-url', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   // Single Authorized Owner Admin APIs
   getAdminOverview: () => request<any>('/admin/overview'),
   getAdminCampaigns: () => request<{ campaigns: any[] }>('/admin/campaigns'),
+  approveAdminCampaign: (id: string) =>
+    request<any>(`/admin/campaigns/${id}/approve`, { method: 'POST' }),
+  rejectAdminCampaign: (id: string, reason: string) =>
+    request<any>(`/admin/campaigns/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
   startAdminCampaign: (id: string) =>
     request<any>(`/admin/campaigns/${id}/start`, { method: 'POST' }),
   settleAdminCampaign: (id: string, payload?: { targetStatus?: 'cancelled' | 'completed'; reason?: string }) =>
@@ -377,6 +398,11 @@ export const api = {
   reviewSubmission: (id: string, action: 'APPROVE' | 'REJECT', reason?: string) =>
     request<any>(`/admin/submissions/${id}/review`, { method: 'POST', body: JSON.stringify({ action, reason }) }),
   getAdminWithdrawals: () => request<any>('/admin/withdrawals'),
+  getAdminWithdrawalReceiptUploadUrl: (payload: { fileName: string; contentType: string; fileSize: number }) =>
+    request<{ signedUrl: string; token: string; path: string }>('/admin/withdrawals/receipt-signed-url', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   reviewWithdrawal: (id: string, action: 'PAY' | 'REJECT', payload?: { transferReference?: string; receiptUrl?: string; reason?: string }) =>
     request<any>(`/admin/withdrawals/${id}/review`, { method: 'POST', body: JSON.stringify({ action, ...payload }) }),
   getAdminUsers: () => request<any>('/admin/users'),

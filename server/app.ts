@@ -3,6 +3,14 @@ import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseDb, generateWalletAddress, generateReferralCode } from './supabaseDb.js';
+import {
+  parseMoneyStrict,
+  toMicros,
+  fromMicros,
+  calcWalletTransferBreakdown,
+  calculateCampaignFeePolicyCosts,
+  formatYer,
+} from '../shared/money.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
@@ -844,8 +852,40 @@ app.post('/api/storage/signed-url', authMiddleware, async (req: AuthenticatedReq
     if (!cleanPath || cleanPath.includes('..')) {
       return res.status(400).json({ error: 'مسار التخزين مطلوب' });
     }
-    if (cleanPath.startsWith('external-receipts/') && req.user?.role !== 'admin') {
-      return res.status(403).json({ error: 'صلاحية الإدارة مطلوبة لعرض إيصالات التحصيل الخارجي.' });
+
+    const isAdmin = req.user?.role === 'admin';
+    const userId = req.user?.id;
+
+    if (!isAdmin) {
+      if (cleanPath.startsWith('external-receipts/')) {
+        const isOwnerPath = cleanPath.startsWith(`external-receipts/${userId}/`);
+        if (!isOwnerPath) {
+          const adminClient = getSupabaseAdminClient();
+          const { data: dep } = await adminClient
+            .from('external_deposits')
+            .select('id')
+            .eq('advertiser_id', userId)
+            .eq('receipt_url', cleanPath)
+            .maybeSingle();
+          if (!dep) {
+            return res.status(403).json({ error: 'صلاحية مرفوضة: لا يمكنك عرض إيصالات خاصة بمستخدمين آخرين.' });
+          }
+        }
+      } else if (cleanPath.startsWith('withdrawal-receipts/')) {
+        const isOwnerPath = cleanPath.startsWith(`withdrawal-receipts/${userId}/`);
+        if (!isOwnerPath) {
+          const adminClient = getSupabaseAdminClient();
+          const { data: withReq } = await adminClient
+            .from('withdrawal_requests')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('receipt_url', cleanPath)
+            .maybeSingle();
+          if (!withReq) {
+            return res.status(403).json({ error: 'صلاحية مرفوضة: لا يمكنك عرض إشعارات صرف خاصة بمستخدمين آخرين.' });
+          }
+        }
+      }
     }
 
     const adminClient = getSupabaseAdminClient();
@@ -988,9 +1028,9 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
       return res.status(401).json({ error: 'رمز الجلسة غير صالح.' });
     }
 
-    const numAmount = Math.round(Number(amount));
+    const numAmount = parseMoneyStrict(amount);
     if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: 'يرجى تحديد مبلغ صحيح ومحدد أكبر من صفر للتحويل.' });
+      return res.status(400).json({ error: 'يرجى تحديد مبلغ محدد أكبر من صفر للتحويل.' });
     }
 
     if (!recipientAddress || typeof recipientAddress !== 'string' || !recipientAddress.trim()) {
@@ -2513,7 +2553,7 @@ app.post('/api/advertiser/campaigns', advertiserMiddleware, async (req: Authenti
       creationKey,
     } = req.body || {};
 
-    const cleanReward = Math.round(Number(rewardUnits ?? rewardYer));
+    const cleanReward = parseMoneyStrict(rewardUnits ?? rewardYer);
     const cleanSlots = Math.round(Number(slots ?? totalQuantity));
     if (!title || !description) {
       return res.status(400).json({ error: 'يرجى إدخال عنوان الحملة ووصف المهمة المطلوبة.' });
@@ -2560,7 +2600,8 @@ app.post('/api/advertiser/campaigns/:id/start', advertiserMiddleware, async (req
     });
     res.json({ success: true, ...result });
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'فشل تشغيل الحملة الإعلانية.' });
+    const isApprovalBlock = String(err?.message || '').includes('بانتظار موافقة الإدارة');
+    res.status(isApprovalBlock ? 403 : 400).json({ error: err.message || 'فشل تشغيل الحملة الإعلانية.' });
   }
 });
 
@@ -2580,12 +2621,133 @@ app.post('/api/advertiser/campaigns/:id/settle', advertiserMiddleware, async (re
   }
 });
 
+// Advertiser Wallet Summary & Deposits
+app.get('/api/advertiser/wallet-summary', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const summary = await supabaseDb.getAdvertiserWalletSummary(req.user.id, req.authToken);
+    res.json(summary);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب تفاصيل محفظة المعلن.' });
+  }
+});
+
+app.get('/api/advertiser/external-accounts', advertiserMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const accounts = await supabaseDb.getAdvertiserExternalAccounts();
+    res.json({ accounts });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب حسابات التحصيل الخارجية المتاحة.' });
+  }
+});
+
+app.get('/api/advertiser/deposits', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const deposits = await supabaseDb.getAdvertiserDeposits(req.user.id);
+    res.json({ deposits });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب إيداعات المعلن.' });
+  }
+});
+
+app.post('/api/advertiser/deposits', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { externalAccountId, amountUnits, referenceNumber, receiptUrl, depositorName, depositorPhone, notes } = req.body || {};
+    const amt = parseMoneyStrict(amountUnits);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ error: 'يرجى إدخال مبلغ صحيح للإيداع.' });
+    }
+    if (!referenceNumber || !String(referenceNumber).trim()) {
+      return res.status(400).json({ error: 'الرقم المرجعي للإيصال إلزامي.' });
+    }
+    if (!receiptUrl || !String(receiptUrl).trim()) {
+      return res.status(400).json({ error: 'صورة أو مسار إشعار الإيداع إلزامي.' });
+    }
+
+    const result = await supabaseDb.createExternalDeposit({
+      externalAccountId,
+      depositPurpose: 'advertiser_wallet',
+      advertiserId: req.user.id,
+      amountUnits: amt,
+      referenceNumber: String(referenceNumber).trim(),
+      receiptUrl: String(receiptUrl).trim(),
+      depositorName: depositorName ? String(depositorName).trim() : undefined,
+      depositorPhone: depositorPhone ? String(depositorPhone).trim() : undefined,
+      notes: notes ? String(notes).trim() : undefined,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تسجيل إشعار الإيداع.' });
+  }
+});
+
+app.post('/api/advertiser/deposits/receipt-signed-url', advertiserMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { fileName, contentType, fileSize } = req.body || {};
+    const cleanType = String(contentType || '').trim().toLowerCase();
+    const ALLOWED = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'application/pdf'];
+    if (!ALLOWED.includes(cleanType)) {
+      return res.status(400).json({ error: 'نوع الملف غير مدعوم. يرجى اختيار صورة أو PDF.' });
+    }
+    if (Number(fileSize || 0) > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'حجم الإيصال يجب أن لا يتجاوز 5 ميجابايت.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const safeName = (fileName || 'receipt.png').replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const storagePath = `external-receipts/${req.user.id}/${Date.now()}_${crypto.randomUUID().slice(0, 6)}_${safeName}`;
+
+    const { data, error } = await adminClient.storage
+      .from('task-proofs')
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data?.signedUrl) {
+      return res.status(500).json({ error: error?.message || 'تعذر إنشاء رابط رفع الإيصال.' });
+    }
+
+    res.json({ signedUrl: data.signedUrl, token: data.token, path: storagePath });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'تعذر إنشاء رابط رفع الإيصال.' });
+  }
+});
+
+// Admin Campaigns & Withdrawals
 app.get('/api/admin/campaigns', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const campaigns = await supabaseDb.getAllAdminCampaigns(req.authToken);
     res.json({ campaigns });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل جلب الحملات الإعلانية.' });
+  }
+});
+
+app.post('/api/admin/campaigns/:id/approve', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.approveAdvertiserCampaign({
+      campaignId: req.params.id,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل اعتماد الحملة الإعلانية.' });
+  }
+});
+
+app.post('/api/admin/campaigns/:id/reject', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { reason } = req.body || {};
+    const result = await supabaseDb.rejectAdvertiserCampaign({
+      campaignId: req.params.id,
+      reason: String(reason || ''),
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل رفض الحملة الإعلانية واسترجاع الرصيد.' });
   }
 });
 
@@ -2616,6 +2778,36 @@ app.post('/api/admin/campaigns/:id/settle', adminMiddleware, async (req: Authent
     res.json({ success: true, ...result });
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'فشل تسوية الحملة.' });
+  }
+});
+
+app.post('/api/admin/withdrawals/receipt-signed-url', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { fileName, contentType, fileSize } = req.body || {};
+    const cleanType = String(contentType || '').trim().toLowerCase();
+    const ALLOWED = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'application/pdf'];
+    if (!ALLOWED.includes(cleanType)) {
+      return res.status(400).json({ error: 'نوع الملف غير مدعوم. يرجى اختيار صورة أو PDF.' });
+    }
+    if (Number(fileSize || 0) > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: 'حجم إشعار الصرف يجب أن لا يتجاوز 5 ميجابايت.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+    const safeName = (fileName || 'payout_receipt.png').replace(/[^a-zA-Z0-9_.-]/g, '_');
+    const storagePath = `withdrawal-receipts/${Date.now()}_${crypto.randomUUID().slice(0, 6)}_${safeName}`;
+
+    const { data, error } = await adminClient.storage
+      .from('task-proofs')
+      .createSignedUploadUrl(storagePath);
+
+    if (error || !data?.signedUrl) {
+      return res.status(500).json({ error: error?.message || 'تعذر إنشاء رابط رفع إشعار الصرف.' });
+    }
+
+    res.json({ signedUrl: data.signedUrl, token: data.token, path: storagePath });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'تعذر إنشاء رابط رفع إشعار الصرف.' });
   }
 });
 
