@@ -18,6 +18,7 @@ import { WalletView } from './components/dashboard/WalletView.tsx';
 import { AdminDashboard } from './components/admin/AdminDashboard.tsx';
 import { AdvertiserPortal } from './components/advertiser/AdvertiserPortal.tsx';
 import { LegalModal } from './components/public/LegalPages.tsx';
+import { AdBanner } from './components/ads/AdBanner.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
@@ -94,6 +95,7 @@ function MainApp() {
       <div className="flex-1 pb-16 md:pb-0">
         {currentTab === 'home' && (
           <main>
+            <AdBanner placement="home_hero_top" slotGroup="home" />
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
