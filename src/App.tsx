@@ -93,9 +93,14 @@ function MainApp() {
 
       {/* Main View Router */}
       <div className="flex-1 pb-16 md:pb-0">
+        <div
+          className={currentTab === 'home' ? 'block' : 'hidden'}
+          aria-hidden={currentTab !== 'home'}
+        >
+          <AdBanner placement="home_hero_top" />
+        </div>
         {currentTab === 'home' && (
           <main>
-            <AdBanner placement="home_hero_top" slotGroup="home" />
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}

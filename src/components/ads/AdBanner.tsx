@@ -1,65 +1,27 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 
-export type AdPlacementId =
-  | 'home_hero_top'
-  | 'admin_top'
-  | `tasks_after_${number}`
-  | `categories_after_${number}`;
-
-export type AdSlotGroup = 'home' | 'tasks' | 'categories' | 'admin';
+export type AdPlacementId = 'home_hero_top';
 
 export interface AdBannerProps {
-  /** Unique identifier of the placement on the page */
+  /** Placement identifier (restricted to the home page banner slot) */
   placement: AdPlacementId;
-  /** Logical section group for layout spacing & optional per-section zone lookup */
-  slotGroup?: AdSlotGroup;
-  /** Optional explicit HilltopAds Zone script URL for this placement */
-  scriptSrc?: string;
-  /** Extra CSS classes for the outer wrapper (e.g. col-span-full inside CSS Grid) */
+  /** Extra CSS classes for the outer wrapper */
   className?: string;
-  /** Security gate: when false, the ad slot is not rendered or loaded at all */
-  enabled?: boolean;
 }
 
 /**
- * Primary verified HilltopAds Banner script provided for Yemen Task.
- * Live inspection of this Zone script shows:
- * - Format: In-page Banner (`bannerScript`)
- * - Dimensions: 300x100 on Mobile User-Agents; returns no banner payload on Desktop UAs
- * - Global singleton lock inside HilltopAds script (`globalNameLoaded: "ffe396"`)
- *
- * Because HilltopAds enforces one active instance per Zone via `globalNameLoaded`,
- * secondary placements (tasks, categories, admin) require their own independent
- * HilltopAds Zone script URLs rather than duplicating this single Zone URL.
+ * Single verified HilltopAds Mobile Banner Zone (300x100) for Yemen Task Home page.
+ * - Renders an in-page iframe banner (`300x100`) on Mobile User-Agents via `settings.appendTo`.
+ * - Returns no banner payload on Desktop User-Agents, where the container collapses cleanly.
+ * - Uses HilltopAds' single-zone `globalNameLoaded` lock (`ffe396`).
  */
 export const PRIMARY_HILLTOP_MOBILE_BANNER_SRC =
   '//conventionalresponse.com/bgXTVTsgd.Gblm0xYwWMcj/neAm/9/usZhUbltkIPqTccZ2/MUzGQY4SOADxkCtmNMzkYez-NlDkgG5/MowW';
 
-const ENV_ZONE_OVERRIDES: Partial<Record<AdSlotGroup | 'home_hero_top', string>> = {
-  home_hero_top: import.meta.env.VITE_HILLTOP_ZONE_HOME || PRIMARY_HILLTOP_MOBILE_BANNER_SRC,
-  tasks: import.meta.env.VITE_HILLTOP_ZONE_TASKS || undefined,
-  categories: import.meta.env.VITE_HILLTOP_ZONE_CATEGORIES || undefined,
-  admin: import.meta.env.VITE_HILLTOP_ZONE_ADMIN || undefined,
-};
+const HOME_ZONE_SCRIPT_SRC: string =
+  import.meta.env.VITE_HILLTOP_ZONE_HOME || PRIMARY_HILLTOP_MOBILE_BANNER_SRC;
 
 const injectedScriptUrls = new Set<string>();
-
-function resolveScriptSrc(
-  placement: AdPlacementId,
-  slotGroup?: AdSlotGroup,
-  explicitSrc?: string
-): string | undefined {
-  if (explicitSrc && explicitSrc.trim()) {
-    return explicitSrc.trim();
-  }
-  if (placement === 'home_hero_top') {
-    return ENV_ZONE_OVERRIDES.home_hero_top;
-  }
-  if (slotGroup && ENV_ZONE_OVERRIDES[slotGroup]) {
-    return ENV_ZONE_OVERRIDES[slotGroup];
-  }
-  return undefined;
-}
 
 class AdErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -88,15 +50,9 @@ class AdErrorBoundary extends React.Component<
   }
 }
 
-type AdLoadStatus = 'idle' | 'loading' | 'loaded' | 'fallback';
+type AdLoadStatus = 'loading' | 'loaded' | 'fallback';
 
-const AdBannerInner: React.FC<AdBannerProps> = ({
-  placement,
-  slotGroup,
-  scriptSrc,
-  className = '',
-  enabled = true,
-}) => {
+const AdBannerInner: React.FC<AdBannerProps> = ({ placement, className = '' }) => {
   const reactId = useId().replace(/:/g, '');
   const hostElementId = `hilltop-slot-${placement}-${reactId}`;
 
@@ -104,7 +60,7 @@ const AdBannerInner: React.FC<AdBannerProps> = ({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const hasAttemptedLoadRef = useRef(false);
 
-  const resolvedSrc = enabled ? resolveScriptSrc(placement, slotGroup, scriptSrc) : undefined;
+  const resolvedSrc = HOME_ZONE_SCRIPT_SRC.trim();
 
   const [status, setStatus] = useState<AdLoadStatus>(() =>
     resolvedSrc ? 'loading' : 'fallback'
@@ -142,7 +98,7 @@ const AdBannerInner: React.FC<AdBannerProps> = ({
   // Browser-only HilltopAds script loader & DOM injection observer
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
-    if (!enabled || !resolvedSrc) {
+    if (!resolvedSrc) {
       setStatus('fallback');
       return;
     }
@@ -160,11 +116,7 @@ const AdBannerInner: React.FC<AdBannerProps> = ({
     );
     if (hasAttemptedLoadRef.current || injectedScriptUrls.has(resolvedSrc) || alreadyInDom) {
       const existingIframe = hostEl.querySelector('iframe');
-      if (existingIframe) {
-        setStatus('loaded');
-      } else {
-        setStatus('fallback');
-      }
+      setStatus(existingIframe ? 'loaded' : 'fallback');
       return;
     }
 
@@ -208,10 +160,9 @@ const AdBannerInner: React.FC<AdBannerProps> = ({
 
       script.onload = () => {
         if (isDisposed) return;
-        // Check shortly after onload in case synchronous banner DOM insertion finished
         window.setTimeout(() => {
-          if (!isDisposed && !inspectInjectedAd()) {
-            // Leave remaining window for async iframe creation before falling back
+          if (!isDisposed) {
+            inspectInjectedAd();
           }
         }, 250);
       };
@@ -223,7 +174,7 @@ const AdBannerInner: React.FC<AdBannerProps> = ({
 
       hostEl.appendChild(script);
 
-      // Collapse cleanly if HilltopAds delivers no banner payload (e.g. Desktop UA, ad-blocker, unfilled zone)
+      // Collapse cleanly if HilltopAds delivers no banner payload (e.g. Desktop UA or ad-blocker)
       fallbackTimer = window.setTimeout(() => {
         if (!isDisposed && !inspectInjectedAd()) {
           setStatus('fallback');
@@ -240,9 +191,9 @@ const AdBannerInner: React.FC<AdBannerProps> = ({
         window.clearTimeout(fallbackTimer);
       }
     };
-  }, [enabled, hostElementId, placement, resolvedSrc]);
+  }, [hostElementId, placement, resolvedSrc]);
 
-  if (!enabled || !resolvedSrc || status === 'fallback') {
+  if (!resolvedSrc || status === 'fallback') {
     return null;
   }
 

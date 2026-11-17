@@ -33,7 +33,6 @@ import {
   CampaignInvoiceModal,
   getCampaignStatusLabel,
 } from '../advertiser/CampaignModals.tsx';
-import { AdBanner } from '../ads/AdBanner.tsx';
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
@@ -442,13 +441,6 @@ export const AdminDashboard: React.FC = () => {
 
   return (
     <div className="space-y-8">
-      {user.role === 'admin' && (
-        <AdBanner
-          placement="admin_top"
-          slotGroup="admin"
-          enabled={user.role === 'admin'}
-        />
-      )}
       {/* Admin Header */}
       <div className="relative p-6 rounded-2xl bg-slate-900 text-white shadow-xl overflow-hidden border border-slate-800">
         <div className="absolute inset-0 opacity-20 pointer-events-none">

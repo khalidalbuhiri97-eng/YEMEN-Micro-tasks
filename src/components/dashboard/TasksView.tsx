@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SecureImageView } from '../common/SecureImageView.tsx';
-import { AdBanner } from '../ads/AdBanner.tsx';
 
 function renderTextWithSafeLinks(text: string) {
   if (!text) return null;
@@ -334,7 +333,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {tasks.map((task, index) => {
+          {tasks.map((task) => {
             const percentCompleted =
               task.totalQuantity > 0
                 ? Math.min(100, Math.round((task.completedQuantity / task.totalQuantity) * 100))
@@ -342,10 +341,10 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
             const remaining = Math.max(0, task.totalQuantity - task.completedQuantity);
 
             return (
-              <React.Fragment key={task.id}>
-                <div
-                  className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 hover:shadow-md transition-all flex flex-col justify-between"
-                >
+              <div
+                key={task.id}
+                className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 hover:shadow-md transition-all flex flex-col justify-between"
+              >
                 <div>
                   {/* Category & Time Unboxed Metadata (§1.A) */}
                   <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2.5">
@@ -434,15 +433,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                     </button>
                   </div>
                 </div>
-                </div>
-                {(index + 1) % 2 === 0 && (
-                  <AdBanner
-                    placement={`tasks_after_${index + 1}`}
-                    slotGroup="tasks"
-                    className="col-span-full"
-                  />
-                )}
-              </React.Fragment>
+              </div>
             );
           })}
         </div>

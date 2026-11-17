@@ -1,6 +1,5 @@
 import React from 'react';
 import { Smartphone, ClipboardList, Star, FileText, Database, Share2, ArrowLeft } from 'lucide-react';
-import { AdBanner } from '../ads/AdBanner.tsx';
 
 interface TaskCategoriesProps {
   onSelectCategory: (category: string) => void;
@@ -68,41 +67,33 @@ export const TaskCategoriesSection: React.FC<TaskCategoriesProps> = ({ onSelectC
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {categories.map((c, index) => {
+          {categories.map((c) => {
             const Icon = c.icon;
             return (
-              <React.Fragment key={c.id}>
-                <div
-                  onClick={() => onSelectCategory(c.id)}
-                  className="group cursor-pointer p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 hover:shadow-md transition-all flex flex-col justify-between"
-                >
-                  <div>
-                    <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200/60 dark:border-slate-700 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors mb-4">
-                      <Icon className="w-5 h-5" />
-                    </div>
-
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white mb-2 group-hover:text-emerald-600 transition-colors">
-                      {c.name}
-                    </h3>
-
-                    <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
-                      {c.desc}
-                    </p>
+              <div
+                key={c.id}
+                onClick={() => onSelectCategory(c.id)}
+                className="group cursor-pointer p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 hover:border-emerald-500/50 hover:shadow-md transition-all flex flex-col justify-between"
+              >
+                <div>
+                  <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm border border-slate-200/60 dark:border-slate-700 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white transition-colors mb-4">
+                    <Icon className="w-5 h-5" />
                   </div>
 
-                  <div className="pt-3 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
-                    <span>تصفح هذا التصنيف</span>
-                    <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1 transition-transform" />
-                  </div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white mb-2 group-hover:text-emerald-600 transition-colors">
+                    {c.name}
+                  </h3>
+
+                  <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed mb-4">
+                    {c.desc}
+                  </p>
                 </div>
-                {(index + 1) % 2 === 0 && (
-                  <AdBanner
-                    placement={`categories_after_${index + 1}`}
-                    slotGroup="categories"
-                    className="col-span-full"
-                  />
-                )}
-              </React.Fragment>
+
+                <div className="pt-3 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+                  <span>تصفح هذا التصنيف</span>
+                  <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1 transition-transform" />
+                </div>
+              </div>
             );
           })}
         </div>
