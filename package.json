@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test:financial": "tsx server/financialTest.ts"
+    "test:financial": "tsx server/financialTest.ts",
+    "test:clixwall": "tsx server/clixwallTest.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

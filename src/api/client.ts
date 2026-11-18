@@ -572,5 +572,22 @@ export const api = {
     }),
   importAdminGeoCountry: (countryId: string) =>
     request<any>(`/admin/geo/countries/${encodeURIComponent(countryId)}/import`, { method: 'POST' }),
+
+  // ClixWall Offer Wall & Rewards
+  getClixWallOfferWallUrl: () => request<{ offerWallUrl: string; userId: string }>('/clixwall/offerwall-url'),
+  getClixWallRewards: () =>
+    request<{
+      rewards: Array<{
+        id: string;
+        transaction_id: string;
+        offer_name?: string;
+        reward_usd: number;
+        exchange_rate: number;
+        reward_yer: number;
+        status: string;
+        created_at: string;
+      }>;
+      summary: { totalUsdEarned: number; totalYerCredited: number; offersCount: number };
+    }>('/clixwall/rewards'),
 };
 

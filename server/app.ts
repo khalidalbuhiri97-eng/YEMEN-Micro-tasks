@@ -3307,4 +3307,170 @@ app.post('/api/admin/geo/countries/:countryId/import', adminMiddleware, async (r
   }
 });
 
+// ==============================================================================
+// CLIXWALL OFFER WALL & POSTBACK ENDPOINTS
+// ==============================================================================
+
+app.get('/api/clixwall/offerwall-url', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      console.warn('[CLIXWALL] Rejecting offerwall URL request: Unauthenticated user.');
+      return res.status(401).json({ error: 'غير مصرح: يجب تسجيل الدخول للوصول إلى حائط العروض.' });
+    }
+
+    const apiKey = (process.env.CLIXWALL_API_KEY || 'YOUR_API_KEY').trim();
+    let rawBaseUrl = (process.env.CLIXWALL_OFFERWALL_URL || 'https://clixwall.com/wall').trim();
+    if (rawBaseUrl.includes('?')) {
+      rawBaseUrl = rawBaseUrl.split('?')[0];
+    }
+    const baseUrl = rawBaseUrl.replace(/\/+$/, '') || 'https://clixwall.com/wall';
+    const offerWallUrl = `${baseUrl}?api=${encodeURIComponent(apiKey)}&user=${encodeURIComponent(user.id)}`;
+
+    const maskedKey = apiKey.length > 8 ? `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}` : '***';
+    console.log(`[CLIXWALL] Generated OfferWall URL for user: ${user.id} (api: ${maskedKey})`);
+
+    return res.json({ offerWallUrl, userId: user.id });
+  } catch (err: any) {
+    console.error('[CLIXWALL] Error generating offerwall URL:', err?.message || err);
+    return res.status(500).json({ error: 'فشل في إنشاء رابط حائط العروض، يرجى المحاولة لاحقاً.' });
+  }
+});
+
+app.get('/api/clixwall/rewards', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.user;
+    if (!user) return res.status(401).json({ error: 'غير مصرح.' });
+
+    const adminClient = getSupabaseAdminClient();
+    const { data, error } = await adminClient
+      .from('clixwall_postbacks')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      if (error.code === '42P01') return res.json({ rewards: [], summary: { totalUsdEarned: 0, totalYerCredited: 0, offersCount: 0 } });
+      throw new Error(error.message);
+    }
+
+    const totalUsdEarned = (data || []).reduce((sum, item) => sum + (item.status === 'completed' ? Number(item.reward_usd || 0) : 0), 0);
+    const totalYerCredited = (data || []).reduce((sum, item) => sum + (item.status === 'completed' ? Number(item.reward_yer || 0) : 0), 0);
+
+    return res.json({
+      rewards: data || [],
+      summary: {
+        totalUsdEarned,
+        totalYerCredited,
+        offersCount: (data || []).filter(i => i.status === 'completed').length,
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'فشل جلب مكافآت ClixWall.' });
+  }
+});
+
+const handleClixWallPostback = async (req: Request, res: Response) => {
+  try {
+    const data = { ...req.query, ...req.body };
+    const transactionId = String(data.transaction_id || data.tid || data.trans_id || '').trim();
+    const userId = String(data.user_id || data.subid || data.user || '').trim();
+    const offerId = String(data.offer_id || data.oid || '').trim();
+    const offerName = String(data.offer_name || data.oname || data.name || '').trim();
+
+    // Prioritize user_payout_usd as explicitly instructed
+    const userPayoutUsdRaw =
+      data.user_payout_usd !== undefined && data.user_payout_usd !== ''
+        ? data.user_payout_usd
+        : data.user_payout !== undefined && data.user_payout !== ''
+        ? data.user_payout
+        : data.reward || data.amount || data.payout || 0;
+    const userPayoutUsd = Math.max(0, Number(userPayoutUsdRaw) || 0);
+
+    // Register publisher_payout separately
+    const publisherPayoutRaw =
+      data.publisher_payout !== undefined && data.publisher_payout !== ''
+        ? data.publisher_payout
+        : data.publisher_payout_usd !== undefined && data.publisher_payout_usd !== ''
+        ? data.publisher_payout_usd
+        : data.revenue || data.payout_usd || 0;
+    const publisherPayoutUsd = Math.max(0, Number(publisherPayoutRaw) || 0);
+
+    const rawStatus = String(data.status !== undefined ? data.status : '1').trim();
+    const lowerStatus = rawStatus.toLowerCase();
+    let status = 'completed';
+    if (
+      lowerStatus === '2' ||
+      lowerStatus === '0' ||
+      lowerStatus === 'reversed' ||
+      lowerStatus === 'chargeback' ||
+      lowerStatus === 'canceled' ||
+      lowerStatus === 'cancelled'
+    ) {
+      status = 'reversed';
+    }
+
+    // Secret verification using CLIXWALL_POSTBACK_SECRET (or CLIXWALL_SECRET)
+    const expectedSecret = (process.env.CLIXWALL_POSTBACK_SECRET || process.env.CLIXWALL_SECRET || '').trim();
+    const secretParam = String(data.secret || data.hash || data.signature || '').trim();
+
+    if (expectedSecret) {
+      if (!secretParam || secretParam !== expectedSecret) {
+        console.warn('[CLIXWALL_POSTBACK] Postback secret verification failed (secret mismatch or missing).');
+        return res.status(403).json({ error: 'مفتاح الأمان (Secret) غير صالح أو مفقود.' });
+      }
+    }
+
+    if (!transactionId || !userId) {
+      return res.status(400).json({ error: 'معاملات Postback ناقصة (transaction_id أو user_id مفقود).' });
+    }
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(userId)) {
+      return res.status(400).json({ error: 'صيغة معرّف المستخدم (user_id) غير صالحة، يجب أن تكون UUID صالحة.' });
+    }
+
+    const dbClient = (() => {
+      try {
+        return getSupabaseAdminClient();
+      } catch {
+        return supabaseServer;
+      }
+    })();
+
+    const { data: rpcResult, error: rpcError } = await dbClient.rpc('process_clixwall_postback', {
+      p_transaction_id: transactionId,
+      p_user_id: userId,
+      p_offer_id: offerId || null,
+      p_offer_name: offerName || 'عرض ClixWall',
+      p_user_payout_usd: userPayoutUsd,
+      p_publisher_payout_usd: publisherPayoutUsd,
+      p_status: status,
+      p_raw_status: rawStatus,
+      p_payload: data,
+    });
+
+    if (rpcError) {
+      console.error('[CLIXWALL_POSTBACK] RPC execution error:', rpcError.message);
+      return res.status(500).json({ error: rpcError.message });
+    }
+
+    console.log(`[CLIXWALL_POSTBACK] Processed successfully TID: ${transactionId} (User: ${userId}, Status: ${status}, USD: ${userPayoutUsd})`);
+
+    return res.status(200).json({
+      result: 1,
+      success: true,
+      postback_id: rpcResult,
+      transaction_id: transactionId,
+      status,
+    });
+  } catch (err: any) {
+    console.error('[CLIXWALL_POSTBACK] Unhandled exception:', err?.message || err);
+    return res.status(500).json({ error: err?.message || 'خطأ داخلي في معالجة Postback.' });
+  }
+};
+
+app.all('/api/postbacks/clixwall', handleClixWallPostback);
+app.all('/api/clixwall/postback', handleClixWallPostback);
+
 export default app;
