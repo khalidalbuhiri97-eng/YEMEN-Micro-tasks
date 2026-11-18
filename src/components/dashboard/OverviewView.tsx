@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   ShieldCheck,
 } from 'lucide-react';
+import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 
 interface OverviewViewProps {
   onNavigateTab: (tab: string) => void;
@@ -150,6 +151,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
         </div>
       </div>
 
+      {/* Ad Banner between Financial Balances and Dashboard Panels */}
+      <AdsterraAd placementId="dashboard_overview_top_between" />
+
       {/* 2-Column Split: Recommended Tasks & Recent Submissions */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Recommended Tasks */}
@@ -262,6 +266,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
           )}
         </div>
       </div>
+
+      {/* Ad Banner between Dashboard Panels and Recent Ledger Transactions */}
+      <AdsterraAd placementId="dashboard_overview_bottom_between" />
 
       {/* Recent Ledger Transactions */}
       <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-sm">
