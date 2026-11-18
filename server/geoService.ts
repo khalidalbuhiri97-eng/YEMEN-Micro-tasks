@@ -87,8 +87,17 @@ function loadGeoDataset(): IndexedGeoDataset {
   if (cachedDataset) return cachedDataset;
 
   const filePath = path.resolve(process.cwd(), 'data', 'arab-geography.json');
-  const rawText = fs.readFileSync(filePath, 'utf8');
-  const parsed: RawGeoDataset = JSON.parse(rawText);
+  let parsed: RawGeoDataset = { generated_at: new Date().toISOString(), countries: [], levels: [], divisions: [] };
+  if (fs.existsSync(filePath)) {
+    try {
+      const rawText = fs.readFileSync(filePath, 'utf8');
+      parsed = JSON.parse(rawText);
+    } catch (err) {
+      console.warn('Warning: Failed to parse arab-geography.json:', err);
+    }
+  } else {
+    console.warn('Notice: arab-geography.json not found at path:', filePath, '- relying on Supabase database queries.');
+  }
 
   const countriesById = new Map<string, CountryItem>();
   const countriesByIso2 = new Map<string, CountryItem>();

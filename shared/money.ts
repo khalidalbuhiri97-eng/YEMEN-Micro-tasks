@@ -7,14 +7,17 @@
 export const MONEY_DECIMALS = 6;
 export const MONEY_SCALE = 1_000_000n;
 
-export interface ParsedMoney {
+export type ParsedMoney = {
   micros: bigint;
   numericString: string;
   numberValue: number;
-}
+  valueOf(): number;
+  [Symbol.toPrimitive](hint: string): number;
+} & number;
 
 export interface CampaignFeePolicy {
   defaultPercentage: number;
+  defaultFeePercentage?: number;
   minFeeUnits?: number;
   categoryFees?: Record<string, number>;
 }
@@ -102,11 +105,14 @@ export function parseMoneyStrict(
   }
 
   const numericString = fromMicrosFixed(micros);
+  const numberValue = Number(fromMicros(micros));
   return {
     micros,
     numericString,
-    numberValue: Number(fromMicros(micros)),
-  };
+    numberValue,
+    valueOf() { return numberValue; },
+    [Symbol.toPrimitive]() { return numberValue; },
+  } as unknown as ParsedMoney;
 }
 
 /**
@@ -289,6 +295,7 @@ export function calculateCampaignFeePolicyCosts(params: {
   slots: number;
   budgetUnits: number;
   feePercentage: number;
+  effectiveFeePercentage: number;
   minFeeApplied: boolean;
   feeUnits: number;
   totalUnits: number;
@@ -296,6 +303,7 @@ export function calculateCampaignFeePolicyCosts(params: {
   feeMicros: bigint;
   totalMicros: bigint;
   appliedPolicySnapshot: CampaignFeePolicy;
+  policySnapshot: CampaignFeePolicy;
 } {
   const parsedReward = parseMoneyStrict(params.rewardUnits, {
     allowNegative: false,
@@ -327,6 +335,7 @@ export function calculateCampaignFeePolicyCosts(params: {
     slots: slotsNum,
     budgetUnits: microsToNumber(budgetMicros),
     feePercentage: appliedPercentage,
+    effectiveFeePercentage: appliedPercentage,
     minFeeApplied,
     feeUnits: microsToNumber(feeMicros),
     totalUnits: microsToNumber(totalMicros),
@@ -334,6 +343,11 @@ export function calculateCampaignFeePolicyCosts(params: {
     feeMicros,
     totalMicros,
     appliedPolicySnapshot: {
+      defaultPercentage: normalizedPolicy.defaultPercentage,
+      minFeeUnits: normalizedPolicy.minFeeUnits || 0,
+      categoryFees: normalizedPolicy.categoryFees || {},
+    },
+    policySnapshot: {
       defaultPercentage: normalizedPolicy.defaultPercentage,
       minFeeUnits: normalizedPolicy.minFeeUnits || 0,
       categoryFees: normalizedPolicy.categoryFees || {},

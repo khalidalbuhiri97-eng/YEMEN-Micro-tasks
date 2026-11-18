@@ -328,7 +328,7 @@ export function calculateCampaignFundingCosts(params: {
   policy?: CampaignFeePolicy | null;
 }): CampaignFundingBreakdown {
   const result = calculateCampaignFeePolicyCosts({
-    rewardYer: params.rewardUnits,
+    rewardUnits: params.rewardUnits,
     slots: params.slots,
     category: params.category,
     policy: params.policy || (params.feePercentage !== undefined ? { defaultFeePercentage: params.feePercentage } : undefined),
@@ -2830,8 +2830,8 @@ export const supabaseDb = {
     }
 
     const fee = methodCfg
-      ? addMoney(calcPercentageMicros(amountUnits, methodCfg.feePercentage), methodCfg.feeFlat || 0)
-      : calcPercentageMicros(amountUnits, 1.5);
+      ? addMoney(calcPercentageMicros(amountUnits.micros, methodCfg.feePercentage), methodCfg.feeFlat || 0)
+      : calcPercentageMicros(amountUnits.micros, 1.5);
     const netAmount = subMoney(amountUnits, fee);
     if (netAmount <= 0) {
       throw new Error('صافي مبلغ السحب بعد الرسوم يجب أن يكون أكبر من صفر.');
@@ -6127,6 +6127,10 @@ export const supabaseDb = {
       currency: r.currency || 'YER',
       fundScope: r.fund_scope,
       financialAccountId: r.financial_account_id,
+      accountCode: r.account_code || '',
+      accountingBalance: Number(r.accounting_balance || 0),
+      actualBalance: Number(r.actual_balance || 0),
+      discrepancyUnits: Number(r.discrepancy_units || 0),
       status: r.status,
       notes: r.notes,
       createdAt: r.created_at,
