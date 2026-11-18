@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CampaignLedgerTxModal } from '../advertiser/CampaignModals.tsx';
+import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 
 interface WalletViewProps {
   onGoToWithdraw: () => void;
@@ -400,6 +401,9 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
           <p className="text-[11px] text-slate-400 mt-2">مجموع مكافآت المهام المعتمدة</p>
         </div>
       </div>
+
+      {/* Wallet Statistics Ad Placement (Isolated between summary cards and ledger history) */}
+      <AdsterraAd placementId="wallet_stats_between" />
 
       {/* Ledger Security Note */}
       <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">

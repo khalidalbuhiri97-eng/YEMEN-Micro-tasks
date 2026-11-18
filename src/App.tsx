@@ -18,7 +18,7 @@ import { WalletView } from './components/dashboard/WalletView.tsx';
 import { AdminDashboard } from './components/admin/AdminDashboard.tsx';
 import { AdvertiserPortal } from './components/advertiser/AdvertiserPortal.tsx';
 import { LegalModal } from './components/public/LegalPages.tsx';
-import { AdBanner } from './components/ads/AdBanner.tsx';
+import { AdsterraAd } from './components/ads/AdsterraAd.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
@@ -93,18 +93,15 @@ function MainApp() {
 
       {/* Main View Router */}
       <div className="flex-1 pb-16 md:pb-0">
-        <div
-          className={currentTab === 'home' ? 'block' : 'hidden'}
-          aria-hidden={currentTab !== 'home'}
-        >
-          <AdBanner placement="home_hero_top" />
-        </div>
         {currentTab === 'home' && (
           <main>
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
             />
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <AdsterraAd placementId="home_primary" />
+            </div>
             <HowItWorks onStart={() => setCurrentTab('tasks')} />
             <TaskCategoriesSection onSelectCategory={handleSelectCategoryFromHome} />
             <YemenPayoutsSection />
