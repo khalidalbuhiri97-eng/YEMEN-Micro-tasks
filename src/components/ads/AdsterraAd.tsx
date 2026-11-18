@@ -7,10 +7,10 @@ export interface AdsterraAdProps {
   className?: string;
 }
 
-const ADSTERRA_KEY = '8f73e7a5b67a6cf2b8be42a4f9753b90';
-const ADSTERRA_SCRIPT_SRC = 'https://bicea.org/22/8f73e7a5b67a6cf2b8be42a4f9753b90';
-const ADSTERRA_WIDTH = 160;
-const ADSTERRA_HEIGHT = 300;
+const ADSTERRA_KEY = '4644701e0fd0cb6323d081bb79bf0e59';
+const ADSTERRA_SCRIPT_SRC = 'https://bicea.org/22/4644701e0fd0cb6323d081bb79bf0e59';
+const ADSTERRA_WIDTH = 320;
+const ADSTERRA_HEIGHT = 50;
 
 interface AdsterraOptions {
   key: string;
@@ -90,7 +90,7 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
 
     const updateWidth = () => {
       const rectWidth = el.getBoundingClientRect().width;
-      const horizontalPadding = 32;
+      const horizontalPadding = 28;
       const usable = Math.max(0, Math.floor((rectWidth || window.innerWidth) - horizontalPadding));
       setAvailableWidth(usable);
     };
@@ -268,18 +268,18 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
       aria-label="مساحة إعلانية"
       data-adsterra-placement={placementId}
       className={`relative z-0 w-full max-w-full overflow-hidden flex justify-center ${
-        isLoaded ? 'my-5 px-2 sm:px-4' : 'my-0 h-0 opacity-0 pointer-events-none'
+        isLoaded ? 'my-4 px-1.5 sm:px-3' : 'my-0 h-0 opacity-0 pointer-events-none'
       } ${className}`.trim()}
     >
       <div
-        className={`w-full max-w-[220px] rounded-2xl transition-opacity duration-200 ${
+        className={`w-full max-w-[356px] rounded-2xl transition-opacity duration-200 ${
           isLoaded
-            ? 'bg-slate-100/80 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800/80 px-4 py-3 flex flex-col items-center justify-center'
+            ? 'bg-slate-100/80 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800/80 px-2 sm:px-3 py-2 flex flex-col items-center justify-center'
             : 'flex flex-col items-center justify-center'
         }`}
       >
         {isLoaded && (
-          <div className="w-full flex items-center justify-between mb-2">
+          <div className="w-full flex items-center justify-between mb-1.5 px-0.5">
             <span className="text-[10px] font-semibold tracking-wide text-slate-400 dark:text-slate-500">
               إعلان
             </span>
