@@ -174,11 +174,47 @@ export const api = {
   getSystemStatus: () => request<any>('/system/status'),
   getSettings: () => request<any>('/settings'),
 
+  // Geo & Locations (Arab League Countries & Administrative Divisions)
+  getGeoCountries: (includeInactive = false) =>
+    request<{ countries: any[]; geoTablesReady?: boolean }>(`/geo/countries${includeInactive ? '?includeInactive=true' : ''}`),
+  getGeoCountryLevels: (countryId: string) =>
+    request<{ levels: any[] }>(`/geo/countries/${encodeURIComponent(countryId)}/levels`),
+  getGeoDivisions: (params: {
+    countryId: string;
+    parentId?: string | null;
+    levelId?: string;
+    search?: string;
+    includeInactive?: boolean;
+    limit?: number;
+  }) => {
+    const q = new URLSearchParams({ countryId: params.countryId });
+    if (params.parentId) q.append('parentId', params.parentId);
+    if (params.levelId) q.append('levelId', params.levelId);
+    if (params.search) q.append('search', params.search);
+    if (params.includeInactive) q.append('includeInactive', 'true');
+    if (params.limit) q.append('limit', String(params.limit));
+    return request<{ divisions: any[] }>(`/geo/divisions?${q.toString()}`);
+  },
+  getGeoDivisionChildren: (divisionId: string) =>
+    request<{ divisions: any[] }>(`/geo/divisions/${encodeURIComponent(divisionId)}/children`),
+  getGeoDivisionPath: (divisionId: string) =>
+    request<{ path: any[]; division?: any }>(`/geo/divisions/${encodeURIComponent(divisionId)}/path`),
+
+  // Profile Location Update
+  updateMyProfileLocation: (payload: {
+    countryId: string;
+    administrativeDivisionId?: string | null;
+    areaName?: string;
+    city?: string;
+  }) => request<{ success: boolean; user: any }>('/profile/location', { method: 'PUT', body: JSON.stringify(payload) }),
+
   // Tasks
-  getTasks: (params?: { category?: string; search?: string }) => {
+  getTasks: (params?: { category?: string; search?: string; countryId?: string; divisionId?: string }) => {
     const q = new URLSearchParams();
     if (params?.category) q.append('category', params.category);
     if (params?.search) q.append('search', params.search);
+    if (params?.countryId) q.append('countryId', params.countryId);
+    if (params?.divisionId) q.append('divisionId', params.divisionId);
     return request<any>(`/tasks?${q.toString()}`);
   },
   getTaskById: (id: string) => request<any>(`/tasks/${id}`),
@@ -274,6 +310,7 @@ export const api = {
     taxType: string;
     taxAuthority: string;
     region?: string;
+    countryId?: string | null;
     taxBase: string;
     ratePercentage: number;
     flatAmount?: number;
@@ -355,6 +392,9 @@ export const api = {
     advertiserLogoUrl?: string;
     deadlineAt?: string | null;
     creationKey: string;
+    countryId?: string | null;
+    isNationwide?: boolean;
+    targetDivisionIds?: string[];
   }) => request<any>('/advertiser/campaigns', { method: 'POST', body: JSON.stringify(payload) }),
   startAdvertiserCampaign: (id: string) =>
     request<any>(`/advertiser/campaigns/${id}/start`, { method: 'POST' }),
@@ -487,5 +527,50 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  // Admin Geographic & Administrative Divisions Management
+  getAdminGeoOverview: () => request<any>('/admin/geo/overview'),
+  getAdminGeoIntegrity: () => request<any>('/admin/geo/integrity'),
+  toggleAdminGeoCountry: (countryId: string, isActive: boolean) =>
+    request<any>(`/admin/geo/countries/${encodeURIComponent(countryId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ isActive }),
+    }),
+  createAdminGeoLevel: (
+    countryId: string,
+    payload: { levelOrder: number; nameAr: string; nameEn: string; pluralAr?: string; isRequired?: boolean }
+  ) =>
+    request<any>(`/admin/geo/countries/${encodeURIComponent(countryId)}/levels`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  createAdminGeoDivision: (payload: {
+    countryId: string;
+    levelId: string;
+    parentId?: string | null;
+    nameAr: string;
+    nameEn: string;
+    code?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    isActive?: boolean;
+  }) => request<any>('/admin/geo/divisions', { method: 'POST', body: JSON.stringify(payload) }),
+  updateAdminGeoDivision: (
+    divisionId: string,
+    payload: {
+      nameAr?: string;
+      nameEn?: string;
+      code?: string | null;
+      latitude?: number | null;
+      longitude?: number | null;
+      isActive?: boolean;
+    }
+  ) =>
+    request<any>(`/admin/geo/divisions/${encodeURIComponent(divisionId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  importAdminGeoCountry: (countryId: string) =>
+    request<any>(`/admin/geo/countries/${encodeURIComponent(countryId)}/import`, { method: 'POST' }),
 };
 

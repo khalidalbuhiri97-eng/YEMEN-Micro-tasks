@@ -104,6 +104,15 @@ function MainApp() {
             </div>
             <HowItWorks onStart={() => setCurrentTab('tasks')} />
             <TaskCategoriesSection onSelectCategory={handleSelectCategoryFromHome} />
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <AdsterraAd
+                placementId="home_leaderboard"
+                adKey="e0ca07a5ceb53edcf6467e9176896b3f"
+                scriptSrc="https://bicea.org/22/e0ca07a5ceb53edcf6467e9176896b3f"
+                width={728}
+                height={90}
+              />
+            </div>
             <YemenPayoutsSection />
             <TrustAndFaqSection />
           </main>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { X, Lock, Phone, User, MapPin, Mail, ArrowRight, Shield, Eye, EyeOff, Building2 } from 'lucide-react';
+import { GeoLocationSelector, type GeoSingleValue } from '../common/GeoLocationSelector.tsx';
+import { X, Lock, Phone, User, Mail, ArrowRight, Shield, Eye, EyeOff, Building2 } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -21,6 +22,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [city, setCity] = useState('صنعاء');
+  const [geoSelection, setGeoSelection] = useState<GeoSingleValue>({
+    countryId: '',
+    divisionId: null,
+    pathTextAr: '',
+    lowestNameAr: '',
+  });
   const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -49,12 +56,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
       if (mode === 'login' || mode === 'owner') {
         await login(identifier, password);
       } else {
+        if (!geoSelection.countryId || !geoSelection.divisionId) {
+          setError('يرجى تحديد الدولة والتقسيم الإداري الخاص بك قبل إنشاء الحساب.');
+          setIsSubmitting(false);
+          return;
+        }
+        const resolvedCity = geoSelection.lowestNameAr || geoSelection.pathTextAr || city || 'صنعاء';
         await register({
           fullName,
           phone,
           email: email || undefined,
           password,
-          city,
+          city: resolvedCity,
+          countryId: geoSelection.countryId,
+          administrativeDivisionId: geoSelection.divisionId,
           referralCode: userType === 'user' ? (referralCode || undefined) : undefined,
           role: userType,
           companyName: userType === 'advertiser' ? companyName : undefined,
@@ -70,7 +85,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+      <div className="relative w-full max-w-md max-h-[92vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
           <div>
@@ -200,29 +215,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    المدينة / المحافظة
-                  </label>
-                  <div className="relative">
-                    <MapPin className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
-                    <select
-                      value={city}
-                      onChange={(e) => setCity(e.target.value)}
-                      className="w-full pr-9 pl-2 py-2 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
-                    >
-                      <option value="صنعاء">صنعاء</option>
-                      <option value="عدن">عدن</option>
-                      <option value="تعز">تعز</option>
-                      <option value="الحديدة">الحديدة</option>
-                      <option value="إب">إب</option>
-                      <option value="حضرموت (المكلا)">المكلا</option>
-                      <option value="مأرب">مأرب</option>
-                      <option value="ذمار">ذمار</option>
-                    </select>
-                  </div>
-                </div>
+              <div className="space-y-3">
+                <GeoLocationSelector
+                  mode="single"
+                  countryId={geoSelection.countryId}
+                  divisionId={geoSelection.divisionId}
+                  defaultCountryIso2="YE"
+                  required
+                  compact
+                  onChange={(val) => {
+                    setGeoSelection(val);
+                    if (val.lowestNameAr) setCity(val.lowestNameAr);
+                  }}
+                />
                 {userType === 'user' && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">

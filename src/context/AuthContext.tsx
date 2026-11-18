@@ -29,6 +29,7 @@ interface AuthContextType {
   register: (payload: any) => Promise<void>;
   logout: () => void;
   refreshWallet: () => Promise<void>;
+  refreshUser: () => Promise<void>;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
   toast: { message: string; type: 'success' | 'error' | 'info' } | null;
   openAuthModal: (mode?: 'login' | 'register' | 'owner') => void;
@@ -169,6 +170,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const refreshUser = async () => {
+    const token = getAuthToken();
+    if (!token) return;
+    try {
+      const res = await api.getMe();
+      setUser(res.user);
+      if (res.wallet) setWallet(res.wallet);
+    } catch (err) {
+      console.error('Error refreshing user', err);
+    }
+  };
+
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'owner'>('login');
 
@@ -195,6 +208,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         register,
         logout,
         refreshWallet,
+        refreshUser,
         showToast,
         toast: latestToast ? { message: latestToast.message, type: latestToast.type } : null,
         openAuthModal,

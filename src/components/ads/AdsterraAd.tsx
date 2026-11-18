@@ -5,12 +5,20 @@ export interface AdsterraAdProps {
   placementId: string;
   /** Optional wrapper CSS classes (e.g., col-span-full inside CSS Grid) */
   className?: string;
+  /** Adsterra unit key (defaults to primary 320x50 unit) */
+  adKey?: string;
+  /** Adsterra script URL (defaults to primary 320x50 unit) */
+  scriptSrc?: string;
+  /** Intrinsic banner width in px (defaults to 320) */
+  width?: number;
+  /** Intrinsic banner height in px (defaults to 50) */
+  height?: number;
 }
 
-const ADSTERRA_KEY = '4644701e0fd0cb6323d081bb79bf0e59';
-const ADSTERRA_SCRIPT_SRC = 'https://bicea.org/22/4644701e0fd0cb6323d081bb79bf0e59';
-const ADSTERRA_WIDTH = 320;
-const ADSTERRA_HEIGHT = 50;
+const DEFAULT_ADSTERRA_KEY = '4644701e0fd0cb6323d081bb79bf0e59';
+const DEFAULT_ADSTERRA_SCRIPT_SRC = 'https://bicea.org/22/4644701e0fd0cb6323d081bb79bf0e59';
+const DEFAULT_ADSTERRA_WIDTH = 320;
+const DEFAULT_ADSTERRA_HEIGHT = 50;
 
 interface AdsterraOptions {
   key: string;
@@ -69,7 +77,14 @@ class AdsterraErrorBoundary extends React.Component<
 
 type AdStatus = 'loading' | 'loaded' | 'fallback';
 
-const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '' }) => {
+const AdsterraAdInner: React.FC<AdsterraAdProps> = ({
+  placementId,
+  className = '',
+  adKey = DEFAULT_ADSTERRA_KEY,
+  scriptSrc = DEFAULT_ADSTERRA_SCRIPT_SRC,
+  width = DEFAULT_ADSTERRA_WIDTH,
+  height = DEFAULT_ADSTERRA_HEIGHT,
+}) => {
   const reactId = useId().replace(/:/g, '');
   const containerDomId = `adsterra-slot-${placementId}-${reactId}`;
 
@@ -79,10 +94,10 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
 
   const [status, setStatus] = useState<AdStatus>('loading');
   const [adSize, setAdSize] = useState<{ width: number; height: number }>({
-    width: ADSTERRA_WIDTH,
-    height: ADSTERRA_HEIGHT,
+    width,
+    height,
   });
-  const [availableWidth, setAvailableWidth] = useState<number>(ADSTERRA_WIDTH);
+  const [availableWidth, setAvailableWidth] = useState<number>(width);
 
   useEffect(() => {
     const el = outerRef.current;
@@ -132,8 +147,8 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
       if (isDisposed || !hostRef.current) return false;
       const iframe = hostRef.current.querySelector('iframe');
       if (iframe) {
-        const w = Number(iframe.getAttribute('width')) || ADSTERRA_WIDTH;
-        const h = Number(iframe.getAttribute('height')) || ADSTERRA_HEIGHT;
+        const w = Number(iframe.getAttribute('width')) || width;
+        const h = Number(iframe.getAttribute('height')) || height;
         setAdSize({ width: w, height: h });
         setStatus('loaded');
         if (fallbackTimer) window.clearTimeout(fallbackTimer);
@@ -182,19 +197,19 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
 
           try {
             window.atOptions = {
-              key: ADSTERRA_KEY,
+              key: adKey,
               format: 'iframe',
-              height: ADSTERRA_HEIGHT,
-              width: ADSTERRA_WIDTH,
+              height,
+              width,
               params: {},
             };
 
             const script = document.createElement('script');
-            script.src = ADSTERRA_SCRIPT_SRC;
+            script.src = scriptSrc;
             script.async = true;
             script.referrerPolicy = 'no-referrer-when-downgrade';
             script.setAttribute('data-adsterra-placement', placementId);
-            script.setAttribute('data-adsterra-key', ADSTERRA_KEY);
+            script.setAttribute('data-adsterra-key', adKey);
 
             script.onload = () => {
               window.clearTimeout(queueSafetyTimer);
@@ -248,7 +263,7 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
       }
       hasAttemptedLoadRef.current = false;
     };
-  }, [placementId]);
+  }, [placementId, adKey, scriptSrc, width, height]);
 
   if (status === 'fallback') {
     return null;
@@ -257,10 +272,11 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
   const isLoaded = status === 'loaded';
   const scale =
     availableWidth > 0 && availableWidth < adSize.width
-      ? Math.max(0.6, availableWidth / adSize.width)
+      ? Math.max(0.3, availableWidth / adSize.width)
       : 1;
   const scaledWidth = Math.round(adSize.width * scale);
   const scaledHeight = Math.round(adSize.height * scale);
+  const cardMaxWidth = adSize.width + 36;
 
   return (
     <aside
@@ -272,7 +288,8 @@ const AdsterraAdInner: React.FC<AdsterraAdProps> = ({ placementId, className = '
       } ${className}`.trim()}
     >
       <div
-        className={`w-full max-w-[356px] rounded-2xl transition-opacity duration-200 ${
+        style={{ maxWidth: `${cardMaxWidth}px` }}
+        className={`w-full rounded-2xl transition-opacity duration-200 ${
           isLoaded
             ? 'bg-slate-100/80 dark:bg-slate-900/70 border border-slate-200/80 dark:border-slate-800/80 px-2 sm:px-3 py-2 flex flex-col items-center justify-center'
             : 'flex flex-col items-center justify-center'

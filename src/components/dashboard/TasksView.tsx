@@ -15,10 +15,12 @@ import {
   Eye,
   Building2,
   EyeOff,
+  MapPin,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SecureImageView } from '../common/SecureImageView.tsx';
 import { AdsterraAd } from '../ads/AdsterraAd.tsx';
+import { GeoLocationSelector, type GeoFilterValue } from '../common/GeoLocationSelector.tsx';
 
 function renderTextWithSafeLinks(text: string) {
   if (!text) return null;
@@ -58,6 +60,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || 'all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [geoFilter, setGeoFilter] = useState<GeoFilterValue>({ countryId: '', divisionId: '' });
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -83,6 +86,8 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
       const res = await api.getTasks({
         category: selectedCategory !== 'all' ? selectedCategory : undefined,
         search: searchQuery || undefined,
+        countryId: geoFilter.countryId || undefined,
+        divisionId: geoFilter.divisionId || undefined,
       });
       setTasks(res.tasks || []);
     } catch (err: any) {
@@ -95,7 +100,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
 
   useEffect(() => {
     loadTasks();
-  }, [selectedCategory, searchQuery]);
+  }, [selectedCategory, searchQuery, geoFilter.countryId, geoFilter.divisionId]);
 
   const handleOpenTask = (task: TaskItem) => {
     setActiveTask(task);
@@ -287,6 +292,16 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
         ))}
       </div>
 
+      {/* Cascading Arab Country & Division Filter */}
+      <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+        <GeoLocationSelector
+          mode="filter"
+          countryId={geoFilter.countryId}
+          divisionId={geoFilter.divisionId}
+          onChange={setGeoFilter}
+        />
+      </div>
+
       {loadError && (
         <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs flex items-center justify-between gap-3 shadow-sm">
           <div className="flex items-center gap-2">
@@ -326,6 +341,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
             onClick={() => {
               setSelectedCategory('all');
               setSearchQuery('');
+              setGeoFilter({ countryId: '', divisionId: '' });
             }}
             className="px-4 py-2 text-xs font-semibold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 rounded-lg hover:bg-emerald-100"
           >
@@ -392,6 +408,15 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                     {task.isExternalCampaign && (
                       <span className="shrink-0 text-[10px] text-slate-400">حملة معلن خارجي</span>
                     )}
+                  </div>
+
+                  {/* Geographic Scope Metadata */}
+                  <div className="mb-2.5 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span className="truncate">
+                      {task.countryFlag ? `${task.countryFlag} ` : ''}
+                      {task.locationLabel || task.countryNameAr || 'جميع الدول العربية'}
+                    </span>
                   </div>
 
                   {/* Description */}
@@ -462,7 +487,9 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
             <div className="flex items-start justify-between px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
               <div>
                 <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  {getCategoryBadge(activeTask.category)} · {activeTask.timeEstimateMinutes} دقائق تقريباً
+                  {getCategoryBadge(activeTask.category)} · {activeTask.timeEstimateMinutes} دقائق تقريباً ·{' '}
+                  {activeTask.countryFlag ? `${activeTask.countryFlag} ` : ''}
+                  {activeTask.locationLabel || activeTask.countryNameAr || 'جميع الدول العربية'}
                 </span>
                 <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white mt-0.5">
                   {activeTask.title}

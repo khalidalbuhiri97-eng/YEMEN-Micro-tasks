@@ -46,7 +46,9 @@ import type {
   ExternalAccountTransfer,
   ExternalAccountReconciliation,
   FundSegregationSummary,
+  GeoTargetSummary,
 } from '../src/types/index';
+import { geoService } from './geoService.js';
 import {
   MONEY_SCALE,
   parseMoneyStrict,
@@ -834,6 +836,14 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskIte
   };
 
   const identity = resolvePublicTaskAdvertiserIdentity(t, options);
+  const rawMetaGeo = t.proof_requirements?._campaignMeta?.geo || {};
+  const countryId = t.country_id ?? rawMetaGeo.countryId ?? null;
+  const administrativeDivisionId = t.administrative_division_id ?? null;
+  const isNationwide = t.is_nationwide !== undefined ? Boolean(t.is_nationwide) : rawMetaGeo.isNationwide ?? true;
+  const fastGeo = geoService.resolveFastGeoLabels({
+    countryId,
+    divisionId: administrativeDivisionId,
+  });
 
   return {
     id: t.id,
@@ -857,8 +867,85 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskIte
     hideAdvertiserName: identity.hideAdvertiserName,
     advertiserDisplayName: identity.advertiserDisplayName,
     advertiserLogoUrl: identity.advertiserLogoUrl,
+    countryId,
+    countryCode: fastGeo.countryCode || null,
+    countryNameAr: fastGeo.countryNameAr || null,
+    countryFlag: fastGeo.countryFlag || null,
+    administrativeDivisionId,
+    isNationwide,
+    locationLabel: fastGeo.locationPath || fastGeo.countryNameAr || null,
     createdAt: t.created_at,
   };
+}
+
+async function hydrateTaskListGeo(tasks: TaskItem[], db: any): Promise<TaskItem[]> {
+  if (!tasks || tasks.length === 0) return tasks;
+
+  const taskIds = tasks.map((t) => t.id);
+  const targetRowsByTask = new Map<string, string[]>();
+
+  try {
+    const { data, error } = await db
+      .from('task_target_divisions')
+      .select('task_id, division_id')
+      .in('task_id', taskIds);
+
+    if (!error && data) {
+      for (const row of data) {
+        const arr = targetRowsByTask.get(row.task_id) || [];
+        arr.push(row.division_id);
+        targetRowsByTask.set(row.task_id, arr);
+      }
+    }
+  } catch {
+    // Graceful when Migration 028 has not yet run on live Supabase
+  }
+
+  const allDivIds = new Set<string>();
+  for (const t of tasks) {
+    if (t.administrativeDivisionId) allDivIds.add(t.administrativeDivisionId);
+    for (const dId of targetRowsByTask.get(t.id) || []) {
+      allDivIds.add(dId);
+    }
+  }
+
+  const summaryMap = await geoService.resolveTargetSummariesByIds(Array.from(allDivIds));
+  const { countries } = await geoService.getCountries({ includeInactive: true });
+  const countryMap = new Map(countries.map((c) => [c.id, c]));
+
+  return tasks.map((t) => {
+    const divIds = targetRowsByTask.get(t.id) || [];
+    const targetDivisions: GeoTargetSummary[] = divIds
+      .map((id) => summaryMap.get(id))
+      .filter(Boolean) as GeoTargetSummary[];
+
+    const inferredCountryId =
+      t.countryId ||
+      targetDivisions[0]?.countryId ||
+      (t.administrativeDivisionId ? summaryMap.get(t.administrativeDivisionId)?.countryId : null) ||
+      null;
+    const country = inferredCountryId ? countryMap.get(inferredCountryId) : undefined;
+
+    let locationLabel = t.locationLabel || country?.nameAr || null;
+    if (targetDivisions.length > 0) {
+      const divNames = targetDivisions.slice(0, 3).map((d) => d.nameAr).join('، ');
+      const more = targetDivisions.length > 3 ? ` (+${targetDivisions.length - 3})` : '';
+      locationLabel = country ? `${country.nameAr} · ${divNames}${more}` : `${divNames}${more}`;
+    } else if (t.isNationwide && country) {
+      locationLabel = `${country.nameAr} · كافة المناطق`;
+    }
+
+    return {
+      ...t,
+      countryId: inferredCountryId,
+      countryCode: country?.iso2 || t.countryCode || null,
+      countryNameAr: country?.nameAr || t.countryNameAr || null,
+      countryFlag: country?.flagEmoji || t.countryFlag || null,
+      targetDivisionIds: divIds,
+      targetDivisions,
+      locationLabel,
+    };
+  });
 }
 
 export const supabaseDb = {
@@ -885,19 +972,29 @@ export const supabaseDb = {
     try {
       let { data: profileData, error: profileErr } = await db
         .from('profiles')
-        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
+        .select('id, full_name, phone, city, area_name, country_id, administrative_division_id, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
         .eq('id', id)
         .maybeSingle();
 
-      // Backwards-compatible fallback if Migration 014/019 columns don't exist yet
+      // Backwards-compatible fallback if Migration 014/019/028 columns don't exist yet
       if (profileErr && profileErr.code === '42703') {
         const fallback = await db
           .from('profiles')
-          .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, created_at, updated_at')
+          .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
           .eq('id', id)
           .maybeSingle();
-        profileData = fallback.data as any;
-        profileErr = fallback.error;
+        if (fallback.error && fallback.error.code === '42703') {
+          const minimal = await db
+            .from('profiles')
+            .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, created_at, updated_at')
+            .eq('id', id)
+            .maybeSingle();
+          profileData = minimal.data as any;
+          profileErr = minimal.error;
+        } else {
+          profileData = fallback.data as any;
+          profileErr = fallback.error;
+        }
       }
 
       if (profileErr) {
@@ -953,6 +1050,14 @@ export const supabaseDb = {
       }
 
       const accountStatus: AccountStatus = (profileData.account_status as AccountStatus) || 'active';
+      const rawCountryId = (profileData as any).country_id || null;
+      const rawDivisionId = (profileData as any).administrative_division_id || null;
+      const geoMeta = (rawCountryId || rawDivisionId)
+        ? await geoService.resolveLocationMeta({
+            countryId: rawCountryId,
+            divisionId: rawDivisionId,
+          }).catch(() => ({} as any))
+        : {};
 
       return {
         id: profileData.id,
@@ -965,6 +1070,13 @@ export const supabaseDb = {
         referralCode: (profileData as any).referral_code || '',
         referredBy: (profileData as any).referred_by || undefined,
         city: profileData.city || profileData.area_name || 'صنعاء',
+        areaName: profileData.area_name || null,
+        countryId: geoMeta?.country?.id || rawCountryId,
+        countryCode: geoMeta?.country?.iso2 || null,
+        countryNameAr: geoMeta?.country?.nameAr || null,
+        countryFlag: geoMeta?.country?.flagEmoji || null,
+        administrativeDivisionId: rawDivisionId,
+        locationPath: geoMeta?.locationPath || (geoMeta?.country?.nameAr ? `${geoMeta.country.nameAr} · ${profileData.city || ''}` : null),
         companyName: (profileData as any).company_name || undefined,
         contactPerson: (profileData as any).contact_person || undefined,
         createdAt: profileData.created_at || new Date().toISOString(),
@@ -1026,8 +1138,15 @@ export const supabaseDb = {
     try {
       let profilesRes = await db
         .from('profiles')
-        .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
+        .select('id, full_name, phone, city, area_name, country_id, administrative_division_id, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
         .order('created_at', { ascending: false });
+
+      if (profilesRes.error && profilesRes.error.code === '42703') {
+        profilesRes = (await db
+          .from('profiles')
+          .select('id, full_name, phone, city, area_name, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
+          .order('created_at', { ascending: false })) as any;
+      }
 
       if (profilesRes.error && (profilesRes.error.code === '42703' || String(profilesRes.error.message || '').includes('referred_by'))) {
         profilesRes = (await db
@@ -1065,26 +1184,91 @@ export const supabaseDb = {
         // Ignore if service role key is unavailable
       }
 
-      return (profilesRes.data || []).map((p: any) => ({
-        id: p.id,
-        fullName: p.full_name || '',
-        phone: p.phone || '',
-        email: emailMap.get(p.id) || '',
-        avatarUrl: p.avatar_url || '',
-        role: roleMap.get(p.id) || 'user',
-        status: (p.account_status as AccountStatus) || 'active',
-        referralCode: p.referral_code || '',
-        referredBy: p.referred_by || undefined,
-        city: p.city || p.area_name || 'صنعاء',
-        companyName: p.company_name || undefined,
-        contactPerson: p.contact_person || undefined,
-        createdAt: p.created_at || new Date().toISOString(),
-        updatedAt: p.updated_at || new Date().toISOString(),
-      }));
+      return (profilesRes.data || []).map((p: any) => {
+        const fastGeo = geoService.resolveFastGeoLabels({
+          countryId: p.country_id,
+          divisionId: p.administrative_division_id,
+        });
+        return {
+          id: p.id,
+          fullName: p.full_name || '',
+          phone: p.phone || '',
+          email: emailMap.get(p.id) || '',
+          avatarUrl: p.avatar_url || '',
+          role: roleMap.get(p.id) || 'user',
+          status: (p.account_status as AccountStatus) || 'active',
+          referralCode: p.referral_code || '',
+          referredBy: p.referred_by || undefined,
+          city: p.city || p.area_name || 'صنعاء',
+          areaName: p.area_name || null,
+          countryId: p.country_id || null,
+          countryCode: fastGeo.countryCode || null,
+          countryNameAr: fastGeo.countryNameAr || null,
+          countryFlag: fastGeo.countryFlag || null,
+          administrativeDivisionId: p.administrative_division_id || null,
+          locationPath: fastGeo.locationPath || null,
+          companyName: p.company_name || undefined,
+          contactPerson: p.contact_person || undefined,
+          createdAt: p.created_at || new Date().toISOString(),
+          updatedAt: p.updated_at || new Date().toISOString(),
+        };
+      });
     } catch (err: any) {
       console.error('[Supabase GET_ALL_USERS]', err.message);
       throw new Error(`فشل جلب قائمة المستخدمين من Supabase: ${err.message}`);
     }
+  },
+
+  async updateUserProfileLocation(
+    userId: string,
+    payload: { countryId: string; administrativeDivisionId?: string | null; areaName?: string; city?: string },
+    authToken?: string
+  ): Promise<UserProfile> {
+    const validated = await geoService.validateGeoSelection({
+      countryId: payload.countryId,
+      divisionId: payload.administrativeDivisionId || null,
+      requireActiveCountry: true,
+      authToken,
+    });
+
+    const displayCity =
+      payload.city?.trim() ||
+      validated.division?.nameAr ||
+      validated.country?.nameAr ||
+      'صنعاء';
+    const displayArea = payload.areaName?.trim() || validated.division?.nameAr || null;
+    const db = getActorOrAdminClient(authToken);
+    const now = new Date().toISOString();
+
+    const { error } = await db
+      .from('profiles')
+      .update({
+        country_id: validated.country?.id || payload.countryId,
+        administrative_division_id: validated.division?.id || null,
+        city: displayCity,
+        area_name: displayArea,
+        updated_at: now,
+      })
+      .eq('id', userId);
+
+    if (error && error.code === '42703') {
+      // Pre-028 fallback: still store clean resolved city/area_name
+      const legacy = await db
+        .from('profiles')
+        .update({
+          city: validated.locationPath || displayCity,
+          area_name: displayArea,
+          updated_at: now,
+        })
+        .eq('id', userId);
+      if (legacy.error) throw new Error(legacy.error.message);
+    } else if (error) {
+      throw new Error(error.message);
+    }
+
+    const updated = await this.findUserById(userId);
+    if (!updated) throw new Error('تعذر قراءة الملف الشخصي بعد التحديث.');
+    return updated;
   },
 
   async updateUserStatus(userId: string, status: 'active' | 'suspended' | 'under_review' | 'pending'): Promise<void> {
@@ -1448,7 +1632,7 @@ export const supabaseDb = {
   /**
    * 3. TASKS (Escrow-Backed Creation via create_funded_task)
    */
-  async getTasks(params?: { category?: string; search?: string }): Promise<TaskItem[]> {
+  async getTasks(params?: { category?: string; search?: string; countryId?: string; divisionId?: string }): Promise<TaskItem[]> {
     const startTime = Date.now();
     const db = getDbClient();
 
@@ -1493,10 +1677,55 @@ export const supabaseDb = {
         throw error;
       }
 
-      let mapped = (data || []).map((t) => mapTaskRow(t));
+      let mapped = await hydrateTaskListGeo((data || []).map((t) => mapTaskRow(t)), db);
       if (params?.category && params.category !== 'all') {
         mapped = mapped.filter((t) => t.category === params.category);
       }
+
+      if (params?.countryId || params?.divisionId) {
+        let targetCountryId = params.countryId ? String(params.countryId).trim() : '';
+        let matchDivisionIds = new Set<string>();
+
+        if (params.divisionId) {
+          const divId = String(params.divisionId).trim();
+          const [descendants, pathInfo] = await Promise.all([
+            geoService.expandDivisionAndDescendants(divId),
+            geoService.getDivisionPath(divId),
+          ]);
+          for (const id of descendants) matchDivisionIds.add(id);
+          for (const p of pathInfo.path) matchDivisionIds.add(p.id);
+          if (!targetCountryId && pathInfo.division?.countryId) {
+            targetCountryId = pathInfo.division.countryId;
+          }
+        }
+
+        const resolvedCountry = targetCountryId ? await geoService.resolveCountry(targetCountryId) : null;
+        const effectiveCountryId = resolvedCountry?.id || targetCountryId;
+        const isYemenFilter = resolvedCountry?.iso2 === 'YE';
+
+        mapped = mapped.filter((t) => {
+          // Legacy tasks without country_id belong to YE or global platform tasks
+          const taskCountry = t.countryId || null;
+          if (effectiveCountryId) {
+            if (taskCountry && taskCountry !== effectiveCountryId) return false;
+            if (!taskCountry && !isYemenFilter) return false;
+          }
+          if (params.divisionId) {
+            if (t.isNationwide && (!t.targetDivisionIds || t.targetDivisionIds.length === 0) && !t.administrativeDivisionId) {
+              return true;
+            }
+            if (t.administrativeDivisionId && matchDivisionIds.has(t.administrativeDivisionId)) {
+              return true;
+            }
+            if (t.targetDivisionIds && t.targetDivisionIds.some((id) => matchDivisionIds.has(id))) {
+              return true;
+            }
+            return false;
+          }
+          return true;
+        });
+      }
+
       return mapped;
     } catch (err: any) {
       console.error('[Supabase GET_TASKS]', err.message);
@@ -1523,7 +1752,10 @@ export const supabaseDb = {
         throw error;
       }
 
-      return (data || []).map((row) => mapTaskRow(row, { maskHiddenIdentity: false }));
+      return hydrateTaskListGeo(
+        (data || []).map((row) => mapTaskRow(row, { maskHiddenIdentity: false })),
+        db
+      );
     } catch (err: any) {
       throw new Error(`فشل جلب مهام المدير من Supabase: ${err.message}`);
     }
@@ -1541,7 +1773,8 @@ export const supabaseDb = {
       if (error) throw error;
       if (!data) return null;
 
-      return mapTaskRow(data);
+      const [hydrated] = await hydrateTaskListGeo([mapTaskRow(data)], db);
+      return hydrated;
     } catch (err: any) {
       throw new Error(`فشل جلب تفاصيل المهمة من Supabase: ${err.message}`);
     }
@@ -1555,6 +1788,10 @@ export const supabaseDb = {
     totalQuantity: number;
     deadline?: string;
     creationKey?: string;
+    countryId?: string | null;
+    administrativeDivisionId?: string | null;
+    isNationwide?: boolean;
+    targetDivisionIds?: string[];
     authToken?: string;
   }): Promise<TaskItem> {
     const startTime = Date.now();
@@ -1566,6 +1803,17 @@ export const supabaseDb = {
     const slots = Math.round(Number(taskData.totalQuantity));
     if (!Number.isFinite(rewardUnits) || rewardUnits <= 0 || !Number.isFinite(slots) || slots <= 0) {
       throw new Error('يجب أن تكون مكافأة المهمة وعدد المقاعد أعداداً صحيحة أكبر من صفر.');
+    }
+
+    let geoValidated: Awaited<ReturnType<typeof geoService.validateGeoSelection>> | null = null;
+    if (taskData.countryId || taskData.administrativeDivisionId || (taskData.targetDivisionIds && taskData.targetDivisionIds.length > 0)) {
+      geoValidated = await geoService.validateGeoSelection({
+        countryId: taskData.countryId,
+        divisionId: taskData.administrativeDivisionId,
+        divisionIds: taskData.targetDivisionIds,
+        requireActiveCountry: true,
+        authToken: taskData.authToken,
+      });
     }
 
     const creationKey = taskData.creationKey?.trim() || `TASK-${crypto.randomUUID()}`;
@@ -1589,6 +1837,43 @@ export const supabaseDb = {
           executionDurationMs: Date.now() - startTime,
         });
         throw new Error(error?.message || 'فشل إنشاء المهمة وحجز ميزانيتها في حساب الضمان (ESCROW).');
+      }
+
+      const db = getActorOrAdminClient(taskData.authToken);
+      if (taskData.category) {
+        try {
+          await db.from('tasks').update({ category: taskData.category }).eq('id', String(createdTaskId));
+        } catch {}
+      }
+
+      if (geoValidated?.country) {
+        const isNationwide =
+          taskData.isNationwide !== undefined
+            ? Boolean(taskData.isNationwide)
+            : geoValidated.divisions.length === 0 && !geoValidated.division;
+        try {
+          await db
+            .from('tasks')
+            .update({
+              country_id: geoValidated.country.id,
+              administrative_division_id: geoValidated.division?.id || null,
+              is_nationwide: isNationwide,
+            })
+            .eq('id', String(createdTaskId));
+
+          if (!isNationwide && geoValidated.divisions.length > 0) {
+            await db.from('task_target_divisions').upsert(
+              geoValidated.divisions.map((d) => ({
+                task_id: String(createdTaskId),
+                country_id: d.countryId,
+                division_id: d.id,
+              })),
+              { onConflict: 'task_id,division_id' }
+            );
+          }
+        } catch {
+          // Safe fallback if pre-028 schema
+        }
       }
 
       const task = await this.getTaskById(String(createdTaskId));
@@ -3424,6 +3709,7 @@ export const supabaseDb = {
     taxType: string;
     taxAuthority: string;
     region?: string;
+    countryId?: string | null;
     taxBase: string;
     ratePercentage: number;
     flatAmount?: number;
@@ -3451,13 +3737,25 @@ export const supabaseDb = {
 
     const db = getActorOrAdminClient(params.authToken);
     const now = new Date().toISOString();
-    const { data, error } = await db
+    let resolvedRegion = (params.region || '').trim();
+    let resolvedCountryId: string | null = params.countryId || null;
+    if (resolvedCountryId) {
+      const c = await geoService.resolveCountry(resolvedCountryId, params.authToken);
+      if (c) {
+        resolvedCountryId = c.id;
+        if (!resolvedRegion) resolvedRegion = c.nameEn.toUpperCase();
+      }
+    }
+    if (!resolvedRegion) resolvedRegion = 'YEMEN';
+
+    let insertRes = await db
       .from('tax_definitions')
       .insert({
         id: crypto.randomUUID(),
         tax_type: taxType,
         tax_authority: taxAuthority,
-        region: (params.region || 'YEMEN').trim(),
+        region: resolvedRegion,
+        country_id: resolvedCountryId,
         tax_base: taxBase,
         rate_percentage: rate,
         flat_amount: flat,
@@ -3469,6 +3767,29 @@ export const supabaseDb = {
       })
       .select('*')
       .single();
+
+    if (insertRes.error && insertRes.error.code === '42703') {
+      insertRes = await db
+        .from('tax_definitions')
+        .insert({
+          id: crypto.randomUUID(),
+          tax_type: taxType,
+          tax_authority: taxAuthority,
+          region: resolvedRegion,
+          tax_base: taxBase,
+          rate_percentage: rate,
+          flat_amount: flat,
+          valid_from: params.validFrom ? new Date(params.validFrom).toISOString() : now,
+          valid_to: params.validTo ? new Date(params.validTo).toISOString() : null,
+          is_active: Boolean(params.isActive),
+          created_at: now,
+          updated_at: now,
+        })
+        .select('*')
+        .single();
+    }
+
+    const { data, error } = insertRes;
 
     if (error) {
       if (error.code === 'PGRST205' || error.code === '42P01') {
@@ -4573,13 +4894,14 @@ export const supabaseDb = {
 
   async _hydrateCampaignRows(rows: any[], db: any): Promise<CampaignItem[]> {
     if (!rows || rows.length === 0) return [];
+    const campIds = rows.map((r) => r.id);
     const advIds = Array.from(new Set(rows.map((r) => r.advertiser_id).filter(Boolean)));
     const accIds = Array.from(
       new Set(rows.flatMap((r) => [r.budget_escrow_account_id, r.fee_escrow_account_id]).filter(Boolean))
     );
     const taskIds = Array.from(new Set(rows.map((r) => r.linked_task_id).filter(Boolean)));
 
-    const [profilesRes, accountsRes, tasksRes] = await Promise.all([
+    const [profilesRes, accountsRes, tasksRes, targetsRes, countriesRes] = await Promise.all([
       advIds.length > 0
         ? db.from('profiles').select('id, full_name, company_name').in('id', advIds)
         : Promise.resolve({ data: [] }),
@@ -4589,6 +4911,10 @@ export const supabaseDb = {
       taskIds.length > 0
         ? db.from('tasks').select('id, approved_count').in('id', taskIds)
         : Promise.resolve({ data: [] }),
+      Promise.resolve(
+        db.from('campaign_target_divisions').select('campaign_id, country_id, division_id').in('campaign_id', campIds)
+      ).catch(() => ({ data: [] })),
+      geoService.getCountries({ includeInactive: true }).catch(() => ({ countries: [] })),
     ]);
 
     const profileMap = new Map<string, any>();
@@ -4597,11 +4923,29 @@ export const supabaseDb = {
     for (const a of accountsRes.data || []) accMap.set(a.id, Number(a.balance_units || 0));
     const taskMap = new Map<string, number>();
     for (const t of tasksRes.data || []) taskMap.set(t.id, Number(t.approved_count || 0));
+    const countryMap = new Map((countriesRes.countries || []).map((c: any) => [c.id, c]));
+
+    const targetIdsByCampaign = new Map<string, string[]>();
+    const allDivIds = new Set<string>();
+    for (const tr of (targetsRes as any)?.data || []) {
+      const arr = targetIdsByCampaign.get(tr.campaign_id) || [];
+      arr.push(tr.division_id);
+      targetIdsByCampaign.set(tr.campaign_id, arr);
+      allDivIds.add(tr.division_id);
+    }
+    for (const r of rows) {
+      const metaGeo = r.proof_requirements?._campaignMeta?.geo;
+      if (Array.isArray(metaGeo?.targetDivisionIds)) {
+        for (const id of metaGeo.targetDivisionIds) allDivIds.add(id);
+      }
+    }
+    const summaryMap = await geoService.resolveTargetSummariesByIds(Array.from(allDivIds));
 
     return rows.map((r) => {
       const prof = profileMap.get(r.advertiser_id);
       const rawReqs = r.proof_requirements || {};
       const campaignMeta = rawReqs._campaignMeta || {};
+      const metaGeo = campaignMeta.geo || {};
       const { _campaignMeta: _strip, ...cleanProofReqs } = rawReqs;
       const hideAdvertiserName = Boolean(
         r.hide_advertiser_name ?? campaignMeta.hideAdvertiserName ?? false
@@ -4615,6 +4959,14 @@ export const supabaseDb = {
       const advertiserLogoUrl = sanitizeAdvertiserLogoUrl(
         r.advertiser_logo_url ?? campaignMeta.advertiserLogoUrl
       );
+
+      const resolvedCountryId = r.country_id ?? metaGeo.countryId ?? null;
+      const countryObj = resolvedCountryId ? countryMap.get(resolvedCountryId) : undefined;
+      const targetIds = targetIdsByCampaign.get(r.id) || (Array.isArray(metaGeo.targetDivisionIds) ? metaGeo.targetDivisionIds : []);
+      const targetDivisions = targetIds
+        .map((id: string) => summaryMap.get(id))
+        .filter(Boolean) as GeoTargetSummary[];
+      const isNationwide = r.is_nationwide !== undefined ? Boolean(r.is_nationwide) : metaGeo.isNationwide ?? true;
 
       return {
         id: r.id,
@@ -4654,6 +5006,13 @@ export const supabaseDb = {
         deadlineAt: r.deadline_at || null,
         startedAt: r.started_at || null,
         settledAt: r.settled_at || null,
+        countryId: resolvedCountryId,
+        countryCode: countryObj?.iso2 || null,
+        countryNameAr: countryObj?.nameAr || null,
+        countryFlag: countryObj?.flagEmoji || null,
+        isNationwide,
+        targetDivisionIds: targetIds,
+        targetDivisions,
         createdAt: r.created_at,
         updatedAt: r.updated_at,
       };
@@ -4674,6 +5033,9 @@ export const supabaseDb = {
     advertiserLogoUrl?: string | null;
     deadlineAt?: string | null;
     creationKey?: string;
+    countryId?: string | null;
+    isNationwide?: boolean;
+    targetDivisionIds?: string[];
     authToken?: string;
   }) {
     const cleanTitle = String(params.title || '').trim();
@@ -4681,6 +5043,22 @@ export const supabaseDb = {
     if (!cleanTitle || !cleanDesc) {
       throw new Error('عنوان الحملة ووصف المهمة مطلوبان.');
     }
+
+    let geoValidated: Awaited<ReturnType<typeof geoService.validateGeoSelection>> | null = null;
+    if (params.countryId || (params.targetDivisionIds && params.targetDivisionIds.length > 0)) {
+      geoValidated = await geoService.validateGeoSelection({
+        countryId: params.countryId,
+        divisionIds: params.targetDivisionIds,
+        requireActiveCountry: true,
+        authToken: params.authToken,
+      });
+    }
+
+    const isNationwide =
+      params.isNationwide !== undefined
+        ? Boolean(params.isNationwide)
+        : !geoValidated || geoValidated.divisions.length === 0;
+    const validatedDivisionIds = !isNationwide && geoValidated ? geoValidated.divisions.map((d) => d.id) : [];
 
     const settings = await this.getSettings(params.authToken);
     const costs = calculateCampaignFundingCosts({
@@ -4712,6 +5090,15 @@ export const supabaseDb = {
         hideAdvertiserName,
         advertiserDisplayName: cleanDisplayName,
         advertiserLogoUrl: cleanLogoUrl || null,
+        ...(geoValidated?.country
+          ? {
+              geo: {
+                countryId: geoValidated.country.id,
+                isNationwide,
+                targetDivisionIds: validatedDivisionIds,
+              },
+            }
+          : {}),
       },
     };
 
@@ -4740,7 +5127,7 @@ export const supabaseDb = {
     });
 
     if (!rpcErr && rpcRes) {
-      // Ensure status is pending_approval and sync metadata
+      // Ensure status is pending_approval and sync metadata + geo targeting
       if (rpcRes?.campaignId) {
         try {
           const adminClient = getSupabaseAdminClient();
@@ -4755,6 +5142,26 @@ export const supabaseDb = {
               fee_policy_snapshot: costs.policySnapshot || null,
             })
             .eq('id', rpcRes.campaignId);
+
+          if (geoValidated?.country) {
+            await adminClient
+              .from('campaigns')
+              .update({
+                country_id: geoValidated.country.id,
+                is_nationwide: isNationwide,
+              })
+              .eq('id', rpcRes.campaignId);
+            if (!isNationwide && validatedDivisionIds.length > 0) {
+              await adminClient.from('campaign_target_divisions').upsert(
+                validatedDivisionIds.map((divId) => ({
+                  campaign_id: rpcRes.campaignId,
+                  country_id: geoValidated!.country!.id,
+                  division_id: divId,
+                })),
+                { onConflict: 'campaign_id,division_id' }
+              );
+            }
+          }
         } catch {}
         rpcRes.status = 'pending_approval';
       }
@@ -4913,7 +5320,7 @@ export const supabaseDb = {
         throw new Error(insertErr.message);
       }
 
-      // Best-effort sync of optional Migration 021 & 024 columns without failing if pre-024
+      // Best-effort sync of optional Migration 021, 024 & 028 columns without failing if older schema
       try {
         await adminClient
           .from('campaigns')
@@ -4925,6 +5332,26 @@ export const supabaseDb = {
             fee_policy_snapshot: costs.policySnapshot || null,
           })
           .eq('id', campaignId);
+
+        if (geoValidated?.country) {
+          await adminClient
+            .from('campaigns')
+            .update({
+              country_id: geoValidated.country.id,
+              is_nationwide: isNationwide,
+            })
+            .eq('id', campaignId);
+          if (!isNationwide && validatedDivisionIds.length > 0) {
+            await adminClient.from('campaign_target_divisions').upsert(
+              validatedDivisionIds.map((divId) => ({
+                campaign_id: campaignId,
+                country_id: geoValidated!.country!.id,
+                division_id: divId,
+              })),
+              { onConflict: 'campaign_id,division_id' }
+            );
+          }
+        }
       } catch {}
 
       const updatedWallet = await this.getWallet(params.advertiserId);
@@ -5008,6 +5435,41 @@ export const supabaseDb = {
               advertiser_logo_url: logoUrl,
             })
             .eq('id', rpcRes.linkedTaskId);
+
+          // Sync geo targeting from campaign -> linked task (Migration 028)
+          const cGeo = cMeta.geo || {};
+          const targetCountryId = campRow?.country_id ?? cGeo.countryId ?? null;
+          const targetNationwide = campRow?.is_nationwide !== undefined ? Boolean(campRow.is_nationwide) : cGeo.isNationwide ?? true;
+          if (targetCountryId) {
+            await adminClient
+              .from('tasks')
+              .update({
+                country_id: targetCountryId,
+                is_nationwide: targetNationwide,
+              })
+              .eq('id', rpcRes.linkedTaskId);
+          }
+          const { data: campTargets } = await adminClient
+            .from('campaign_target_divisions')
+            .select('country_id, division_id')
+            .eq('campaign_id', params.campaignId);
+          const divRows =
+            campTargets && campTargets.length > 0
+              ? campTargets
+              : (cGeo.targetDivisionIds || []).map((divId: string) => ({
+                  country_id: targetCountryId,
+                  division_id: divId,
+                }));
+          if (!targetNationwide && divRows.length > 0 && targetCountryId) {
+            await adminClient.from('task_target_divisions').upsert(
+              divRows.map((d: any) => ({
+                task_id: rpcRes.linkedTaskId,
+                country_id: d.country_id || targetCountryId,
+                division_id: d.division_id,
+              })),
+              { onConflict: 'task_id,division_id' }
+            );
+          }
         } catch {}
       }
       return rpcRes;
@@ -5124,6 +5586,38 @@ export const supabaseDb = {
             advertiser_logo_url: fullCamp.advertiser_logo_url ?? cMeta.advertiserLogoUrl ?? null,
           })
           .eq('id', linkedTaskId);
+
+        const cGeo = cMeta.geo || {};
+        const targetCountryId = fullCamp.country_id ?? cGeo.countryId ?? null;
+        const targetNationwide =
+          fullCamp.is_nationwide !== undefined ? Boolean(fullCamp.is_nationwide) : cGeo.isNationwide ?? true;
+        if (targetCountryId) {
+          await adminClient
+            .from('tasks')
+            .update({ country_id: targetCountryId, is_nationwide: targetNationwide })
+            .eq('id', linkedTaskId);
+        }
+        const { data: campTargets } = await adminClient
+          .from('campaign_target_divisions')
+          .select('country_id, division_id')
+          .eq('campaign_id', fullCamp.id);
+        const divRows =
+          campTargets && campTargets.length > 0
+            ? campTargets
+            : (cGeo.targetDivisionIds || []).map((divId: string) => ({
+                country_id: targetCountryId,
+                division_id: divId,
+              }));
+        if (!targetNationwide && divRows.length > 0 && targetCountryId) {
+          await adminClient.from('task_target_divisions').upsert(
+            divRows.map((d: any) => ({
+              task_id: linkedTaskId,
+              country_id: d.country_id || targetCountryId,
+              division_id: d.division_id,
+            })),
+            { onConflict: 'task_id,division_id' }
+          );
+        }
       } catch {}
     } else {
       await adminClient.from('tasks').update({ status: 'active' }).eq('id', linkedTaskId);

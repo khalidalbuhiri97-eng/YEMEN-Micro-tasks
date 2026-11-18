@@ -9,6 +9,10 @@ import { LedgerAuditView } from './finance/LedgerAuditView.tsx';
 import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
 import { TaxManagementView } from './finance/TaxManagementView.tsx';
 import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
+import { GeoManagementView } from './GeoManagementView.tsx';
+import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
+import { fetchGeoCountries } from '../../services/geoService.ts';
+import type { CountryItem } from '../../types/index.ts';
 import {
   ShieldAlert,
   CheckCircle,
@@ -36,7 +40,7 @@ import {
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -68,6 +72,14 @@ export const AdminDashboard: React.FC = () => {
   const [newTaskReward, setNewTaskReward] = useState('50');
   const [newTaskQty, setNewTaskQty] = useState('50');
   const [newTaskTime, setNewTaskTime] = useState('10');
+  const [newTaskGeo, setNewTaskGeo] = useState<GeoMultiValue>({
+    countryId: '',
+    isNationwide: true,
+    targetDivisionIds: [],
+    targetDivisions: [],
+  });
+  const [adminCountries, setAdminCountries] = useState<CountryItem[]>([]);
+  const [userCountryFilter, setUserCountryFilter] = useState<string>('');
 
   // Adjust User Balance modal
   const [adjustingUser, setAdjustingUser] = useState<any | null>(null);
@@ -110,6 +122,9 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     loadAllAdminData();
+    fetchGeoCountries(true)
+      .then(({ countries }) => setAdminCountries(countries))
+      .catch(() => {});
   }, []);
 
   // --- SUBMISSION ACTIONS ---
@@ -250,6 +265,9 @@ export const AdminDashboard: React.FC = () => {
         timeEstimateMinutes: Number(newTaskTime),
         proofRequirements: { requireImage: true, requireText: true },
         creationKey,
+        countryId: newTaskGeo.countryId || undefined,
+        isNationwide: newTaskGeo.isNationwide,
+        targetDivisionIds: newTaskGeo.isNationwide ? [] : newTaskGeo.targetDivisionIds,
       });
       showToast('تم نشر المهمة الجديدة بنجاح للمستخدمين!', 'success');
       setIsCreatingTask(false);
@@ -502,6 +520,7 @@ export const AdminDashboard: React.FC = () => {
           { id: 'ledger', label: 'دفتر الأستاذ والمراجعة', count: null },
           { id: 'reports', label: 'التقارير المالية (8)', count: null },
           { id: 'taxes', label: 'إدارة الضرائب', count: null },
+          { id: 'geo', label: 'الدول والتقسيمات', count: adminCountries.length || 22 },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
@@ -571,6 +590,9 @@ export const AdminDashboard: React.FC = () => {
       {activeTab === 'taxes' && (
         <TaxManagementView treasury={treasury} onRefreshAll={loadAllAdminData} />
       )}
+
+      {/* 5B. ARAB COUNTRIES & DIVISIONS GEOGRAPHY TAB */}
+      {activeTab === 'geo' && <GeoManagementView />}
 
       {/* DATABASE ERRORS MONITORING TAB */}
       {activeTab === 'db_errors' && <DatabaseErrorsView />}
@@ -1163,6 +1185,17 @@ export const AdminDashboard: React.FC = () => {
                 </div>
               </div>
 
+              {/* Geographic Targeting */}
+              <GeoLocationSelector
+                mode="multi"
+                countryId={newTaskGeo.countryId}
+                isNationwide={newTaskGeo.isNationwide}
+                targetDivisionIds={newTaskGeo.targetDivisionIds}
+                targetDivisions={newTaskGeo.targetDivisions}
+                defaultCountryIso2="YE"
+                onChange={setNewTaskGeo}
+              />
+
               {/* Total Budget Frozen Notice */}
               <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs flex items-center justify-between text-emerald-900 dark:text-emerald-200">
                 <span>إجمالي ميزانية المهمة (ستخصم بالكامل من محفظة المدير وتُعلق في حساب المهام الجارية):</span>
@@ -1213,6 +1246,10 @@ export const AdminDashboard: React.FC = () => {
                   </span>
                 </div>
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">{t.title}</h4>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                  {t.countryFlag ? `${t.countryFlag} ` : ''}
+                  {t.locationLabel || t.countryNameAr || 'جميع الدول العربية'}
+                </div>
                 <div className="flex items-center justify-between font-mono text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800">
                   <span>المكافأة: {t.rewardYer.toLocaleString()} ر.ي</span>
                   <span>المكتمل: {t.completedQuantity} / {t.totalQuantity}</span>
@@ -1234,11 +1271,25 @@ export const AdminDashboard: React.FC = () => {
       {/* 5. USERS MANAGEMENT TAB */}
       {activeTab === 'users' && (
         <div className="space-y-4">
-          <div>
-            <h2 className="text-base font-bold text-slate-900 dark:text-white">إدارة المستخدمين ومطابقة الحسابات</h2>
-            <p className="text-xs text-slate-500">
-              مراقبة الحسابات، تجميد الحسابات المشبوهة، وإجراء تسويات مالية مدققة وموثقة في السجل.
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white">إدارة المستخدمين ومطابقة الحسابات</h2>
+              <p className="text-xs text-slate-500">
+                مراقبة الحسابات، تجميد الحسابات المشبوهة، وإجراء تسويات مالية مدققة وموثقة في السجل.
+              </p>
+            </div>
+            <select
+              value={userCountryFilter}
+              onChange={(e) => setUserCountryFilter(e.target.value)}
+              className="w-full sm:w-60 min-h-[40px] px-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl"
+            >
+              <option value="">كل الدول ({usersList.length})</option>
+              {adminCountries.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.flagEmoji} {c.nameAr}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
@@ -1247,6 +1298,7 @@ export const AdminDashboard: React.FC = () => {
                 <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800">
                   <tr>
                     <th className="py-3 px-4">الاسم والبيانات</th>
+                    <th className="py-3 px-4">الموقع الجغرافي</th>
                     <th className="py-3 px-4">رقم الهاتف</th>
                     <th className="py-3 px-4 font-mono">الرصيد المتاح</th>
                     <th className="py-3 px-4 font-mono">الرصيد المعلق</th>
@@ -1256,7 +1308,9 @@ export const AdminDashboard: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {usersList.map((u) => (
+                  {usersList
+                    .filter((u) => !userCountryFilter || u.countryId === userCountryFilter)
+                    .map((u) => (
                     <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
                         <div className="flex items-center gap-1.5">
@@ -1274,6 +1328,9 @@ export const AdminDashboard: React.FC = () => {
                         <div className="text-[10px] text-slate-400 font-mono">
                           {u.companyName ? `${u.companyName} · ` : ''}كود: {u.referralCode}
                         </div>
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-slate-300 max-w-[200px] truncate" title={u.locationPath || u.city}>
+                        {u.countryFlag ? `${u.countryFlag} ` : ''}{u.locationPath || u.city || '—'}
                       </td>
                       <td className="py-3 px-4 font-mono">{u.phone}</td>
                       <td className="py-3 px-4 font-mono font-bold text-emerald-600 tabular-nums">

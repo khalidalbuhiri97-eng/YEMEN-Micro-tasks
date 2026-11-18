@@ -3,6 +3,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseDb, generateWalletAddress, generateReferralCode } from './supabaseDb.js';
+import { geoService } from './geoService.js';
 import {
   parseMoneyStrict,
   toMicros,
@@ -345,13 +346,44 @@ export const advertiserMiddleware = async (req: AuthenticatedRequest, res: Respo
 
 app.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
-    const { fullName, phone, email, password, city, referralCode, role, companyName } = req.body || {};
+    const {
+      fullName,
+      phone,
+      email,
+      password,
+      city,
+      countryId,
+      administrativeDivisionId,
+      referralCode,
+      role,
+      companyName,
+    } = req.body || {};
     if (!fullName || !phone || !password) {
       return res.status(400).json({ error: 'يرجى إدخال الاسم ورقم الهاتف وكلمة المرور.' });
     }
     if (password.length < 6) {
       return res.status(400).json({ error: 'كلمة المرور يجب أن لا تقل عن 6 خانات.' });
     }
+
+    // 0. Validate optional Arab League country / administrative division before account creation
+    let geoValidated: Awaited<ReturnType<typeof geoService.validateGeoSelection>> | null = null;
+    if (countryId || administrativeDivisionId) {
+      try {
+        geoValidated = await geoService.validateGeoSelection({
+          countryId: countryId ? String(countryId) : null,
+          divisionId: administrativeDivisionId ? String(administrativeDivisionId) : null,
+          requireActiveCountry: true,
+        });
+      } catch (geoErr: any) {
+        return res.status(400).json({ error: geoErr?.message || 'الموقع الجغرافي المحدد غير صالح.' });
+      }
+    }
+
+    const resolvedCity =
+      city?.trim() ||
+      geoValidated?.division?.nameAr ||
+      geoValidated?.country?.nameAr ||
+      'صنعاء';
 
     const cleanPhone = phone.trim();
     const cleanEmail = email ? email.trim().toLowerCase() : `ky_${cleanPhone.replace(/\D/g, '')}@kasbyemen.local`;
@@ -384,7 +416,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Register strictly via Supabase Auth (passing referred_by_code so DB trigger handles it atomically too)
+    // 3. Register strictly via Supabase Auth (passing referred_by_code & geo metadata so DB trigger handles them atomically)
     const { data: supaAuth, error: supaAuthErr } = await supabaseServer.auth.signUp({
       email: cleanEmail,
       password: password,
@@ -392,7 +424,9 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         data: {
           full_name: fullName.trim(),
           phone: cleanPhone,
-          city: city?.trim() || 'صنعاء',
+          city: resolvedCity,
+          ...(geoValidated?.country ? { country_id: geoValidated.country.id } : {}),
+          ...(geoValidated?.division ? { administrative_division_id: geoValidated.division.id } : {}),
           role: role === 'advertiser' ? 'advertiser' : 'user',
           ...(resolvedReferrer ? { referred_by_code: resolvedReferrer.referralCode } : {}),
         },
@@ -452,7 +486,10 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       id: authUserId,
       full_name: fullName.trim(),
       phone: cleanPhone,
-      city: city?.trim() || 'صنعاء',
+      city: resolvedCity,
+      ...(geoValidated?.country ? { country_id: geoValidated.country.id } : {}),
+      ...(geoValidated?.division ? { administrative_division_id: geoValidated.division.id } : {}),
+      ...(geoValidated?.division ? { area_name: geoValidated.division.nameAr } : {}),
       account_status: initialStatus,
       referral_code: finalReferralCode,
       updated_at: now,
@@ -477,17 +514,19 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     const attemptUpsert = await dbClient
       .from('profiles')
       .upsert(baseProfileFields, { onConflict: 'id' })
-      .select('id, full_name, phone, city, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
+      .select('id, full_name, phone, city, area_name, country_id, administrative_division_id, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
       .single();
 
     profileData = attemptUpsert.data;
     profileErr = attemptUpsert.error;
 
-    // Pre-Migration 014 fallback if referred_by column isn't added yet, or trigger blocks updating referred_by
+    // Pre-Migration 014 / 028 fallback if columns aren't added yet, or trigger blocks updating referred_by
     if (
       profileErr &&
       (profileErr.code === '42703' ||
         String(profileErr.message || '').includes('referred_by') ||
+        String(profileErr.message || '').includes('country_id') ||
+        String(profileErr.message || '').includes('administrative_division_id') ||
         String(profileErr.message || '').includes('company_name') ||
         String(profileErr.message || '').includes('immutable'))
     ) {
@@ -495,6 +534,9 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         referred_by: _omit,
         company_name: _omitComp,
         contact_person: _omitContact,
+        country_id: _omitCountry,
+        administrative_division_id: _omitDiv,
+        area_name: _omitArea,
         ...legacyFields
       } = baseProfileFields;
       const retry = await dbClient
@@ -558,7 +600,14 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       status: profileData.account_status || initialStatus,
       referralCode: profileData.referral_code || finalReferralCode,
       referredBy: profileData.referred_by || resolvedReferrer?.referrerId || undefined,
-      city: profileData.city || 'صنعاء',
+      city: profileData.city || resolvedCity,
+      areaName: profileData.area_name || geoValidated?.division?.nameAr || null,
+      countryId: profileData.country_id || geoValidated?.country?.id || null,
+      countryCode: geoValidated?.country?.iso2 || null,
+      countryNameAr: geoValidated?.country?.nameAr || null,
+      countryFlag: geoValidated?.country?.flagEmoji || null,
+      administrativeDivisionId: profileData.administrative_division_id || geoValidated?.division?.id || null,
+      locationPath: geoValidated?.locationPath || null,
       companyName: companyName?.trim() || undefined,
       contactPerson: fullName.trim(),
       createdAt: profileData.created_at,
@@ -764,13 +813,101 @@ app.get('/api/settings', async (_req: Request, res: Response) => {
   }
 });
 
+// Authenticated Profile Location Update
+app.put('/api/profile/location', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { countryId, administrativeDivisionId, areaName, city } = req.body || {};
+    if (!countryId) {
+      return res.status(400).json({ error: 'يرجى تحديد الدولة العربية.' });
+    }
+    const updatedUser = await supabaseDb.updateUserProfileLocation(
+      req.user.id,
+      {
+        countryId: String(countryId),
+        administrativeDivisionId: administrativeDivisionId ? String(administrativeDivisionId) : null,
+        areaName: areaName ? String(areaName) : undefined,
+        city: city ? String(city) : undefined,
+      },
+      req.authToken
+    );
+    res.json({ success: true, user: updatedUser });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر تحديث الموقع الجغرافي للحساب.' });
+  }
+});
+
+// Public Geographic Hierarchy Endpoints (22 Arab League Countries)
+app.get('/api/geo/countries', async (req: Request, res: Response) => {
+  try {
+    const includeInactive = String(req.query.includeInactive || '').toLowerCase() === 'true';
+    const result = await geoService.getCountries({ includeInactive });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب قائمة الدول العربية.' });
+  }
+});
+
+app.get('/api/geo/countries/:countryId/levels', async (req: Request, res: Response) => {
+  try {
+    const levels = await geoService.getCountryLevels(req.params.countryId);
+    res.json({ levels });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب المستويات الإدارية للدولة.' });
+  }
+});
+
+app.get('/api/geo/divisions', async (req: Request, res: Response) => {
+  try {
+    const countryId = req.query.countryId ? String(req.query.countryId) : '';
+    if (!countryId) {
+      return res.status(400).json({ error: 'معرف الدولة (countryId) مطلوب.' });
+    }
+    const parentId = req.query.parentId === undefined ? null : req.query.parentId ? String(req.query.parentId) : null;
+    const levelId = req.query.levelId ? String(req.query.levelId) : undefined;
+    const search = req.query.search ? String(req.query.search) : undefined;
+    const includeInactive = String(req.query.includeInactive || '').toLowerCase() === 'true';
+    const limit = req.query.limit ? Number(req.query.limit) : undefined;
+    const divisions = await geoService.getDivisions({
+      countryId,
+      parentId: search && req.query.parentId === undefined ? undefined : parentId,
+      levelId,
+      search,
+      includeInactive,
+      limit,
+    });
+    res.json({ divisions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب التقسيمات الإدارية.' });
+  }
+});
+
+app.get('/api/geo/divisions/:id/children', async (req: Request, res: Response) => {
+  try {
+    const divisions = await geoService.getDivisionChildren(req.params.id);
+    res.json({ divisions });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب التقسيمات الفرعية.' });
+  }
+});
+
+app.get('/api/geo/divisions/:id/path', async (req: Request, res: Response) => {
+  try {
+    const result = await geoService.getDivisionPath(req.params.id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب المسار الجغرافي الكامل.' });
+  }
+});
+
 // Tasks (Public / User)
 app.get('/api/tasks', async (req: Request, res: Response) => {
   try {
-    const { category, search } = req.query;
+    const { category, search, countryId, divisionId } = req.query;
     const tasks = await supabaseDb.getTasks({
       category: category ? String(category) : undefined,
       search: search ? String(search) : undefined,
+      countryId: countryId ? String(countryId) : undefined,
+      divisionId: divisionId ? String(divisionId) : undefined,
     });
     res.json({ tasks });
   } catch (err: any) {
@@ -1464,7 +1601,19 @@ app.get('/api/admin/tasks', adminMiddleware, async (_req: AuthenticatedRequest, 
 
 app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { title, description, category, rewardYer, totalQuantity, deadline, creationKey } = req.body || {};
+    const {
+      title,
+      description,
+      category,
+      rewardYer,
+      totalQuantity,
+      deadline,
+      creationKey,
+      countryId,
+      administrativeDivisionId,
+      isNationwide,
+      targetDivisionIds,
+    } = req.body || {};
     if (!title || !description || rewardYer === undefined || totalQuantity === undefined) {
       return res.status(400).json({ error: 'يرجى استكمال بيانات المهمة الأساسية.' });
     }
@@ -1477,6 +1626,10 @@ app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, 
       totalQuantity,
       deadline,
       creationKey,
+      countryId: countryId || null,
+      administrativeDivisionId: administrativeDivisionId || null,
+      isNationwide,
+      targetDivisionIds: Array.isArray(targetDivisionIds) ? targetDivisionIds : undefined,
       authToken: req.authToken,
     });
 
@@ -2181,11 +2334,12 @@ app.get('/api/admin/finance/taxes', adminMiddleware, async (req: AuthenticatedRe
 
 app.post('/api/admin/finance/taxes', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { taxType, taxAuthority, region, taxBase, ratePercentage, flatAmount, validFrom, validTo, isActive } = req.body || {};
+    const { taxType, taxAuthority, region, countryId, taxBase, ratePercentage, flatAmount, validFrom, validTo, isActive } = req.body || {};
     const definition = await supabaseDb.createTaxDefinition({
       taxType,
       taxAuthority,
       region,
+      countryId: countryId || null,
       taxBase,
       ratePercentage: Number(ratePercentage ?? 0),
       flatAmount: Number(flatAmount ?? 0),
@@ -2551,6 +2705,9 @@ app.post('/api/advertiser/campaigns', advertiserMiddleware, async (req: Authenti
       advertiserLogoUrl,
       deadlineAt,
       creationKey,
+      countryId,
+      isNationwide,
+      targetDivisionIds,
     } = req.body || {};
 
     const cleanReward = parseMoneyStrict(rewardUnits ?? rewardYer);
@@ -2576,6 +2733,9 @@ app.post('/api/advertiser/campaigns', advertiserMiddleware, async (req: Authenti
       advertiserLogoUrl: advertiserLogoUrl ? String(advertiserLogoUrl) : undefined,
       deadlineAt: deadlineAt || null,
       creationKey: creationKey ? String(creationKey) : undefined,
+      countryId: countryId ? String(countryId) : null,
+      isNationwide: isNationwide !== undefined ? Boolean(isNationwide) : undefined,
+      targetDivisionIds: Array.isArray(targetDivisionIds) ? targetDivisionIds.map(String) : undefined,
       authToken: req.authToken,
     });
 
@@ -3071,6 +3231,79 @@ app.post('/api/admin/database-errors/test-connection', adminMiddleware, async (_
       statusText: `فشل فحص شبكة الاتصال بـ Supabase (${err.message})`,
       error: err.message,
     });
+  }
+});
+
+// ==============================================================================
+// ADMIN GEOGRAPHIC & ADMINISTRATIVE DIVISIONS MANAGEMENT (OWNER ONLY)
+// ==============================================================================
+
+app.get('/api/admin/geo/overview', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const overview = await geoService.getAdminGeoOverview(req.authToken);
+    res.json(overview);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب لوحة البيانات الجغرافية.' });
+  }
+});
+
+app.get('/api/admin/geo/integrity', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const report = await geoService.getAdminGeoIntegrity(req.authToken);
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل فحص سلامة البيانات الجغرافية.' });
+  }
+});
+
+app.patch('/api/admin/geo/countries/:countryId', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const isActive = Boolean(req.body?.isActive);
+    const country = await geoService.toggleCountryStatus(req.params.countryId, isActive, req.authToken);
+    res.json({ success: true, country });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تحديث حالة الدولة.' });
+  }
+});
+
+app.post('/api/admin/geo/countries/:countryId/levels', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { levelOrder, nameAr, nameEn, pluralAr, isRequired } = req.body || {};
+    const level = await geoService.createCountryLevel(
+      req.params.countryId,
+      { levelOrder, nameAr, nameEn, pluralAr, isRequired },
+      req.authToken
+    );
+    res.json({ success: true, level });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل إضافة المستوى الإداري.' });
+  }
+});
+
+app.post('/api/admin/geo/divisions', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const division = await geoService.createDivision(req.body || {}, req.authToken);
+    res.json({ success: true, division });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل إضافة التقسيم الإداري.' });
+  }
+});
+
+app.put('/api/admin/geo/divisions/:divisionId', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const division = await geoService.updateDivision(req.params.divisionId, req.body || {}, req.authToken);
+    res.json({ success: true, division });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تحديث التقسيم الإداري.' });
+  }
+});
+
+app.post('/api/admin/geo/countries/:countryId/import', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await geoService.importCountryFromDataset(req.params.countryId, req.authToken);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل مزامنة واستيراد بيانات الدولة.' });
   }
 });
 

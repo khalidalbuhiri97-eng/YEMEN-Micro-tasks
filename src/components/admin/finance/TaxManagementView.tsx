@@ -10,7 +10,8 @@ import {
 } from 'lucide-react';
 import { api } from '../../../api/client.ts';
 import { useAuth } from '../../../context/AuthContext.tsx';
-import type { TaxDefinition, TaxSettlement, TreasurySummary } from '../../../types/index.ts';
+import { fetchGeoCountries } from '../../../services/geoService.ts';
+import type { CountryItem, TaxDefinition, TaxSettlement, TreasurySummary } from '../../../types/index.ts';
 
 interface TaxManagementViewProps {
   treasury: TreasurySummary | null;
@@ -32,6 +33,8 @@ export const TaxManagementView: React.FC<TaxManagementViewProps> = ({ treasury, 
   const [taxType, setTaxType] = useState('');
   const [taxAuthority, setTaxAuthority] = useState('');
   const [region, setRegion] = useState('YEMEN');
+  const [countryId, setCountryId] = useState<string>('');
+  const [countries, setCountries] = useState<CountryItem[]>([]);
   const [taxBase, setTaxBase] = useState('صافي الأرباح');
   const [ratePercentage, setRatePercentage] = useState('0');
   const [flatAmount, setFlatAmount] = useState('0');
@@ -71,6 +74,13 @@ export const TaxManagementView: React.FC<TaxManagementViewProps> = ({ treasury, 
 
   useEffect(() => {
     loadTaxes();
+    fetchGeoCountries(false)
+      .then(({ countries: list }) => {
+        setCountries(list);
+        const ye = list.find((c) => c.iso2 === 'YE');
+        if (ye) setCountryId((prev) => prev || ye.id);
+      })
+      .catch(() => {});
   }, []);
 
   const handleCreateDefinition = (e: React.FormEvent) => {
@@ -97,6 +107,7 @@ export const TaxManagementView: React.FC<TaxManagementViewProps> = ({ treasury, 
             taxType: taxType.trim(),
             taxAuthority: taxAuthority.trim(),
             region: region.trim() || 'YEMEN',
+            countryId: countryId || null,
             taxBase: taxBase.trim(),
             ratePercentage: Number(ratePercentage || 0),
             flatAmount: Number(flatAmount || 0),
@@ -329,14 +340,29 @@ export const TaxManagementView: React.FC<TaxManagementViewProps> = ({ treasury, 
               />
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">النطاق الجغرافي</label>
-              <input
-                type="text"
-                value={region}
-                onChange={(e) => setRegion(e.target.value)}
-                placeholder="YEMEN"
+              <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">النطاق الجغرافي (الدولة)</label>
+              <select
+                value={countryId || (region === 'ALL' ? 'ALL' : '')}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'ALL') {
+                    setCountryId('');
+                    setRegion('ALL');
+                  } else {
+                    const matched = countries.find((c) => c.id === val);
+                    setCountryId(val);
+                    setRegion(matched ? (matched.iso2 === 'YE' ? 'YEMEN' : matched.iso3) : 'YEMEN');
+                  }
+                }}
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
-              />
+              >
+                <option value="ALL">جميع الدول العربية (ALL)</option>
+                {countries.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.flagEmoji} {c.nameAr} ({c.iso2})
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">الوعاء الخاضع للضريبة</label>

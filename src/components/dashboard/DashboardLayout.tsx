@@ -106,8 +106,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
                 <div className="font-bold text-xs text-slate-900 dark:text-white truncate">
                   {user?.fullName}
                 </div>
-                <div className="text-[11px] font-mono text-slate-400 truncate">
-                  {user?.phone} · {user?.city}
+                <div className="text-[11px] font-mono text-slate-400 truncate" title={user?.locationPath || user?.city}>
+                  {user?.phone} · {user?.countryFlag ? `${user.countryFlag} ` : ''}{user?.locationPath || user?.city}
                 </div>
               </div>
             </div>

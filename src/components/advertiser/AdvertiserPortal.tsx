@@ -5,6 +5,7 @@ import type { CampaignItem, TaskCategory } from '../../types/index.ts';
 import { CampaignServiceFeeDetails } from './CampaignServiceFeeDetails.tsx';
 import { CampaignDetailsModal, CampaignInvoiceModal, getCampaignStatusLabel } from './CampaignModals.tsx';
 import { SecureImageView } from '../common/SecureImageView.tsx';
+import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
 import {
   AlertTriangle,
   Building2,
@@ -97,6 +98,14 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
   );
   const [advertiserLogoUrl, setAdvertiserLogoUrl] = useState<string>('');
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+
+  // Geographic Targeting State
+  const [geoTarget, setGeoTarget] = useState<GeoMultiValue>({
+    countryId: '',
+    isNationwide: true,
+    targetDivisionIds: [],
+    targetDivisions: [],
+  });
 
   const isSubmittingRef = useRef(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -265,6 +274,9 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
           ? undefined
           : (advertiserDisplayName.trim() || user?.companyName || user?.fullName || undefined),
         advertiserLogoUrl: hideAdvertiserName ? undefined : (advertiserLogoUrl || undefined),
+        countryId: geoTarget.countryId || undefined,
+        isNationwide: geoTarget.isNationwide,
+        targetDivisionIds: geoTarget.isNationwide ? [] : geoTarget.targetDivisionIds,
       });
 
       showToast(
@@ -627,6 +639,17 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                 </div>
               </div>
 
+              {/* Geographic Targeting Section */}
+              <GeoLocationSelector
+                mode="multi"
+                countryId={geoTarget.countryId}
+                isNationwide={geoTarget.isNationwide}
+                targetDivisionIds={geoTarget.targetDivisionIds}
+                targetDivisions={geoTarget.targetDivisions}
+                defaultCountryIso2={user?.countryCode || 'YE'}
+                onChange={setGeoTarget}
+              />
+
               {/* Phase 4: Advertiser Identity Section */}
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -933,6 +956,18 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                       <span aria-hidden="true" className="text-slate-400">·</span>
                       <span className="text-slate-500 dark:text-slate-400">
                         الظهور: <strong className="text-slate-700 dark:text-slate-200">{visibleIdentity}</strong>
+                      </span>
+                      <span aria-hidden="true" className="text-slate-400">·</span>
+                      <span className="text-slate-500 dark:text-slate-400">
+                        النطاق:{' '}
+                        <strong className="text-slate-700 dark:text-slate-200">
+                          {camp.countryFlag ? `${camp.countryFlag} ` : ''}
+                          {camp.countryNameAr
+                            ? camp.isNationwide === false && camp.targetDivisions && camp.targetDivisions.length > 0
+                              ? `${camp.countryNameAr} (${camp.targetDivisions.map((d) => d.nameAr).join('، ')})`
+                              : `${camp.countryNameAr} (شاملة)`
+                            : 'جميع الدول العربية'}
+                        </strong>
                       </span>
                       <span aria-hidden="true" className="text-slate-400">·</span>
                       <span className="font-mono tabular-nums text-slate-500 dark:text-slate-400">

@@ -5,6 +5,118 @@
 export type UserRole = 'user' | 'admin' | 'advertiser';
 export type AccountStatus = 'active' | 'suspended' | 'under_review' | 'pending';
 
+export interface CountryItem {
+  id: string;
+  iso2: string;
+  iso3: string;
+  nameAr: string;
+  nameEn: string;
+  phoneCode?: string | null;
+  flagEmoji: string;
+  isActive: boolean;
+  sortOrder: number;
+  dataSource?: string | null;
+  dataLicense?: string | null;
+  lastSyncedAt?: string | null;
+}
+
+export interface CountryAdminLevel {
+  id: string;
+  countryId: string;
+  levelOrder: number;
+  nameAr: string;
+  nameEn: string;
+  pluralAr?: string | null;
+  isRequired: boolean;
+  isActive: boolean;
+}
+
+export interface AdministrativeDivision {
+  id: string;
+  countryId: string;
+  levelId: string;
+  levelOrder?: number;
+  levelNameAr?: string;
+  levelNameEn?: string;
+  parentId: string | null;
+  code?: string | null;
+  geonamesId?: number | null;
+  wikidataId?: string | null;
+  nameAr: string;
+  nameEn: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  isActive: boolean;
+  hasChildren?: boolean;
+  dataSource?: string;
+  dataLicense?: string;
+  sourceUrl?: string | null;
+  lastSyncedAt?: string | null;
+}
+
+export interface GeoPathItem {
+  id: string;
+  levelOrder: number;
+  levelNameAr: string;
+  levelNameEn?: string;
+  nameAr: string;
+  nameEn: string;
+}
+
+export interface GeoTargetSummary {
+  id: string;
+  countryId: string;
+  nameAr: string;
+  nameEn: string;
+  levelNameAr?: string;
+}
+
+export interface AdminGeoOverviewCountry extends CountryItem {
+  levels: CountryAdminLevel[];
+  divisionsCount: number;
+  level1Count: number;
+  level2Count: number;
+  level3Count: number;
+  usersCount: number;
+  tasksCount: number;
+}
+
+export interface AdminGeoOverview {
+  geoTablesReady: boolean;
+  tablesExist: boolean;
+  seeded: boolean;
+  sourceMode: 'supabase' | 'dataset_fallback';
+  totalCountries: number;
+  activeCountries: number;
+  totalLevels: number;
+  totalDivisions: number;
+  countries: AdminGeoOverviewCountry[];
+}
+
+export interface GeoIntegrityReport {
+  geoTablesReady: boolean;
+  tablesExist: boolean;
+  seeded: boolean;
+  sourceMode: 'supabase' | 'dataset_fallback';
+  isHealthy: boolean;
+  totalCountries: number;
+  activeCountries: number;
+  totalLevels: number;
+  totalDivisions: number;
+  checks: {
+    countriesMissingDivisions: string[];
+    missingNamesCount: number;
+    crossCountryParentCount: number;
+    invalidLevelOrderCount: number;
+    cyclesCount: number;
+    duplicateCodeCount: number;
+    duplicateSiblingCount: number;
+    unlinkedProfilesCount: number;
+    unlinkedTasksCount: number;
+  };
+  checkedAt: string;
+}
+
 export interface UserProfile {
   id: string;
   fullName: string;
@@ -16,6 +128,13 @@ export interface UserProfile {
   referralCode: string;
   referredBy?: string;
   city: string;
+  areaName?: string | null;
+  countryId?: string | null;
+  countryCode?: string | null;
+  countryNameAr?: string | null;
+  countryFlag?: string | null;
+  administrativeDivisionId?: string | null;
+  locationPath?: string | null;
   companyName?: string;
   contactPerson?: string;
   createdAt: string;
@@ -523,6 +642,15 @@ export interface TaskItem {
   hideAdvertiserName?: boolean;
   advertiserDisplayName?: string;
   advertiserLogoUrl?: string;
+  countryId?: string | null;
+  countryCode?: string | null;
+  countryNameAr?: string | null;
+  countryFlag?: string | null;
+  administrativeDivisionId?: string | null;
+  isNationwide?: boolean;
+  targetDivisionIds?: string[];
+  targetDivisions?: GeoTargetSummary[];
+  locationLabel?: string | null;
   createdAt: string;
 }
 
@@ -676,6 +804,13 @@ export interface CampaignItem {
   feePolicySnapshot?: Record<string, any> | null;
   startedAt?: string | null;
   settledAt?: string | null;
+  countryId?: string | null;
+  countryCode?: string | null;
+  countryNameAr?: string | null;
+  countryFlag?: string | null;
+  isNationwide?: boolean;
+  targetDivisionIds?: string[];
+  targetDivisions?: GeoTargetSummary[];
   createdAt: string;
   updatedAt: string;
 }

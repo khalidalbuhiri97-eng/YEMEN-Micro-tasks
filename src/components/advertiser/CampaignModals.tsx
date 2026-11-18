@@ -221,6 +221,17 @@ export const CampaignDetailsModal: React.FC<CampaignDetailsModalProps> = ({
                   {new Date(campaign.createdAt).toLocaleDateString('ar-YE')}
                 </strong>
               </div>
+              <div className="col-span-2 sm:col-span-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-slate-500 dark:text-slate-400 block mb-0.5">النطاق الجغرافي المستهدف</span>
+                <strong className="text-slate-900 dark:text-white">
+                  {campaign.countryFlag ? `${campaign.countryFlag} ` : ''}
+                  {campaign.countryNameAr
+                    ? campaign.isNationwide === false && campaign.targetDivisions && campaign.targetDivisions.length > 0
+                      ? `${campaign.countryNameAr} — ${campaign.targetDivisions.map((d) => d.nameAr).join('، ')}`
+                      : `${campaign.countryNameAr} (كافة التقسيمات الإدارية)`
+                    : 'جميع الدول العربية'}
+                </strong>
+              </div>
             </div>
           </div>
 
@@ -411,6 +422,18 @@ export const CampaignInvoiceModal: React.FC<CampaignInvoiceModalProps> = ({
               <span className="text-slate-500 dark:text-slate-400">تاريخ الإصدار: </span>
               <span className="font-mono tabular-nums text-slate-800 dark:text-slate-200">
                 {new Date(campaign.createdAt).toLocaleString('ar-YE')}
+              </span>
+            </div>
+
+            <div className="sm:col-span-2">
+              <span className="text-slate-500 dark:text-slate-400">النطاق الجغرافي: </span>
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                {campaign.countryFlag ? `${campaign.countryFlag} ` : ''}
+                {campaign.countryNameAr
+                  ? campaign.isNationwide === false && campaign.targetDivisions && campaign.targetDivisions.length > 0
+                    ? `${campaign.countryNameAr} (${campaign.targetDivisions.map((d) => d.nameAr).join('، ')})`
+                    : `${campaign.countryNameAr} (شاملة)`
+                  : 'جميع الدول العربية'}
               </span>
             </div>
 
