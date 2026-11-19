@@ -70,9 +70,10 @@ export const AdminDashboard: React.FC = () => {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskCat, setNewTaskCat] = useState('app_testing');
-  const [newTaskReward, setNewTaskReward] = useState('50');
+  const [newTaskReward, setNewTaskReward] = useState('10');
   const [newTaskQty, setNewTaskQty] = useState('50');
   const [newTaskTime, setNewTaskTime] = useState('10');
+  const [newTaskDurationDays, setNewTaskDurationDays] = useState('7');
   const [newTaskGeo, setNewTaskGeo] = useState<GeoMultiValue>({
     countryId: '',
     isNationwide: true,
@@ -257,6 +258,9 @@ export const AdminDashboard: React.FC = () => {
     setIsSubmittingTask(true);
 
     try {
+      const daysNum = Math.min(30, Math.max(1, Number(newTaskDurationDays) || 7));
+      const deadline = new Date(Date.now() + daysNum * 24 * 60 * 60 * 1000).toISOString();
+
       await api.createAdminTask({
         title: newTaskTitle,
         description: newTaskDesc,
@@ -264,6 +268,7 @@ export const AdminDashboard: React.FC = () => {
         rewardYer: Number(newTaskReward),
         totalQuantity: Number(newTaskQty),
         timeEstimateMinutes: Number(newTaskTime),
+        deadline,
         proofRequirements: { requireImage: true, requireText: true },
         creationKey,
         countryId: newTaskGeo.countryId || undefined,
@@ -1135,16 +1140,16 @@ export const AdminDashboard: React.FC = () => {
                   <input
                     type="number"
                     required
-                    min="0.000001"
+                    min="1"
                     step="any"
                     value={newTaskReward}
                     onChange={(e) => setNewTaskReward(e.target.value)}
-                    placeholder="مثال: 0.25 أو 10 أو 25 أو 50..."
+                    placeholder="مثال: 1 أو 10 أو 50..."
                     className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
                   />
                   {/* Quick reward presets */}
                   <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                    {[10, 25, 50, 75, 100, 250, 500].map((amt) => (
+                    {[1, 5, 10, 25, 50, 75, 100, 250, 500].map((amt) => (
                       <button
                         key={amt}
                         type="button"
@@ -1185,6 +1190,36 @@ export const AdminDashboard: React.FC = () => {
                     onChange={(e) => setNewTaskTime(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
                   />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    مدة الصلاحية (أيام - حتى شهر 30)
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    max="30"
+                    value={newTaskDurationDays}
+                    onChange={(e) => setNewTaskDurationDays(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
+                  />
+                  <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                    {[1, 3, 7, 14, 30].map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setNewTaskDurationDays(String(d))}
+                        className={`px-1 py-0.5 text-[9px] rounded font-mono transition-colors ${
+                          newTaskDurationDays === String(d)
+                            ? 'bg-emerald-600 text-white font-bold'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {d === 30 ? 'شهر' : d === 7 ? 'أسبوع' : `${d}ج`}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 

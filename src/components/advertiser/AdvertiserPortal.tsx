@@ -42,7 +42,7 @@ const CATEGORIES: Array<{ value: TaskCategory; label: string }> = [
   { value: 'local_services', label: 'خدمات محلية' },
 ];
 
-const REWARD_PRESETS = [50, 100, 250, 500];
+const REWARD_PRESETS = [1, 5, 10, 25, 50, 100, 250, 500];
 const SLOTS_PRESETS = [50, 100, 250, 500];
 
 async function compressLogoToDataUrl(file: File): Promise<string> {
@@ -86,9 +86,10 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState<TaskCategory>('app_testing');
-  const [rewardInput, setRewardInput] = useState('100');
+  const [rewardInput, setRewardInput] = useState('10');
   const [slotsInput, setSlotsInput] = useState('100');
   const [timeEstimate, setTimeEstimate] = useState('10');
+  const [durationDays, setDurationDays] = useState('7');
   const [requireImage, setRequireImage] = useState(true);
   const [requireText, setRequireText] = useState(true);
 
@@ -261,6 +262,9 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
     isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
+      const daysNum = Math.min(30, Math.max(1, Number(durationDays) || 7));
+      const deadlineAt = new Date(Date.now() + daysNum * 24 * 60 * 60 * 1000).toISOString();
+
       const res = await api.createAdvertiserCampaign({
         title: title.trim(),
         description: description.trim(),
@@ -268,6 +272,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
         rewardUnits: costBreakdown.rewardUnits,
         slots: costBreakdown.slots,
         timeEstimateMinutes: Math.max(1, Math.round(Number(timeEstimate) || 10)),
+        deadlineAt,
         proofRequirements: { requireImage, requireText },
         creationKey,
         hideAdvertiserName,
@@ -537,15 +542,15 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                   />
                 </div>
 
-                {/* Pricing & Slots with quick mobile presets */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Pricing, Slots, Time & Duration with quick presets */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="space-y-1.5">
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      سعر المهمة الواحدة (ر.ي)
+                      سعر المهمة (يبدأ من 1 ر.ي)
                     </label>
                     <input
                       type="number"
-                      min="0.000001"
+                      min="1"
                       step="any"
                       required
                       value={rewardInput}
@@ -614,6 +619,38 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                       onChange={(e) => setTimeEstimate(e.target.value)}
                       className="w-full min-h-[44px] px-3.5 py-2.5 text-sm font-mono tabular-nums bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
                     />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      المدة (أيام - حتى شهر 30)
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="30"
+                      step="1"
+                      required
+                      value={durationDays}
+                      onChange={(e) => setDurationDays(e.target.value)}
+                      className="w-full min-h-[44px] px-3.5 py-2.5 text-sm font-mono tabular-nums bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                    />
+                    <div className="flex flex-wrap gap-1">
+                      {[1, 3, 7, 14, 30].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setDurationDays(String(d))}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono border transition-colors ${
+                            Number(durationDays) === d
+                              ? 'bg-emerald-600 text-white border-emerald-600 font-bold'
+                              : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                          }`}
+                        >
+                          {d === 30 ? 'شهر' : d === 7 ? 'أسبوع' : `${d}ج`}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
