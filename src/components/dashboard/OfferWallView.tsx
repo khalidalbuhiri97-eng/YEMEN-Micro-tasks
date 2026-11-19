@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
+import { formatYer, toYerDecimal } from '../../../shared/money.ts';
 import {
   ExternalLink,
   ShieldCheck,
@@ -101,11 +102,12 @@ export const OfferWallView: React.FC = () => {
     fetchOfferWallData();
   }, [fetchOfferWallData]);
 
-  const fmt = (n: number, maxDecimals = 2) =>
-    Number(n || 0).toLocaleString('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: maxDecimals,
-    });
+  const fmtYer = (n: number | undefined | null) => formatYer(n ?? 0);
+  const fmtUsd = (n: number | undefined | null) => {
+    const fixed = toYerDecimal(n ?? 0).toDecimalPlaces(8).toFixed(8);
+    const trimmed = fixed.replace(/\.?0+$/, '');
+    return trimmed === '-0' || trimmed === '' ? '0' : trimmed;
+  };
 
   if (!user) {
     return (
@@ -156,7 +158,7 @@ export const OfferWallView: React.FC = () => {
           </div>
           <div>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">صافي الأرباح (USD)</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">${fmt(summary.totalUsdEarned, 4)}</h3>
+            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">${fmtUsd(summary.totalUsdEarned)}</h3>
           </div>
         </div>
 
@@ -166,7 +168,7 @@ export const OfferWallView: React.FC = () => {
           </div>
           <div>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">صافي مكافآت ClixWall (YER)</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">{fmt(summary.totalYerCredited)} ر.ي</h3>
+            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">{fmtYer(summary.totalYerCredited)} ر.ي</h3>
           </div>
         </div>
 
@@ -195,7 +197,7 @@ export const OfferWallView: React.FC = () => {
           <div>
             <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">رصيد المحفظة (دفتر الأستاذ)</p>
             <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">
-              {fmt(summary.walletBalanceYer ?? 0)} ر.ي
+              {fmtYer(summary.walletBalanceYer ?? 0)} ر.ي
             </h3>
           </div>
         </div>
@@ -344,9 +346,9 @@ export const OfferWallView: React.FC = () => {
                               : 'text-rose-500/80 dark:text-rose-400/80 line-through'
                           }`}
                         >
-                          ${fmt(r.user_payout_usd ?? r.reward_usd ?? 0, 4)}
+                          ${fmtUsd(r.user_payout_usd ?? r.reward_usd ?? 0)}
                         </td>
-                        <td className="py-3 px-4 font-mono text-xs">{fmt(r.exchange_rate || 1600)}</td>
+                        <td className="py-3 px-4 font-mono text-xs">{fmtYer(r.exchange_rate || 1600)}</td>
                         <td
                           className={`py-3 px-4 font-bold ${
                             isCredited
@@ -354,7 +356,7 @@ export const OfferWallView: React.FC = () => {
                               : 'text-rose-500/80 dark:text-rose-400/80 line-through'
                           }`}
                         >
-                          {fmt(r.reward_yer)} ر.ي
+                          {fmtYer(r.reward_yer)} ر.ي
                         </td>
                         <td className="py-3 px-4">
                           <span

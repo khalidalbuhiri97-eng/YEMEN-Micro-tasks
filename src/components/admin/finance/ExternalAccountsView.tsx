@@ -30,6 +30,7 @@ import type {
   TreasurySummary,
 } from '../../../types/index.ts';
 import { SecureImageView } from '../../common/SecureImageView.tsx';
+import { formatYer, parseMoneyStrict, roundYer6, subMoney } from '../../../../shared/money.ts';
 
 interface ExternalAccountsViewProps {
   treasury: TreasurySummary | null;
@@ -38,7 +39,7 @@ interface ExternalAccountsViewProps {
 
 type SubTab = 'accounts' | 'deposits' | 'transfers' | 'reconciliation';
 
-const fmt = (n: number | undefined | null) => Math.round(Number(n || 0)).toLocaleString('en-US');
+const fmt = (n: number | undefined | null) => formatYer(n ?? 0);
 
 const ACCOUNT_TYPE_LABELS: Record<ExternalAccountType, string> = {
   bank: 'حساب بنكي',
@@ -352,9 +353,15 @@ export const ExternalAccountsView: React.FC<ExternalAccountsViewProps> = ({
 
   const handleInternalTransfer = (e: React.FormEvent) => {
     e.preventDefault();
-    const numAmt = Math.round(Number(xferAmount));
-    if (!Number.isFinite(numAmt) || numAmt <= 0) {
-      showToast('مبلغ التحويل الداخلي غير صالح.', 'error');
+    let numAmt: number;
+    try {
+      numAmt = parseMoneyStrict(xferAmount, {
+        allowNegative: false,
+        allowZero: false,
+        fieldLabel: 'مبلغ التحويل الداخلي',
+      });
+    } catch (err: any) {
+      showToast(err.message || 'مبلغ التحويل الداخلي غير صالح.', 'error');
       return;
     }
     if (!xferFromFinId || !xferToFinId || xferFromFinId === xferToFinId) {
@@ -397,10 +404,10 @@ export const ExternalAccountsView: React.FC<ExternalAccountsViewProps> = ({
   };
 
   const selectedRecAccount = accounts.find((a) => a.id === recExtAccId) || null;
-  const parsedActual = recActualBalance.trim() === '' ? null : Math.round(Number(recActualBalance));
+  const parsedActual = recActualBalance.trim() === '' ? null : roundYer6(recActualBalance);
   const previewDiscrepancy =
     selectedRecAccount && parsedActual !== null && Number.isFinite(parsedActual)
-      ? parsedActual - selectedRecAccount.accountingBalance
+      ? subMoney(parsedActual, selectedRecAccount.accountingBalance)
       : null;
 
   const handleReconcileSubmit = (e: React.FormEvent) => {
@@ -906,8 +913,8 @@ export const ExternalAccountsView: React.FC<ExternalAccountsViewProps> = ({
                   <input
                     type="number"
                     required
-                    min="1"
-                    step="1"
+                    min="0.000001"
+                    step="any"
                     value={depAmount}
                     onChange={(e) => setDepAmount(e.target.value)}
                     placeholder="مثال: 50000"
@@ -1194,8 +1201,8 @@ export const ExternalAccountsView: React.FC<ExternalAccountsViewProps> = ({
                   <input
                     type="number"
                     required
-                    min="1"
-                    step="1"
+                    min="0.000001"
+                    step="any"
                     value={xferAmount}
                     onChange={(e) => setXferAmount(e.target.value)}
                     placeholder="10000"
@@ -1334,7 +1341,7 @@ export const ExternalAccountsView: React.FC<ExternalAccountsViewProps> = ({
                     type="number"
                     required
                     min="0"
-                    step="1"
+                    step="any"
                     value={recActualBalance}
                     onChange={(e) => setRecActualBalance(e.target.value)}
                     placeholder="أدخل الرصيد الفعلي الموجود حالياً بالحساب"

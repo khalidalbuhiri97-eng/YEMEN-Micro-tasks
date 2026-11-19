@@ -3,6 +3,11 @@ import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import type { WalletTransaction, WalletTransfer } from '../../types/index.ts';
 import {
+  calcWalletTransferBreakdown,
+  formatYer,
+  parseMoneyStrict,
+} from '../../../shared/money.ts';
+import {
   Wallet,
   ArrowUpRight,
   ArrowDownLeft,
@@ -136,9 +141,15 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
 
   const handleExecuteTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
-    const amountNum = parseInt(transferAmount, 10);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      showToast('يرجى إدخال مبلغ صحيح أكبر من 0 ر.ي', 'error');
+    let amountNum: number;
+    try {
+      amountNum = parseMoneyStrict(transferAmount, {
+        allowNegative: false,
+        allowZero: false,
+        fieldLabel: 'مبلغ التحويل',
+      });
+    } catch (err: any) {
+      showToast(err.message || 'يرجى إدخال مبلغ صحيح أكبر من 0 ر.ي', 'error');
       return;
     }
 
@@ -164,7 +175,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
         confetti({ particleCount: 60, spread: 50 });
       } catch {}
 
-      showToast(`تم تحويل ${amountNum.toLocaleString()} ر.ي بنجاح إلى ${recipientLookupName}!`, 'success');
+      showToast(`تم تحويل ${formatYer(amountNum)} ر.ي بنجاح إلى ${recipientLookupName}!`, 'success');
       setIsTransferModalOpen(false);
       setRecipientAddress('');
       setTransferAmount('');
@@ -177,6 +188,15 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
       setIsSubmittingTransfer(false);
     }
   };
+
+  let transferPreview: ReturnType<typeof calcWalletTransferBreakdown> | null = null;
+  if (transferAmount.trim()) {
+    try {
+      transferPreview = calcWalletTransferBreakdown(transferAmount);
+    } catch {
+      transferPreview = null;
+    }
+  }
 
   const isCampaignTx = (tx: WalletTransaction) =>
     tx.type === 'CAMPAIGN_FUNDING_RESERVE' ||
@@ -359,8 +379,8 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
             <span className="font-semibold text-emerald-700 dark:text-emerald-400">الرصيد المتاح للتحويل والسحب</span>
             <Wallet className="w-4 h-4 text-emerald-600" />
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${wallet?.availableBalance.toLocaleString() || '0'} ر.ي`}>
-            {wallet?.availableBalance.toLocaleString() || '0'}{' '}
+          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.availableBalance || 0)} ر.ي`}>
+            {formatYer(wallet?.availableBalance || 0)}{' '}
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">ر.ي</span>
           </div>
           <p className="text-[11px] text-slate-400 mt-2">جاهز للتحويل المباشر أو السحب عبر الصرافة</p>
@@ -372,8 +392,8 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
             <span>الرصيد المعلق (قيد السحب)</span>
             <Clock className="w-4 h-4 text-amber-500" />
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${wallet?.pendingBalance.toLocaleString() || '0'} ر.ي`}>
-            {wallet?.pendingBalance.toLocaleString() || '0'}{' '}
+          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.pendingBalance || 0)} ر.ي`}>
+            {formatYer(wallet?.pendingBalance || 0)}{' '}
             <span className="text-xs font-bold text-slate-500">ر.ي</span>
           </div>
           <p className="text-[11px] text-slate-400 mt-2">محجوز لطلبات السحب حتى إشعار التحويل</p>
@@ -385,8 +405,8 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
             <span>إجمالي التحويلات الصادرة</span>
             <ArrowRightLeft className="w-4 h-4 text-blue-500" />
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${(wallet?.totalTransferred || 0).toLocaleString()} ر.ي`}>
-            {(wallet?.totalTransferred || 0).toLocaleString()}{' '}
+          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.totalTransferred || 0)} ر.ي`}>
+            {formatYer(wallet?.totalTransferred || 0)}{' '}
             <span className="text-xs font-bold text-slate-500">ر.ي</span>
           </div>
           <p className="text-[11px] text-slate-400 mt-2">تم تحويلها لمحفظات أخرى عبر المنصة</p>
@@ -398,8 +418,8 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
             <span>إجمالي الأرباح المكتسبة</span>
             <ArrowUpRight className="w-4 h-4 text-emerald-500" />
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${wallet?.totalEarned.toLocaleString() || '0'} ر.ي`}>
-            {wallet?.totalEarned.toLocaleString() || '0'}{' '}
+          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.totalEarned || 0)} ر.ي`}>
+            {formatYer(wallet?.totalEarned || 0)}{' '}
             <span className="text-xs font-bold text-slate-500">ر.ي</span>
           </div>
           <p className="text-[11px] text-slate-400 mt-2">مجموع مكافآت المهام المعتمدة</p>
@@ -414,11 +434,11 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
         <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
           <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
           <span>
-            نظام محاسبي مغلق (Closed-Loop Virtual Ledger) مسجل بقيد محاسبي مزدوج لا يقبل الانحراف المالي.
+            نظام محاسبي مغلق (Closed-Loop Ledger) مسجل بقيد محاسبي مزدوج بدقة 6 منازل عشرية.
           </span>
         </div>
         <span className="font-mono text-[11px] text-slate-500">
-          وحدة الحساب: YER (ريال يمني افتراضي)
+          العملة: YER (ريال يمني)
         </span>
       </div>
 
@@ -532,7 +552,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
                       }`}
                     >
                       {isCredit ? '+' : ''}
-                      {tx.amount.toLocaleString()} ر.ي
+                      {formatYer(tx.amount)} ر.ي
                     </div>
                   </div>
 
@@ -541,7 +561,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
                   </p>
 
                   <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono tabular-nums text-slate-500">
-                    <span>الرصيد: {tx.newBalance.toLocaleString()} ر.ي</span>
+                    <span>الرصيد: {formatYer(tx.newBalance)} ر.ي</span>
                     <button
                       type="button"
                       onClick={() => setSelectedLedgerTx(tx)}
@@ -612,13 +632,13 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
                           }`}
                         >
                           {isCredit ? '+' : ''}
-                          {tx.amount.toLocaleString()} ر.ي
+                          {formatYer(tx.amount)} ر.ي
                         </td>
                         <td className="py-3 px-4 text-left font-mono tabular-nums text-slate-500">
-                          {tx.previousBalance.toLocaleString()}
+                          {formatYer(tx.previousBalance)}
                         </td>
                         <td className="py-3 px-4 text-left font-mono font-semibold tabular-nums text-slate-800 dark:text-slate-200">
-                          {tx.newBalance.toLocaleString()}
+                          {formatYer(tx.newBalance)}
                         </td>
                         <td className="py-3 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
                           {new Date(tx.createdAt).toLocaleDateString('ar-YE', {
@@ -713,16 +733,17 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
                     onClick={() => setTransferAmount(String(wallet?.availableBalance || 0))}
                     className="text-blue-600 dark:text-blue-400 font-semibold text-[11px] hover:underline"
                   >
-                    أقصى مبلغ متاح ({wallet?.availableBalance.toLocaleString()} ر.ي)
+                    أقصى مبلغ متاح ({formatYer(wallet?.availableBalance || 0)} ر.ي)
                   </button>
                 </div>
                 <div className="relative">
                   <input
                     type="number"
                     required
-                    min="1"
+                    min="0.000001"
+                    step="any"
                     max={wallet?.availableBalance || 0}
-                    placeholder="0"
+                    placeholder="0.00"
                     value={transferAmount}
                     onChange={(e) => setTransferAmount(e.target.value)}
                     className="w-full px-3 py-2 text-sm font-mono font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -746,14 +767,22 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
               </div>
 
               {/* Transfer Details Card */}
-              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] space-y-1 text-slate-500">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 text-[11px] space-y-1 text-slate-500 font-mono">
                 <div className="flex justify-between">
-                  <span>رسوم التحويل الداخلي:</span>
-                  <span className="font-bold text-emerald-600">مجاناً (0 ر.ي)</span>
+                  <span className="font-sans">رسوم التحويل الداخلي (3%):</span>
+                  <span className="font-bold text-amber-600 dark:text-amber-400">
+                    {transferPreview ? `${formatYer(transferPreview.fee)} ر.ي` : '3%'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
-                  <span>سرعة التنفيذ:</span>
-                  <span className="font-semibold text-slate-700 dark:text-slate-300">فوري ومؤكد آلياً</span>
+                  <span className="font-sans">صافي المبلغ الواصل للمستلم:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {transferPreview ? `${formatYer(transferPreview.net)} ر.ي` : '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-sans">سرعة التنفيذ:</span>
+                  <span className="font-sans font-semibold text-slate-700 dark:text-slate-300">فوري ومؤكد آلياً</span>
                 </div>
               </div>
 

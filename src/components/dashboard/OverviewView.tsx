@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 import { GeoLocationSelector, type GeoSingleValue } from '../common/GeoLocationSelector.tsx';
+import { formatYer } from '../../../shared/money.ts';
 
 interface OverviewViewProps {
   onNavigateTab: (tab: string) => void;
@@ -137,7 +138,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
             <Wallet className="w-4 h-4 text-emerald-600" />
           </div>
           <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-            {wallet?.availableBalance.toLocaleString() || '0'}{' '}
+            {formatYer(wallet?.availableBalance ?? 0)}{' '}
             <span className="text-xs font-bold text-emerald-600">ر.ي</span>
           </div>
           <p className="text-[10px] text-slate-400 mt-1.5">قابل للسحب الفوري الآن</p>
@@ -149,7 +150,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
             <Clock className="w-4 h-4 text-amber-500" />
           </div>
           <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-            {wallet?.pendingBalance.toLocaleString() || '0'}{' '}
+            {formatYer(wallet?.pendingBalance ?? 0)}{' '}
             <span className="text-xs font-bold text-slate-400">ر.ي</span>
           </div>
           <p className="text-[10px] text-slate-400 mt-1.5">طلبات سحب قيد الصرف</p>
@@ -161,7 +162,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
             <ArrowUpRight className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-            {wallet?.totalEarned.toLocaleString() || '0'}{' '}
+            {formatYer(wallet?.totalEarned ?? 0)}{' '}
             <span className="text-xs font-bold text-slate-400">ر.ي</span>
           </div>
           <p className="text-[10px] text-slate-400 mt-1.5">الأرباح المعتمدة تاريخياً</p>
@@ -173,7 +174,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
             <ArrowDownLeft className="w-4 h-4 text-blue-500" />
           </div>
           <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-            {wallet?.totalWithdrawn.toLocaleString() || '0'}{' '}
+            {formatYer(wallet?.totalWithdrawn ?? 0)}{' '}
             <span className="text-xs font-bold text-slate-400">ر.ي</span>
           </div>
           <p className="text-[10px] text-slate-400 mt-1.5">تم استلامها نقداً</p>
@@ -233,7 +234,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
 
                   <div className="text-left shrink-0">
                     <div className="text-sm sm:text-base font-extrabold font-mono text-emerald-600 tabular-nums">
-                      +{t.rewardYer.toLocaleString()} ر.ي
+                      +{formatYer(t.rewardYer)} ر.ي
                     </div>
                     <span className="text-[10px] text-slate-400 block">بدء الآن</span>
                   </div>
@@ -287,7 +288,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
                   </div>
                   <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
                     <span>{new Date(s.createdAt).toLocaleDateString('ar-YE')}</span>
-                    <span className="font-bold text-emerald-600">+{s.taskRewardYer?.toLocaleString()} ر.ي</span>
+                    <span className="font-bold text-emerald-600">+{formatYer(s.taskRewardYer ?? 0)} ر.ي</span>
                   </div>
                 </div>
               ))}
@@ -356,10 +357,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
                         }`}
                       >
                         {isCredit ? '+' : ''}
-                        {tx.amount.toLocaleString()} ر.ي
+                        {formatYer(tx.amount)} ر.ي
                       </td>
                       <td className="py-3 px-3 text-left font-mono font-semibold text-slate-800 dark:text-slate-200 tabular-nums">
-                        {tx.newBalance.toLocaleString()}
+                        {formatYer(tx.newBalance)}
                       </td>
                       <td className="py-3 px-3 text-slate-400 font-mono text-[11px]">
                         {new Date(tx.createdAt).toLocaleDateString('ar-YE')}

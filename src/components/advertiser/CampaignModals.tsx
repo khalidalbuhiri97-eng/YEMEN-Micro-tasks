@@ -15,6 +15,7 @@ import {
   Shield,
   X,
 } from 'lucide-react';
+import { formatYer } from '../../../shared/money.ts';
 
 const CATEGORY_LABELS: Record<string, string> = {
   app_testing: 'تجربة وتقييم التطبيقات',
@@ -247,10 +248,10 @@ export const CampaignDetailsModal: React.FC<CampaignDetailsModalProps> = ({
             <div className="space-y-2 text-xs divide-y divide-slate-200/70 dark:divide-slate-700/70">
               <div className="flex items-center justify-between pt-1">
                 <span className="text-slate-600 dark:text-slate-300">
-                  ميزانية المكافآت ({campaign.rewardUnits.toLocaleString()} × {campaign.slots.toLocaleString()})
+                  ميزانية المكافآت ({formatYer(campaign.rewardUnits)} × {campaign.slots.toLocaleString()})
                 </span>
                 <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                  {campaign.budgetUnits.toLocaleString()} ر.ي
+                  {formatYer(campaign.budgetUnits)} ر.ي
                 </span>
               </div>
               <div className="flex items-center justify-between pt-2">
@@ -258,25 +259,25 @@ export const CampaignDetailsModal: React.FC<CampaignDetailsModalProps> = ({
                   رسوم خدمة يمن تاسك ({campaign.feePercentage}%)
                 </span>
                 <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                  {campaign.feeUnits.toLocaleString()} ر.ي
+                  {formatYer(campaign.feeUnits)} ر.ي
                 </span>
               </div>
               <div className="flex items-center justify-between pt-2 text-sm">
                 <span className="font-extrabold text-slate-900 dark:text-white">إجمالي تكلفة الحملة</span>
                 <span className="font-mono font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {campaign.totalUnits.toLocaleString()} ر.ي
+                  {formatYer(campaign.totalUnits)} ر.ي
                 </span>
               </div>
               <div className="flex items-center justify-between pt-2 text-[11px] text-slate-500 dark:text-slate-400">
                 <span>الضمان المتبقي للمكافآت / الرسوم المعلقة</span>
                 <span className="font-mono tabular-nums">
-                  {(campaign.budgetEscrowBalance ?? 0).toLocaleString()} / {(campaign.feeEscrowBalance ?? 0).toLocaleString()} ر.ي
+                  {formatYer(campaign.budgetEscrowBalance ?? 0)} / {formatYer(campaign.feeEscrowBalance ?? 0)} ر.ي
                 </span>
               </div>
               {campaign.refundedUnits > 0 && (
                 <div className="flex items-center justify-between pt-2 text-xs font-bold text-emerald-600 dark:text-emerald-400">
                   <span>المبالغ المسترجعة لمحفظة المعلن</span>
-                  <span className="font-mono tabular-nums">{campaign.refundedUnits.toLocaleString()} ر.ي</span>
+                  <span className="font-mono tabular-nums">{formatYer(campaign.refundedUnits)} ر.ي</span>
                 </div>
               )}
             </div>
@@ -455,11 +456,11 @@ export const CampaignInvoiceModal: React.FC<CampaignInvoiceModalProps> = ({
                 <div className="text-slate-600 dark:text-slate-300">
                   <div>ميزانية مكافآت المهمات</div>
                   <div className="text-[11px] font-mono tabular-nums text-slate-400">
-                    {campaign.rewardUnits.toLocaleString()} ر.ي × {campaign.slots.toLocaleString()} مهمة
+                    {formatYer(campaign.rewardUnits)} ر.ي × {campaign.slots.toLocaleString()} مهمة
                   </div>
                 </div>
                 <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                  {campaign.budgetUnits.toLocaleString()} ر.ي
+                  {formatYer(campaign.budgetUnits)} ر.ي
                 </span>
               </div>
 
@@ -468,7 +469,7 @@ export const CampaignInvoiceModal: React.FC<CampaignInvoiceModalProps> = ({
                   رسوم خدمة يمن تاسك الإجمالية ({campaign.feePercentage}%)
                 </span>
                 <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                  {campaign.feeUnits.toLocaleString()} ر.ي
+                  {formatYer(campaign.feeUnits)} ر.ي
                 </span>
               </div>
 
@@ -482,14 +483,14 @@ export const CampaignInvoiceModal: React.FC<CampaignInvoiceModalProps> = ({
               <div className="flex items-center justify-between pt-3 text-sm sm:text-base">
                 <span className="font-extrabold text-slate-900 dark:text-white">الإجمالي المدفوع / المحجوز</span>
                 <span className="font-mono font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {campaign.totalUnits.toLocaleString()} ر.ي
+                  {formatYer(campaign.totalUnits)} ر.ي
                 </span>
               </div>
 
               {campaign.refundedUnits > 0 && (
                 <div className="flex items-center justify-between pt-2.5 text-xs font-bold text-blue-600 dark:text-blue-400">
                   <span>المبلغ المسترجع بعد التسوية</span>
-                  <span className="font-mono tabular-nums">-{campaign.refundedUnits.toLocaleString()} ر.ي</span>
+                  <span className="font-mono tabular-nums">-{formatYer(campaign.refundedUnits)} ر.ي</span>
                 </div>
               )}
             </div>
@@ -595,7 +596,7 @@ export const CampaignLedgerTxModal: React.FC<CampaignLedgerTxModalProps> = ({ tr
                 }`}
               >
                 {transaction.amount >= 0 ? '+' : ''}
-                {transaction.amount.toLocaleString()} ر.ي
+                {formatYer(transaction.amount)} ر.ي
               </span>
             </div>
 
@@ -605,20 +606,20 @@ export const CampaignLedgerTxModal: React.FC<CampaignLedgerTxModalProps> = ({ tr
                   <div className="flex items-center justify-between">
                     <span className="text-slate-600 dark:text-slate-300">ميزانية المهام</span>
                     <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                      {budgetUnits.toLocaleString()} ر.ي
+                      {formatYer(budgetUnits)} ر.ي
                     </span>
                   </div>
                 )}
                 <div className="flex items-center justify-between">
                   <span className="text-slate-600 dark:text-slate-300">رسوم خدمة يمن تاسك ({feePct}%)</span>
                   <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                    {feeUnits.toLocaleString()} ر.ي
+                    {formatYer(feeUnits)} ر.ي
                   </span>
                 </div>
                 <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white">
                   <span>الإجمالي</span>
                   <span className="font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {totalUnits.toLocaleString()} ر.ي
+                    {formatYer(totalUnits)} ر.ي
                   </span>
                 </div>
               </div>

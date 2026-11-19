@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { TreasurySummary } from '../../../types/index.ts';
 import { MigrationReadinessBanner } from './MigrationReadinessBanner.tsx';
+import { addMoney, formatYer, subMoney } from '../../../../shared/money.ts';
 
 interface OwnerOverviewMetricsProps {
   stats: any;
@@ -26,8 +27,7 @@ interface OwnerOverviewMetricsProps {
   onNavigateTab: (tab: any) => void;
 }
 
-const fmtYer = (val: number | undefined | null): string =>
-  Math.round(Number(val || 0)).toLocaleString('en-US');
+const fmtYer = (val: number | undefined | null): string => formatYer(val ?? 0);
 
 export const OwnerOverviewMetrics: React.FC<OwnerOverviewMetricsProps> = ({
   stats,
@@ -56,11 +56,12 @@ export const OwnerOverviewMetrics: React.FC<OwnerOverviewMetricsProps> = ({
   const ownerCapital = treasury?.ownerCapitalTotal ?? 0;
   const revTasks = treasury?.revenueTotals?.tasks ?? 0;
   const revAds = treasury?.revenueTotals?.ads ?? 0;
+  const revClixwall = treasury?.revenueTotals?.clixwall ?? 0;
   const revSubs = treasury?.revenueTotals?.subscriptions ?? 0;
   const revServices = treasury?.revenueTotals?.services ?? 0;
   const totalRevenue = treasury?.revenueTotals?.total ?? 0;
-  const totalOpEx = treasury?.totalOperationalExpenses ?? ((treasury?.expensesTotal ?? 0) + (treasury?.providerFeesTotal ?? 0));
-  const netProfitLoss = treasury?.netProfitLoss ?? (totalRevenue - totalOpEx);
+  const totalOpEx = treasury?.totalOperationalExpenses ?? addMoney(treasury?.expensesTotal ?? 0, treasury?.providerFeesTotal ?? 0);
+  const netProfitLoss = treasury?.netProfitLoss ?? subMoney(totalRevenue, totalOpEx);
   const retainedEarnings = treasury?.computedRetainedEarnings ?? treasury?.retainedEarningsTotal ?? 0;
   const ownerWithdrawals = treasury?.ownerWithdrawalsTotal ?? 0;
   const userLiabilities =
@@ -136,7 +137,8 @@ export const OwnerOverviewMetrics: React.FC<OwnerOverviewMetricsProps> = ({
             <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex flex-wrap gap-x-2 font-mono">
               <span>مهام: {fmtYer(revTasks)}</span>
               <span>إعلانات: {fmtYer(revAds)}</span>
-              <span>خدمات: {fmtYer(revServices + revSubs)}</span>
+              <span>ClixWall: {fmtYer(revClixwall)}</span>
+              <span>خدمات: {fmtYer(addMoney(revServices, revSubs))}</span>
             </div>
           </div>
 
@@ -353,20 +355,20 @@ export const OwnerOverviewMetrics: React.FC<OwnerOverviewMetricsProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/70">
               <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                إجمالي الوحدات الافتراضية الصادرة
+                إجمالي السيولة المصدرة بالخزينة
               </span>
               <div className="text-lg font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-                {fmtYer(virtualIssued)} <span className="text-xs font-normal">وحدة</span>
+                {fmtYer(virtualIssued)} <span className="text-xs font-normal">ر.ي</span>
               </div>
               <div className="text-[11px] text-slate-400 font-mono mt-1">VIRTUAL-ISSUANCE-CONTROL</div>
             </div>
 
             <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/70">
               <span className="text-xs text-slate-500 dark:text-slate-400 block mb-1">
-                الرصيد الافتراضي المتاح بالخزينة
+                الرصيد التشغيلي المتاح بالخزينة
               </span>
               <div className="text-lg font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-                {fmtYer(virtualTreasuryAvail)} <span className="text-xs font-normal">وحدة</span>
+                {fmtYer(virtualTreasuryAvail)} <span className="text-xs font-normal">ر.ي</span>
               </div>
               <div className="text-[11px] text-slate-400 font-mono mt-1">
                 مسحوبات مصروفة: {fmtYer(stats?.totalCompletedWithdrawals ?? treasury?.withdrawalSettledTotal)} ر.ي

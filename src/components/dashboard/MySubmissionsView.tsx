@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext.tsx';
 import type { TaskSubmission } from '../../types/index.ts';
 import { Clock, CheckCircle2, XCircle, AlertCircle, Image as ImageIcon, Eye, RefreshCw, X, FileCheck } from 'lucide-react';
 import { SecureImageView } from '../common/SecureImageView.tsx';
+import { formatYer } from '../../../shared/money.ts';
 
 interface MySubmissionsViewProps {
   onBrowseTasks: () => void;
@@ -202,7 +203,7 @@ export const MySubmissionsView: React.FC<MySubmissionsViewProps> = ({ onBrowseTa
                 <div className="text-right">
                   <span className="text-[10px] text-slate-400 block">المكافأة</span>
                   <span className="text-base font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                    +{sub.taskRewardYer?.toLocaleString() || '0'} ر.ي
+                    +{formatYer(sub.taskRewardYer ?? 0)} ر.ي
                   </span>
                 </div>
 

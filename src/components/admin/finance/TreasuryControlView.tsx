@@ -15,6 +15,7 @@ import { api } from '../../../api/client.ts';
 import { useAuth } from '../../../context/AuthContext.tsx';
 import type { FinancialAccountItem, TreasuryMovement, TreasurySummary } from '../../../types/index.ts';
 import { MigrationReadinessBanner } from './MigrationReadinessBanner.tsx';
+import { formatYer, parseMoneyStrict } from '../../../../shared/money.ts';
 
 interface TreasuryControlViewProps {
   treasury: TreasurySummary | null;
@@ -23,7 +24,7 @@ interface TreasuryControlViewProps {
 
 type OpMode = 'CAPITAL' | 'EXPENSE' | 'OWNER_WITHDRAWAL' | 'REVENUE' | 'ISSUE_VIRTUAL';
 
-const fmt = (n: number | undefined | null) => Math.round(Number(n || 0)).toLocaleString('en-US');
+const fmt = (n: number | undefined | null) => formatYer(n ?? 0);
 
 const ACCOUNT_TYPE_LABELS: Record<string, string> = {
   treasury: 'خزينة تشغيلية',
@@ -90,9 +91,15 @@ export const TreasuryControlView: React.FC<TreasuryControlViewProps> = ({ treasu
       return;
     }
 
-    const numAmount = Math.round(Number(amount));
-    if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      showToast('يرجى إدخال مبلغ صحيح موجب أكبر من صفر.', 'error');
+    let numAmount: number;
+    try {
+      numAmount = parseMoneyStrict(amount, {
+        allowNegative: false,
+        allowZero: false,
+        fieldLabel: 'المبلغ المالي',
+      });
+    } catch (err: any) {
+      showToast(err.message || 'يرجى إدخال مبلغ صحيح موجب أكبر من صفر.', 'error');
       return;
     }
     if (!reason.trim()) {
@@ -129,10 +136,10 @@ export const TreasuryControlView: React.FC<TreasuryControlViewProps> = ({ treasu
         summaryText: `سيتم إثبات إيراد (${revenueSource}) بمبلغ ${fmt(numAmount)} ر.ي في الخزينة النقدية.`,
       },
       ISSUE_VIRTUAL: {
-        title: 'تأكيد إصدار وحدات افتراضية للخزينة',
+        title: 'تأكيد إصدار رصيد تشغيلي للخزينة',
         confirmLabel: 'تأكيد الإصدار',
         variant: 'warning',
-        summaryText: `سيتم إصدار ${fmt(numAmount)} وحدة افتراضية في دفتر الأستاذ السيادي (لا يضاف للنقد الفعلي).`,
+        summaryText: `سيتم إصدار ${fmt(numAmount)} ر.ي في دفتر الأستاذ السيادي (لا يضاف للنقد الفعلي).`,
       },
     };
 
@@ -252,14 +259,14 @@ export const TreasuryControlView: React.FC<TreasuryControlViewProps> = ({ treasu
               <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">الخزينة التشغيلية المتاحة</span>
                 <div className="text-lg font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-                  {fmt(treasury?.treasuryAvailable)} <span className="text-[11px] font-normal">وحدة</span>
+                  {fmt(treasury?.treasuryAvailable)} <span className="text-[11px] font-normal">ر.ي</span>
                 </div>
               </div>
 
               <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
-                <span className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">الوحدات الافتراضية الصادرة</span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block mb-1">إجمالي السيولة المصدرة</span>
                 <div className="text-lg font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
-                  {fmt(treasury?.totalIssuedUnits)} <span className="text-[11px] font-normal">وحدة</span>
+                  {fmt(treasury?.totalIssuedUnits)} <span className="text-[11px] font-normal">ر.ي</span>
                 </div>
               </div>
 
@@ -438,8 +445,8 @@ export const TreasuryControlView: React.FC<TreasuryControlViewProps> = ({ treasu
                 <input
                   type="number"
                   required
-                  min="1"
-                  step="1"
+                  min="0.000001"
+                  step="any"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   placeholder="مثال: 100000"

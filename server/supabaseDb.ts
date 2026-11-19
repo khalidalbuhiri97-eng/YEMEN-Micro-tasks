@@ -50,16 +50,15 @@ import type {
 } from '../src/types/index';
 import { geoService } from './geoService.js';
 import {
-  MONEY_SCALE,
+  MONEY_DECIMALS,
   parseMoneyStrict,
-  toMicros,
-  fromMicros,
-  fromMicrosFixed,
-  microsToNumber,
+  roundYer6,
+  formatYerFixed,
   addMoney,
   subMoney,
+  mulMoney,
   sumMoney,
-  calcPercentageMicros,
+  calcPercentageYer,
   calcWalletTransferBreakdown,
   calculateCampaignFeePolicyCosts,
   calculateReferralNetProfitShare,
@@ -435,8 +434,8 @@ export function buildCampaignSettlementRefundEntries(params: {
   refundBudgetUnits: number;
   refundFeeUnits: number;
 }): LedgerEntryDraft[] {
-  const refundBudget = Math.max(0, parseMoneyStrict(params.refundBudgetUnits || 0));
-  const refundFee = Math.max(0, parseMoneyStrict(params.refundFeeUnits || 0));
+  const refundBudget = Math.max(0, roundYer6(params.refundBudgetUnits || 0));
+  const refundFee = Math.max(0, roundYer6(params.refundFeeUnits || 0));
   const totalRefund = addMoney(refundBudget, refundFee);
   if (totalRefund <= 0) return [];
 
@@ -558,8 +557,8 @@ export function buildReconciliationAdjustmentEntries(params: {
   reason: string;
   accountName: string;
 }): { discrepancy: number; entries: LedgerEntryDraft[] } {
-  const accounting = parseMoneyStrict(params.accountingBalance || 0);
-  const actual = parseMoneyStrict(params.actualBalance || 0);
+  const accounting = roundYer6(params.accountingBalance || 0);
+  const actual = roundYer6(params.actualBalance || 0);
   const diff = subMoney(actual, accounting);
   if (diff === 0) {
     return { discrepancy: 0, entries: [] };
@@ -1808,10 +1807,14 @@ export const supabaseDb = {
       throw new Error('جلسة المدير المطلوبة لتمويل المهمة من الخزينة غير متوفرة.');
     }
 
-    const rewardUnits = Math.round(Number(taskData.rewardYer));
+    const rewardUnits = parseMoneyStrict(taskData.rewardYer, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'مكافأة المهمة',
+    });
     const slots = Math.round(Number(taskData.totalQuantity));
-    if (!Number.isFinite(rewardUnits) || rewardUnits <= 0 || !Number.isFinite(slots) || slots <= 0) {
-      throw new Error('يجب أن تكون مكافأة المهمة وعدد المقاعد أعداداً صحيحة أكبر من صفر.');
+    if (!Number.isInteger(slots) || slots <= 0) {
+      throw new Error('عدد المقاعد يجب أن يكون عدداً صحيحاً أكبر من صفر.');
     }
 
     let geoValidated: Awaited<ReturnType<typeof geoService.validateGeoSelection>> | null = null;
@@ -2394,8 +2397,10 @@ export const supabaseDb = {
     const withdrawalSettledTotal = bal('WITHDRAWAL-SETTLED');
     const revTasks = bal('PLATFORM-REVENUE-TASKS');
     const revAds = bal('PLATFORM-REVENUE-ADS');
+    const revClixwall = bal('PLATFORM-REVENUE-CLIXWALL');
     const revSubscriptions = bal('PLATFORM-REVENUE-SUBSCRIPTIONS');
     const revServices = bal('PLATFORM-REVENUE-SERVICES');
+    const clixwallReceivableTotal = bal('CLIXWALL-RECEIVABLE');
     const cashVaultTotal = bal('PLATFORM-CASH-VAULT');
     const ownerCapitalTotal = bal('OWNER-CAPITAL');
     const ownerWithdrawalsTotal = bal('OWNER-WITHDRAWALS');
@@ -2404,18 +2409,24 @@ export const supabaseDb = {
     const taxPayableTotal = bal('TAX-PAYABLE');
     const retainedEarningsTotal = bal('RETAINED-EARNINGS');
 
-    const totalRevenue = revTasks + revAds + revSubscriptions + revServices;
-    const totalOperationalExpenses = expensesTotal + providerFeesTotal;
-    const netProfitLoss = totalRevenue - totalOperationalExpenses;
-    const computedRetainedEarnings = retainedEarningsTotal + (netProfitLoss - ownerWithdrawalsTotal);
-    const userLiabilitiesTotal =
-      userAvailableTotal + withdrawalReservedTotal + campaignBudgetReserved + campaignFeeReserved;
+    const totalRevenue = sumMoney([revTasks, revAds, revClixwall, revSubscriptions, revServices]);
+    const totalOperationalExpenses = addMoney(expensesTotal, providerFeesTotal);
+    const netProfitLoss = subMoney(totalRevenue, totalOperationalExpenses);
+    const computedRetainedEarnings = addMoney(retainedEarningsTotal, subMoney(netProfitLoss, ownerWithdrawalsTotal));
+    const userLiabilitiesTotal = sumMoney([
+      userAvailableTotal,
+      withdrawalReservedTotal,
+      campaignBudgetReserved,
+      campaignFeeReserved,
+    ]);
 
     const taxTablesReady = !taxDefRes.error && !taxSettleRes.error;
     const taxesPaidTotal = !taxSettleRes.error
-      ? (taxSettleRes.data || [])
-          .filter((s: any) => String(s.status || '').toUpperCase() === 'SETTLED')
-          .reduce((sum: number, s: any) => sum + Number(s.tax_amount || 0), 0)
+      ? sumMoney(
+          (taxSettleRes.data || [])
+            .filter((s: any) => String(s.status || '').toUpperCase() === 'SETTLED')
+            .map((s: any) => Number(s.tax_amount || 0))
+        )
       : 0;
 
     // Compute internal withdrawal fees that came from WITHDRAWAL-RESERVED (part of virtual supply loop)
@@ -2429,9 +2440,9 @@ export const supabaseDb = {
       for (const fe of feeEntries || []) {
         const txType = String((fe as any).ledger_transactions?.transaction_type || '').toUpperCase();
         if (fe.entry_side === 'credit' && txType === 'WITHDRAWAL_PAYOUT') {
-          withdrawalFeesFromSupply += Number(fe.amount_units || 0);
+          withdrawalFeesFromSupply = addMoney(withdrawalFeesFromSupply, Number(fe.amount_units || 0));
         } else if (fe.entry_side === 'debit' && txType === 'REVERSAL_WITHDRAWAL_PAYOUT') {
-          withdrawalFeesFromSupply -= Number(fe.amount_units || 0);
+          withdrawalFeesFromSupply = subMoney(withdrawalFeesFromSupply, Number(fe.amount_units || 0));
         }
       }
     }
@@ -2449,33 +2460,42 @@ export const supabaseDb = {
         const txType = String(tx?.transaction_type || '').toUpperCase();
         const isCampaignFeeSource = tx?.metadata?.source === 'campaign_fee_escrow';
         if (ae.entry_side === 'credit' && txType === 'AD_REVENUE' && isCampaignFeeSource) {
-          adFeesFromSupply += Number(ae.amount_units || 0);
+          adFeesFromSupply = addMoney(adFeesFromSupply, Number(ae.amount_units || 0));
         } else if (ae.entry_side === 'debit' && txType === 'REVERSAL_AD_REVENUE' && isCampaignFeeSource) {
-          adFeesFromSupply -= Number(ae.amount_units || 0);
+          adFeesFromSupply = subMoney(adFeesFromSupply, Number(ae.amount_units || 0));
         }
       }
     }
 
-    const activeTasksBudgetTotal = (tasksRes.data || [])
-      .filter((t: any) => String(t.status || '').toLowerCase() === 'active')
-      .reduce((sum: number, t: any) => {
-        const spent = Number(t.budget_spent_yer ?? Number(t.approved_count || 0) * Number(t.reward_units || 0));
-        return sum + Math.max(0, Number(t.total_budget_units || 0) - spent);
-      }, 0);
+    const activeTasksBudgetTotal = sumMoney(
+      (tasksRes.data || [])
+        .filter((t: any) => String(t.status || '').toLowerCase() === 'active')
+        .map((t: any) => {
+          const spent = Number(t.budget_spent_yer ?? mulMoney(t.approved_count || 0, t.reward_units || 0));
+          return Math.max(0, subMoney(t.total_budget_units || 0, spent));
+        })
+    );
 
-    const reconciledSum =
-      treasuryAvailable +
-      taskBudgetReserved +
-      campaignBudgetReserved +
-      campaignFeeReserved +
-      userAvailableTotal +
-      withdrawalReservedTotal +
-      withdrawalSettledTotal +
-      revTasks +
-      Math.max(0, withdrawalFeesFromSupply) +
-      Math.max(0, adFeesFromSupply);
+    const reconciledSum = sumMoney([
+      treasuryAvailable,
+      taskBudgetReserved,
+      campaignBudgetReserved,
+      campaignFeeReserved,
+      userAvailableTotal,
+      withdrawalReservedTotal,
+      withdrawalSettledTotal,
+      revTasks,
+      Math.max(0, withdrawalFeesFromSupply),
+      Math.max(0, adFeesFromSupply),
+    ]);
 
-    const expectedSupplyBacking = totalIssuedUnits + externalAdvertiserDepositsTotal;
+    // ClixWall wallet earnings are backed externally by (CLIXWALL-RECEIVABLE - PLATFORM-REVENUE-CLIXWALL)
+    const clixwallUserWalletBacking = Math.max(0, subMoney(clixwallReceivableTotal, revClixwall));
+    const expectedSupplyBacking = sumMoney([
+      totalIssuedUnits,
+      externalAdvertiserDepositsTotal,
+      clixwallUserWalletBacking,
+    ]);
 
     const fundSegregation = computeFundSegregationSummary({
       cashVaultTotal,
@@ -2537,6 +2557,7 @@ export const supabaseDb = {
       revenueTotals: {
         tasks: revTasks,
         ads: revAds,
+        clixwall: revClixwall,
         subscriptions: revSubscriptions,
         services: revServices,
         total: totalRevenue,
@@ -2546,7 +2567,7 @@ export const supabaseDb = {
       taxTablesReady,
       auditLogsTableReady: !auditRes.error,
       withdrawalsTableReady: !withdrawRes.error,
-      isReconciled: expectedSupplyBacking > 0 ? reconciledSum === expectedSupplyBacking : true,
+      isReconciled: expectedSupplyBacking > 0 ? roundYer6(reconciledSum) === roundYer6(expectedSupplyBacking) : true,
       activeTasksBudgetTotal,
     };
   },
@@ -2692,7 +2713,7 @@ export const supabaseDb = {
     actorId?: string;
     authToken?: string;
   }): Promise<{ recorded: boolean; transactionId?: string; pendingMigration?: boolean }> {
-    const commission = Math.round(Number(params.commissionUnits || 0));
+    const commission = roundYer6(params.commissionUnits || 0);
     if (!Number.isFinite(commission) || commission <= 0) {
       return { recorded: false };
     }
@@ -2839,8 +2860,8 @@ export const supabaseDb = {
     }
 
     const fee = methodCfg
-      ? addMoney(calcPercentageMicros(amountUnits.micros, methodCfg.feePercentage), methodCfg.feeFlat || 0)
-      : calcPercentageMicros(amountUnits.micros, 1.5);
+      ? addMoney(calcPercentageYer(amountUnits, methodCfg.feePercentage), methodCfg.feeFlat || 0)
+      : calcPercentageYer(amountUnits, 1.5);
     const netAmount = subMoney(amountUnits, fee);
     if (netAmount <= 0) {
       throw new Error('صافي مبلغ السحب بعد الرسوم يجب أن يكون أكبر من صفر.');
@@ -2932,7 +2953,7 @@ export const supabaseDb = {
       p_transfer_reference: params.transferReference?.trim() || null,
       p_receipt_url: params.receiptUrl?.trim() || null,
       p_reason: params.reason?.trim() || null,
-      p_provider_fee_units: Math.max(0, parseMoneyStrict(params.providerFeeUnits || 0)),
+      p_provider_fee_units: Math.max(0, roundYer6(params.providerFeeUnits || 0)),
     });
 
     if (!rpcErr && rpcRes) {
@@ -2985,7 +3006,7 @@ export const supabaseDb = {
     }
 
     const totalAmount = parseMoneyStrict(withData.amount);
-    const fee = parseMoneyStrict(withData.fee || 0);
+    const fee = Math.max(0, roundYer6(withData.fee || 0));
     const netAmount = subMoney(totalAmount, fee);
 
     if (params.action === 'PAY') {
@@ -3127,10 +3148,11 @@ export const supabaseDb = {
     actorId: string;
     authToken?: string;
   }) {
-    const amountUnits = Math.round(Number(params.amount));
-    if (!Number.isFinite(amountUnits) || amountUnits <= 0) {
-      throw new Error('المبلغ يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
-    }
+    const amountUnits = parseMoneyStrict(params.amount, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'المبلغ المالي',
+    });
     const cleanDesc = (params.description || '').trim();
     if (!cleanDesc) {
       throw new Error('البيان المحاسبي مطلوب.');
@@ -3732,7 +3754,11 @@ export const supabaseDb = {
     const taxAuthority = (params.taxAuthority || '').trim();
     const taxBase = (params.taxBase || '').trim();
     const rate = Number(params.ratePercentage ?? 0);
-    const flat = Math.round(Number(params.flatAmount ?? 0));
+    const flat = parseMoneyStrict(params.flatAmount ?? 0, {
+      allowNegative: false,
+      allowZero: true,
+      fieldLabel: 'المبلغ الثابت للضريبة',
+    });
 
     if (!taxType || !taxAuthority || !taxBase) {
       throw new Error('نوع الضريبة والجهة المختصة والوعاء الضريبي حقول مطلوبة.');
@@ -3849,8 +3875,11 @@ export const supabaseDb = {
       updates.rate_percentage = rate;
     }
     if (params.flatAmount !== undefined) {
-      const flat = Math.round(Number(params.flatAmount));
-      if (!Number.isFinite(flat) || flat < 0) throw new Error('المبلغ الثابت غير صالح.');
+      const flat = parseMoneyStrict(params.flatAmount, {
+        allowNegative: false,
+        allowZero: true,
+        fieldLabel: 'المبلغ الثابت للضريبة',
+      });
       updates.flat_amount = flat;
     }
     if (params.isActive !== undefined) updates.is_active = Boolean(params.isActive);
@@ -3905,10 +3934,11 @@ export const supabaseDb = {
   }) {
     const db = getActorOrAdminClient(params.authToken);
     const rpcClient = getRpcClient(params.authToken);
-    const taxable = Math.round(Number(params.taxableAmount));
-    if (!Number.isFinite(taxable) || taxable <= 0) {
-      throw new Error('الوعاء الضريبي الخاضع للحساب يجب أن يكون أكبر من صفر.');
-    }
+    const taxable = parseMoneyStrict(params.taxableAmount, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'الوعاء الضريبي الخاضع للحساب',
+    });
 
     const { data: def, error: defErr } = await db
       .from('tax_definitions')
@@ -3926,7 +3956,10 @@ export const supabaseDb = {
       throw new Error('لا يمكن احتساب التزام ضريبي لتعريف غير مفعل. قم بتفعيله أولاً من إعدادات الضرائب.');
     }
 
-    const taxAmount = Math.round((taxable * Number(def.rate_percentage || 0)) / 100) + Math.round(Number(def.flat_amount || 0));
+    const taxAmount = addMoney(
+      calcPercentageYer(taxable, Number(def.rate_percentage || 0)),
+      roundYer6(def.flat_amount || 0)
+    );
     if (taxAmount <= 0) {
       throw new Error('قيمة الضريبة المحتسبة تساوي صفراً (تحقق من النسبة أو المبلغ الثابت).');
     }
@@ -4024,7 +4057,7 @@ export const supabaseDb = {
       throw new Error('لا يمكن سداد سجل ضريبي ملغى.');
     }
 
-    const taxAmount = Math.round(Number(row.tax_amount || 0));
+    const taxAmount = roundYer6(row.tax_amount || 0);
     const { data: accounts } = await db
       .from('financial_accounts')
       .select('id, account_code, balance_units')
@@ -4147,6 +4180,7 @@ export const supabaseDb = {
     const revSourceMap: Record<string, { label: string; periodAmount: number; txSet: Set<string> }> = {
       'PLATFORM-REVENUE-TASKS': { label: 'إيرادات عمولات المهام', periodAmount: 0, txSet: new Set() },
       'PLATFORM-REVENUE-ADS': { label: 'إيرادات الإعلانات والرعاية', periodAmount: 0, txSet: new Set() },
+      'PLATFORM-REVENUE-CLIXWALL': { label: 'إيرادات حائط عروض ClixWall (30%)', periodAmount: 0, txSet: new Set() },
       'PLATFORM-REVENUE-SUBSCRIPTIONS': { label: 'إيرادات الاشتراكات', periodAmount: 0, txSet: new Set() },
       'PLATFORM-REVENUE-SERVICES': { label: 'إيرادات الخدمات ورسوم السحب', periodAmount: 0, txSet: new Set() },
     };
@@ -4259,13 +4293,14 @@ export const supabaseDb = {
       }
     }
 
-    const revenueTasks = revSourceMap['PLATFORM-REVENUE-TASKS'].periodAmount;
-    const revenueAds = revSourceMap['PLATFORM-REVENUE-ADS'].periodAmount;
-    const revenueSubscriptions = revSourceMap['PLATFORM-REVENUE-SUBSCRIPTIONS'].periodAmount;
-    const revenueServices = revSourceMap['PLATFORM-REVENUE-SERVICES'].periodAmount;
-    const totalPeriodRevenue = revenueTasks + revenueAds + revenueSubscriptions + revenueServices;
-    const totalPeriodExpenses = periodOpEx + periodProviderFees + periodTaxAccrued;
-    const periodNetProfitLoss = totalPeriodRevenue - totalPeriodExpenses;
+    const revenueTasks = roundYer6(revSourceMap['PLATFORM-REVENUE-TASKS'].periodAmount);
+    const revenueAds = roundYer6(revSourceMap['PLATFORM-REVENUE-ADS'].periodAmount);
+    const revenueClixwall = roundYer6(revSourceMap['PLATFORM-REVENUE-CLIXWALL'].periodAmount);
+    const revenueSubscriptions = roundYer6(revSourceMap['PLATFORM-REVENUE-SUBSCRIPTIONS'].periodAmount);
+    const revenueServices = roundYer6(revSourceMap['PLATFORM-REVENUE-SERVICES'].periodAmount);
+    const totalPeriodRevenue = sumMoney([revenueTasks, revenueAds, revenueClixwall, revenueSubscriptions, revenueServices]);
+    const totalPeriodExpenses = sumMoney([periodOpEx, periodProviderFees, periodTaxAccrued]);
+    const periodNetProfitLoss = subMoney(totalPeriodRevenue, totalPeriodExpenses);
 
     const netOperatingCashFlow = periodOperatingCashIn - periodOperatingCashOut;
     const netFinancingCashFlow = periodOwnerCapitalInflows - periodOwnerWithdrawals;
@@ -4326,6 +4361,7 @@ export const supabaseDb = {
       profitAndLoss: {
         revenueTasks,
         revenueAds,
+        revenueClixwall,
         revenueSubscriptions,
         revenueServices,
         totalRevenue: totalPeriodRevenue,
@@ -5925,8 +5961,8 @@ export const supabaseDb = {
 
     // Refund 100% of reserved funds (budget + fee) from escrow back to advertiser wallet
     const { accountRow: advWalletAcc } = await this.ensureUserFinancialAccount(camp.advertiser_id);
-    const refundBudget = parseMoneyStrict(camp.budget_units || 0);
-    const refundFee = parseMoneyStrict(camp.fee_units || 0);
+    const refundBudget = Math.max(0, roundYer6(camp.budget_units || 0));
+    const refundFee = Math.max(0, roundYer6(camp.fee_units || 0));
     const totalRefund = addMoney(refundBudget, refundFee);
 
     const refundEntries = buildCampaignSettlementRefundEntries({
@@ -6029,9 +6065,9 @@ export const supabaseDb = {
 
       if (camps) {
         for (const c of camps) {
-          const budget = parseMoneyStrict(c.budget_units || 0);
-          const fee = parseMoneyStrict(c.fee_units || 0);
-          const refunded = parseMoneyStrict(c.refunded_units || 0);
+          const budget = roundYer6(c.budget_units || 0);
+          const fee = roundYer6(c.fee_units || 0);
+          const refunded = roundYer6(c.refunded_units || 0);
 
           totalRefunded = addMoney(totalRefunded, refunded);
 
@@ -6068,7 +6104,7 @@ export const supabaseDb = {
           externalAccountId: d.external_account_id,
           depositPurpose: d.deposit_purpose || 'advertiser_wallet',
           advertiserId: d.advertiser_id,
-          amountUnits: parseMoneyStrict(d.amount_units || 0),
+          amountUnits: roundYer6(d.amount_units || 0),
           referenceNumber: d.reference_number,
           receiptUrl: d.receipt_url,
           depositorName: d.depositor_name,
@@ -6084,7 +6120,7 @@ export const supabaseDb = {
         }));
 
         for (const d of deps) {
-          const amt = parseMoneyStrict(d.amount_units || 0);
+          const amt = roundYer6(d.amount_units || 0);
           if (d.status === 'approved') {
             totalDeposited = addMoney(totalDeposited, amt);
           } else if (d.status === 'pending') {
@@ -6165,7 +6201,7 @@ export const supabaseDb = {
       externalAccountId: d.external_account_id,
       depositPurpose: d.deposit_purpose || 'advertiser_wallet',
       advertiserId: d.advertiser_id,
-      amountUnits: parseMoneyStrict(d.amount_units || 0),
+      amountUnits: roundYer6(d.amount_units || 0),
       referenceNumber: d.reference_number,
       receiptUrl: d.receipt_url,
       depositorName: d.depositor_name,
@@ -6499,10 +6535,11 @@ export const supabaseDb = {
     actorId: string;
     authToken?: string;
   }) {
-    const amountUnits = Math.round(Number(params.amountUnits));
-    if (!Number.isFinite(amountUnits) || amountUnits <= 0) {
-      throw new Error('مبلغ الإيداع يجب أن يكون عدداً صحيحاً موجباً أكبر من صفر.');
-    }
+    const amountUnits = parseMoneyStrict(params.amountUnits, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'مبلغ الإيداع',
+    });
     const cleanRef = String(params.referenceNumber || '').trim();
     const normRef = normalizeReceiptReference(cleanRef);
     if (!normRef || normRef.length < 3) {
@@ -6852,11 +6889,12 @@ export const supabaseDb = {
     actorId: string;
     authToken?: string;
   }) {
-    const amountUnits = Math.round(Number(params.amountUnits));
+    const amountUnits = parseMoneyStrict(params.amountUnits, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'مبلغ التحويل الداخلي',
+    });
     const cleanReason = String(params.reason || '').trim();
-    if (!Number.isFinite(amountUnits) || amountUnits <= 0) {
-      throw new Error('مبلغ التحويل الداخلي يجب أن يكون عدداً صحيحاً موجباً.');
-    }
     if (!cleanReason) {
       throw new Error('سبب التحويل الداخلي مطلوب.');
     }
@@ -6968,10 +7006,11 @@ export const supabaseDb = {
     actorId: string;
     authToken?: string;
   }) {
-    const actualUnits = Math.round(Number(params.actualBalanceUnits));
-    if (!Number.isFinite(actualUnits) || actualUnits < 0) {
-      throw new Error('الرصيد الفعلي يجب أن يكون عدداً صحيحاً غير سالب.');
-    }
+    const actualUnits = parseMoneyStrict(params.actualBalanceUnits, {
+      allowNegative: false,
+      allowZero: true,
+      fieldLabel: 'الرصيد الفعلي',
+    });
 
     const rpcClient = getRpcClient(params.authToken);
     const { data: rpcRes, error: rpcErr } = await rpcClient.rpc('reconcile_external_account', {

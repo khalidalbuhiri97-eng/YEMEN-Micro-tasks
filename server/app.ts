@@ -7,8 +7,7 @@ import { geoService } from './geoService.js';
 import { createClixWallHandlers } from './clixwallHandlers.js';
 import {
   parseMoneyStrict,
-  toMicros,
-  fromMicros,
+  addMoney,
   calcWalletTransferBreakdown,
   calculateCampaignFeePolicyCosts,
   formatYer,
@@ -1228,10 +1227,11 @@ app.post('/api/withdrawals/request', authMiddleware, async (req: AuthenticatedRe
   try {
     const { method, amount, beneficiaryName, phoneNumber, accountNumber, idempotencyKey } = req.body || {};
 
-    const numAmount = Math.round(Number(amount));
-    if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: 'يرجى تحديد مبلغ صالح للسحب.' });
-    }
+    const numAmount = parseMoneyStrict(amount, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'مبلغ السحب',
+    });
 
     if (!method || typeof method !== 'string' || !method.trim()) {
       return res.status(400).json({ error: 'يرجى تحديد طريقة السحب.' });
@@ -1662,10 +1662,11 @@ app.get('/api/admin/treasury', adminMiddleware, async (req: AuthenticatedRequest
 app.post('/api/admin/treasury/issue', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { amount, reason, idempotencyKey } = req.body || {};
-    const numAmount = Math.round(Number(amount));
-    if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: 'يرجى تحديد مبلغ إصدار صحيح أكبر من صفر.' });
-    }
+    const numAmount = parseMoneyStrict(amount, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'مبلغ الإصدار',
+    });
     if (!reason || !String(reason).trim()) {
       return res.status(400).json({ error: 'سبب الإصدار مطلوب للتدقيق المحاسبي.' });
     }
@@ -1922,10 +1923,11 @@ app.get('/api/admin/users', adminMiddleware, async (_req: AuthenticatedRequest, 
 app.post('/api/admin/users/:id/adjust', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { amount, reason, idempotencyKey } = req.body || {};
-    const numAmount = Math.round(Number(amount));
-    if (!Number.isFinite(numAmount) || numAmount === 0) {
-      return res.status(400).json({ error: 'يرجى تحديد قيمة تسوية صحيحة غير صفرية.' });
-    }
+    const numAmount = parseMoneyStrict(amount, {
+      allowNegative: true,
+      allowZero: false,
+      fieldLabel: 'قيمة التسوية',
+    });
     if (!reason || !String(reason).trim()) {
       return res.status(400).json({ error: 'سبب التسوية مطلوب للتدقيق المحاسبي.' });
     }
@@ -1933,7 +1935,7 @@ app.post('/api/admin/users/:id/adjust', adminMiddleware, async (req: Authenticat
     const adminClient = getPrivilegedDbClient(req);
     const { accountRow: userAcc } = await supabaseDb.ensureUserFinancialAccount(req.params.id);
     const currentBal = Number(userAcc.balance_units || 0);
-    if (currentBal + numAmount < 0) {
+    if (addMoney(currentBal, numAmount) < 0) {
       return res.status(400).json({ error: 'لا يمكن أن ينتج عن العملية رصيد سالب.' });
     }
 
@@ -2021,7 +2023,7 @@ app.get('/api/admin/financial-report', adminMiddleware, async (req: Authenticate
         totalAvailableLiabilities: treasury.userAvailableTotal,
         totalReferralExpenses: 0,
         platformRevenue: treasury.revenueTotals?.total ?? 0,
-        revenueBreakdown: treasury.revenueTotals ?? { tasks: 0, ads: 0, subscriptions: 0, services: 0, total: 0 },
+        revenueBreakdown: treasury.revenueTotals ?? { tasks: 0, ads: 0, subscriptions: 0, services: 0, clixwall: 0, total: 0 },
         ownerCapitalTotal: treasury.ownerCapitalTotal ?? 0,
         ownerWithdrawalsTotal: treasury.ownerWithdrawalsTotal ?? 0,
         operationalExpensesTotal: treasury.expensesTotal ?? 0,
@@ -2717,13 +2719,17 @@ app.post('/api/advertiser/campaigns', advertiserMiddleware, async (req: Authenti
       targetDivisionIds,
     } = req.body || {};
 
-    const cleanReward = parseMoneyStrict(rewardUnits ?? rewardYer);
-    const cleanSlots = Math.round(Number(slots ?? totalQuantity));
+    const cleanReward = parseMoneyStrict(rewardUnits ?? rewardYer, {
+      allowNegative: false,
+      allowZero: false,
+      fieldLabel: 'سعر المهمة',
+    });
+    const cleanSlots = Number(slots ?? totalQuantity);
     if (!title || !description) {
       return res.status(400).json({ error: 'يرجى إدخال عنوان الحملة ووصف المهمة المطلوبة.' });
     }
-    if (!Number.isFinite(cleanReward) || cleanReward <= 0 || !Number.isFinite(cleanSlots) || cleanSlots <= 0) {
-      return res.status(400).json({ error: 'سعر المهمة وعدد المهمات يجب أن يكونا أعداداً صحيحة أكبر من صفر.' });
+    if (!Number.isInteger(cleanSlots) || cleanSlots <= 0) {
+      return res.status(400).json({ error: 'عدد المهمات المطلوبة يجب أن يكون عدداً صحيحاً أكبر من صفر.' });
     }
 
     const result = await supabaseDb.createAdvertiserCampaign({

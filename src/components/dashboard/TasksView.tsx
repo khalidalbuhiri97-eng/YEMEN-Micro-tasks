@@ -21,6 +21,7 @@ import confetti from 'canvas-confetti';
 import { SecureImageView } from '../common/SecureImageView.tsx';
 import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 import { GeoLocationSelector, type GeoFilterValue } from '../common/GeoLocationSelector.tsx';
+import { formatYer } from '../../../shared/money.ts';
 
 function renderTextWithSafeLinks(text: string) {
   if (!text) return null;
@@ -445,7 +446,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                     <div>
                       <span className="text-[10px] text-slate-400 block">المكافأة المباشرة</span>
                       <span className="text-base font-extrabold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                        {task.rewardYer.toLocaleString()}{' '}
+                        {formatYer(task.rewardYer)}{' '}
                         <span className="text-xs font-normal">ر.ي</span>
                       </span>
                     </div>
@@ -551,7 +552,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onGoToSubmissions, onGoToW
                     المكافأة عند اعتماد الإثبات:
                   </span>
                   <div className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums">
-                    {activeTask.rewardYer.toLocaleString()} ريال يمني (YER)
+                    {formatYer(activeTask.rewardYer)} ريال يمني (YER)
                   </div>
                 </div>
                 <div className="text-left text-xs text-emerald-700 dark:text-emerald-400 font-medium">

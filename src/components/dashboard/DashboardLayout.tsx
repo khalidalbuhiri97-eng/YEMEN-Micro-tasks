@@ -18,6 +18,7 @@ import {
   HelpCircle,
   Megaphone,
 } from 'lucide-react';
+import { formatYer } from '../../../shared/money.ts';
 
 interface DashboardLayoutProps {
   initialSubTab?: string;
@@ -115,7 +116,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             <div className="mt-3 pt-2.5 border-t border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-xs font-mono">
               <span className="text-slate-500">الرصيد:</span>
               <span className="font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                {wallet?.availableBalance.toLocaleString() || '0'} ر.ي
+                {formatYer(wallet?.availableBalance ?? 0)} ر.ي
               </span>
             </div>
           </div>

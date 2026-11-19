@@ -243,6 +243,7 @@ export interface TreasurySummary {
   revenueTotals?: {
     tasks: number;
     ads: number;
+    clixwall: number;
     subscriptions: number;
     services: number;
     total: number;
@@ -494,6 +495,7 @@ export interface ComprehensiveFinancialReport {
   profitAndLoss: {
     revenueTasks: number;
     revenueAds: number;
+    revenueClixwall?: number;
     revenueSubscriptions: number;
     revenueServices: number;
     totalRevenue: number;

@@ -10,6 +10,7 @@ import { api } from '../../../api/client.ts';
 import { useAuth } from '../../../context/AuthContext.tsx';
 import type { ComprehensiveFinancialReport, TreasurySummary } from '../../../types/index.ts';
 import { MigrationReadinessBanner } from './MigrationReadinessBanner.tsx';
+import { formatYer } from '../../../../shared/money.ts';
 
 interface FinancialReportsViewProps {
   treasury: TreasurySummary | null;
@@ -36,7 +37,7 @@ const REPORT_TABS: Array<{ id: ReportTab; label: string }> = [
   { id: 'liabilities', label: 'أرصدة المستخدمين والضمانات' },
 ];
 
-const fmt = (n: number | undefined | null) => Math.round(Number(n || 0)).toLocaleString('en-US');
+const fmt = (n: number | undefined | null) => formatYer(n ?? 0);
 
 export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({ treasury }) => {
   const { showToast } = useAuth();
@@ -218,6 +219,11 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({ trea
                     <td className="py-2.5 px-4 font-mono font-bold tabular-nums">{fmt(report.profitAndLoss.revenueAds)}</td>
                   </tr>
                   <tr>
+                    <td className="py-2.5 px-4 font-semibold">إيرادات حائط عروض ClixWall (30%)</td>
+                    <td className="py-2.5 px-4 text-emerald-600">إيراد تشغيلي</td>
+                    <td className="py-2.5 px-4 font-mono font-bold tabular-nums">{fmt(report.profitAndLoss.revenueClixwall)}</td>
+                  </tr>
+                  <tr>
                     <td className="py-2.5 px-4 font-semibold">إيرادات الاشتراكات</td>
                     <td className="py-2.5 px-4 text-emerald-600">إيراد تشغيلي</td>
                     <td className="py-2.5 px-4 font-mono font-bold tabular-nums">{fmt(report.profitAndLoss.revenueSubscriptions)}</td>
@@ -322,9 +328,9 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({ trea
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-2.5 px-4 text-slate-500">الوحدات الافتراضية المتاحة بالتشغيل (مفصولة عن النقد)</td>
+                    <td className="py-2.5 px-4 text-slate-500">الخزينة التشغيلية المتاحة (مفصولة عن النقد)</td>
                     <td className="py-2.5 px-4 font-mono tabular-nums text-slate-600 dark:text-slate-300">
-                      {fmt(report.cashFlow.virtualTreasuryAvailable)} وحدة
+                      {fmt(report.cashFlow.virtualTreasuryAvailable)} ر.ي
                     </td>
                   </tr>
                 </tbody>
@@ -349,8 +355,8 @@ export const FinancialReportsView: React.FC<FinancialReportsViewProps> = ({ trea
                     <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.assets.externalAccounts)} ر.ي</strong>
                   </div>
                   <div className="flex justify-between text-slate-500">
-                    <span>رقابة الوحدات الافتراضية (مفصل)</span>
-                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.assets.virtualIssuanceControl)} وحدة</strong>
+                    <span>رقابة إصدار السيولة بالريال اليمني</span>
+                    <strong className="font-mono tabular-nums">{fmt(report.balanceSheet.assets.virtualIssuanceControl)} ر.ي</strong>
                   </div>
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex justify-between font-extrabold">
                     <span>إجمالي الأصول النقدية والخارجية</span>

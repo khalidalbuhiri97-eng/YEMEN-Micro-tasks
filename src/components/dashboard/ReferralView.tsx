@@ -3,6 +3,7 @@ import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import type { ReferralStat, ReferralRewardStatus } from '../../types/index.ts';
 import { Users, Copy, Check, Gift, Award, CheckCircle2, Clock } from 'lucide-react';
+import { formatYer } from '../../../shared/money.ts';
 
 const STATUS_BADGES: Record<ReferralRewardStatus, { label: string; className: string }> = {
   awaiting_first_task: {
@@ -129,7 +130,7 @@ export const ReferralView: React.FC = () => {
           برنامج دعوة الأصدقاء والإحالات
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          شارك رابطك مع أصدقائك واكسب {activeBonus.toLocaleString()} ريال يمني فور إتمام كل صديق أول مهمة حقيقية واعتمادها من الإدارة.
+          شارك رابطك مع أصدقائك واكسب {formatYer(activeBonus)} ريال يمني فور إتمام كل صديق أول مهمة حقيقية واعتمادها من الإدارة.
         </p>
       </div>
 
@@ -142,7 +143,7 @@ export const ReferralView: React.FC = () => {
           <div>
             <h2 className="text-base font-bold">كود الإحالة الخاص بك</h2>
             <p className="text-xs text-emerald-100">
-              تُصرف مكافأة {activeBonus.toLocaleString()} ر.ي تلقائياً من خزينة المنصة بعد اعتماد أول مهمة ينجزها صديقك.
+              تُصرف مكافأة {formatYer(activeBonus)} ر.ي تلقائياً من خزينة المنصة بعد اعتماد أول مهمة ينجزها صديقك.
             </p>
           </div>
         </div>
@@ -210,7 +211,7 @@ export const ReferralView: React.FC = () => {
           <div>
             <span className="text-xs text-slate-500 block mb-1">إجمالي الأرباح المحققة</span>
             <span className="text-2xl font-extrabold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-              {(referrals?.totalEarnedYer ?? 0).toLocaleString()}{' '}
+              {formatYer(referrals?.totalEarnedYer ?? 0)}{' '}
               <span className="text-xs font-normal">ر.ي</span>
             </span>
           </div>
@@ -250,7 +251,7 @@ export const ReferralView: React.FC = () => {
                         u.rewardStatus === 'paid' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'
                       }`}
                     >
-                      {u.rewardEarned > 0 ? `+${u.rewardEarned.toLocaleString()} ر.ي` : '0 ر.ي'}
+                      {u.rewardEarned > 0 ? `+${formatYer(u.rewardEarned)} ر.ي` : '0 ر.ي'}
                     </div>
                   </div>
                 </div>

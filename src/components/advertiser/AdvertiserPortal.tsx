@@ -6,6 +6,7 @@ import { CampaignServiceFeeDetails } from './CampaignServiceFeeDetails.tsx';
 import { CampaignDetailsModal, CampaignInvoiceModal, getCampaignStatusLabel } from './CampaignModals.tsx';
 import { SecureImageView } from '../common/SecureImageView.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
+import { addMoney, calcPercentageYer, formatYer, mulMoney, roundYer6, subMoney } from '../../../shared/money.ts';
 import {
   AlertTriangle,
   Building2,
@@ -156,13 +157,13 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
 
   // Live instant cost breakdown
   const costBreakdown = useMemo(() => {
-    const rewardUnits = Math.max(0, Math.round(Number(rewardInput) || 0));
+    const rewardUnits = Math.max(0, roundYer6(rewardInput || 0));
     const slots = Math.max(0, Math.round(Number(slotsInput) || 0));
-    const budgetUnits = rewardUnits * slots;
-    const feeUnits = Math.round((budgetUnits * feePercentage) / 100);
-    const totalUnits = budgetUnits + feeUnits;
+    const budgetUnits = mulMoney(rewardUnits, slots);
+    const feeUnits = calcPercentageYer(budgetUnits, feePercentage);
+    const totalUnits = addMoney(budgetUnits, feeUnits);
     const isValid = rewardUnits > 0 && slots > 0 && budgetUnits > 0;
-    const deficitUnits = Math.max(0, totalUnits - walletBalance);
+    const deficitUnits = Math.max(0, subMoney(totalUnits, walletBalance));
     const isInsufficient = isValid && walletBalance < totalUnits;
 
     return {
@@ -250,7 +251,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
     }
     if (costBreakdown.isInsufficient) {
       showToast(
-        `رصيد المحفظة غير كافٍ. العجز المطلوب شحنه: ${costBreakdown.deficitUnits.toLocaleString()} ر.ي`,
+        `رصيد المحفظة غير كافٍ. العجز المطلوب شحنه: ${formatYer(costBreakdown.deficitUnits)} ر.ي`,
         'error'
       );
       return;
@@ -305,7 +306,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
   const handleStartCampaign = (camp: CampaignItem) => {
     openConfirmModal({
       title: 'تفعيل وبدء الحملة الإعلانية',
-      message: `سيتم نشر المهمة للجمهور (${camp.slots} مهمة × ${camp.rewardUnits.toLocaleString()} ر.ي) وتثبيت رسوم المنصة المحجوزة (${camp.feeUnits.toLocaleString()} ر.ي). هل تريد المتابعة؟`,
+      message: `سيتم نشر المهمة للجمهور (${camp.slots} مهمة × ${formatYer(camp.rewardUnits)} ر.ي) وتثبيت رسوم المنصة المحجوزة (${formatYer(camp.feeUnits)} ر.ي). هل تريد المتابعة؟`,
       confirmLabel: 'بدء الحملة الآن',
       cancelLabel: 'تراجع',
       variant: 'primary',
@@ -326,8 +327,8 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
 
   const handleSettleCampaign = (camp: CampaignItem) => {
     const refundableNote = camp.startedAt
-      ? `سيتم إيقاف الحملة وإرجاع المتبقي من ميزانية المكافآت (${(camp.budgetEscrowBalance ?? 0).toLocaleString()} ر.ي) إلى محفظتك.`
-      : `سيتم إلغاء الحملة وإرجاع كامل الميزانية والرسوم المحتجزة (${((camp.budgetEscrowBalance ?? 0) + (camp.feeEscrowBalance ?? 0)).toLocaleString()} ر.ي) إلى محفظتك.`;
+      ? `سيتم إيقاف الحملة وإرجاع المتبقي من ميزانية المكافآت (${formatYer(camp.budgetEscrowBalance ?? 0)} ر.ي) إلى محفظتك.`
+      : `سيتم إلغاء الحملة وإرجاع كامل الميزانية والرسوم المحتجزة (${formatYer(addMoney(camp.budgetEscrowBalance ?? 0, camp.feeEscrowBalance ?? 0))} ر.ي) إلى محفظتك.`;
 
     openConfirmModal({
       title: 'إغلاق وتسوية الحملة الإعلانية',
@@ -340,7 +341,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
         try {
           const res = await api.settleAdvertiserCampaign(camp.id, { targetStatus: 'cancelled' });
           showToast(
-            `تمت تسوية الحملة وإرجاع ${Number(res?.refundedUnits || 0).toLocaleString()} ر.ي إلى محفظتك.`,
+            `تمت تسوية الحملة وإرجاع ${formatYer(res?.refundedUnits || 0)} ر.ي إلى محفظتك.`,
             'success'
           );
           await Promise.all([loadData(), refreshWallet()]);
@@ -384,7 +385,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
           <div className="text-right">
             <div className="text-[11px] text-slate-500 dark:text-slate-400">الرصيد المتاح بالمحفظة</div>
             <div className="text-lg font-extrabold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-              {walletBalance.toLocaleString()} ر.ي
+              {formatYer(walletBalance)} ر.ي
             </div>
           </div>
           {onNavigateWallet && (
@@ -425,9 +426,9 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                 تم تمويل وإنشاء الحملة: {lastCreatedCampaign.title}
               </div>
               <div className="text-emerald-800 dark:text-emerald-300/90 font-mono tabular-nums mt-0.5">
-                الإجمالي المحجوز: {lastCreatedCampaign.totalUnits.toLocaleString()} ر.ي · الميزانية:{' '}
-                {lastCreatedCampaign.budgetUnits.toLocaleString()} ر.ي · الرسوم ({lastCreatedCampaign.feePercentage}%):{' '}
-                {lastCreatedCampaign.feeUnits.toLocaleString()} ر.ي
+                الإجمالي المحجوز: {formatYer(lastCreatedCampaign.totalUnits)} ر.ي · الميزانية:{' '}
+                {formatYer(lastCreatedCampaign.budgetUnits)} ر.ي · الرسوم ({lastCreatedCampaign.feePercentage}%):{' '}
+                {formatYer(lastCreatedCampaign.feeUnits)} ر.ي
               </div>
             </div>
           </div>
@@ -544,8 +545,8 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                     </label>
                     <input
                       type="number"
-                      min="1"
-                      step="1"
+                      min="0.000001"
+                      step="any"
                       required
                       value={rewardInput}
                       onChange={(e) => setRewardInput(e.target.value)}
@@ -816,10 +817,10 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                 <div className="space-y-2 text-xs divide-y divide-slate-200/70 dark:divide-slate-700/70">
                   <div className="flex items-center justify-between pt-1">
                     <span className="text-slate-600 dark:text-slate-300">
-                      ميزانية المهام ({costBreakdown.rewardUnits.toLocaleString()} × {costBreakdown.slots.toLocaleString()})
+                      ميزانية المهام ({formatYer(costBreakdown.rewardUnits)} × {costBreakdown.slots.toLocaleString()})
                     </span>
                     <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                      {costBreakdown.budgetUnits.toLocaleString()} ر.ي
+                      {formatYer(costBreakdown.budgetUnits)} ر.ي
                     </span>
                   </div>
 
@@ -828,14 +829,14 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                       رسوم خدمة يمن تاسك ({feePercentage}%)
                     </span>
                     <span className="font-mono font-bold tabular-nums text-slate-900 dark:text-white">
-                      {costBreakdown.feeUnits.toLocaleString()} ر.ي
+                      {formatYer(costBreakdown.feeUnits)} ر.ي
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between pt-2.5 text-sm sm:text-base">
                     <span className="font-extrabold text-slate-900 dark:text-white">الإجمالي المطلوب</span>
                     <span className="font-mono font-extrabold tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {costBreakdown.totalUnits.toLocaleString()} ر.ي
+                      {formatYer(costBreakdown.totalUnits)} ر.ي
                     </span>
                   </div>
                 </div>
@@ -852,10 +853,10 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                         <span>الرصيد المتاح غير كافٍ لتمويل الحملة</span>
                       </div>
                       <div className="font-mono tabular-nums text-[11px]">
-                        المتاح: {walletBalance.toLocaleString()} ر.ي · المطلوب: {costBreakdown.totalUnits.toLocaleString()} ر.ي
+                        المتاح: {formatYer(walletBalance)} ر.ي · المطلوب: {formatYer(costBreakdown.totalUnits)} ر.ي
                       </div>
                       <div className="font-mono font-extrabold tabular-nums text-xs">
-                        العجز المطلوب شحنه: {costBreakdown.deficitUnits.toLocaleString()} ر.ي (بدون أي رسوم شحن)
+                        العجز المطلوب شحنه: {formatYer(costBreakdown.deficitUnits)} ر.ي (بدون أي رسوم شحن)
                       </div>
                     </div>
                   ) : (
@@ -864,7 +865,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                       <span>
                         رصيدك المتاح كافٍ وسيبقى{' '}
                         <strong className="font-mono tabular-nums">
-                          {(walletBalance - costBreakdown.totalUnits).toLocaleString()} ر.ي
+                          {formatYer(subMoney(walletBalance, costBreakdown.totalUnits))} ر.ي
                         </strong>{' '}
                         بعد الحجز.
                       </span>
@@ -1001,18 +1002,18 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-xs font-mono tabular-nums text-slate-600 dark:text-slate-300">
-                      <span>الميزانية: {camp.budgetUnits.toLocaleString()} ر.ي</span>
+                      <span>الميزانية: {formatYer(camp.budgetUnits)} ر.ي</span>
                       <span>·</span>
-                      <span>الرسوم: {camp.feeUnits.toLocaleString()} ر.ي</span>
+                      <span>الرسوم: {formatYer(camp.feeUnits)} ر.ي</span>
                       <span>·</span>
                       <span className="font-bold text-slate-900 dark:text-white">
-                        الإجمالي: {camp.totalUnits.toLocaleString()} ر.ي
+                        الإجمالي: {formatYer(camp.totalUnits)} ر.ي
                       </span>
                       {camp.refundedUnits > 0 && (
                         <>
                           <span>·</span>
                           <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                            مسترجع: {camp.refundedUnits.toLocaleString()} ر.ي
+                            مسترجع: {formatYer(camp.refundedUnits)} ر.ي
                           </span>
                         </>
                       )}

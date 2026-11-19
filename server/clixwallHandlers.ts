@@ -1,8 +1,16 @@
 import type { Request, Response } from 'express';
 import crypto from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import Decimal from 'decimal.js';
+import {
+  USD_TO_YER_RATE,
+  calculateClixWallRevenueSplit,
+  roundYer6,
+  sumMoney,
+  toYerDecimal,
+} from '../shared/money.js';
 
-export const CLIXWALL_EXCHANGE_RATE = 1600;
+export const CLIXWALL_EXCHANGE_RATE = USD_TO_YER_RATE;
 export const CLIXWALL_USER_SHARE_RATIO = 0.7;
 export const CLIXWALL_PUBLISHER_SHARE_RATIO = 0.3;
 const RATIO_TOLERANCE = 0.025; // Allows 2.5% rounding drift on micro-payouts
@@ -22,16 +30,14 @@ export type ClixWallPayoutValidation =
       valid: true;
       userShareUsd: number;
       publisherShareUsd: number;
+      totalYer: number;
       rewardYer: number;
+      publisherYer: number;
     }
   | {
       valid: false;
       error: string;
     };
-
-function round6(value: number): number {
-  return Math.round(value * 1_000_000) / 1_000_000;
-}
 
 export function timingSafeSecretEquals(expected: string, provided: string): boolean {
   if (!expected || !provided) return false;
@@ -123,51 +129,60 @@ export function validateAndComputeClixWallPayout(
     data.publisher_payout !== null &&
     String(data.publisher_payout).trim() !== '';
 
-  const userUsdRaw = hasUserPayoutUsd ? Number(data.user_payout_usd) : NaN;
-  const pubRaw = hasPublisherPayoutUsd
-    ? Number(data.publisher_payout_usd)
+  const userUsdDec = hasUserPayoutUsd ? toYerDecimal(data.user_payout_usd) : new Decimal(NaN);
+  const pubDec = hasPublisherPayoutUsd
+    ? toYerDecimal(data.publisher_payout_usd)
     : hasPublisherPayout
-    ? Number(data.publisher_payout)
-    : NaN;
+    ? toYerDecimal(data.publisher_payout)
+    : new Decimal(NaN);
 
   if (kind === 'reversal') {
-    const userShareUsd = hasUserPayoutUsd ? userUsdRaw : 0;
-    const pubCandidate = hasPublisherPayoutUsd || hasPublisherPayout ? pubRaw : 0;
+    const userShareDec = hasUserPayoutUsd ? userUsdDec : new Decimal(0);
+    const pubCandidateDec = hasPublisherPayoutUsd || hasPublisherPayout ? pubDec : new Decimal(0);
 
-    if (!Number.isFinite(userShareUsd) || userShareUsd < 0) {
+    if (hasUserPayoutUsd && (!Number.isFinite(Number(data.user_payout_usd)) || userShareDec.lt(0))) {
       return { valid: false, error: 'قيمة user_payout_usd غير صالحة في طلب الاسترجاع.' };
     }
-    if (!Number.isFinite(pubCandidate) || pubCandidate < 0) {
+    if ((hasPublisherPayoutUsd || hasPublisherPayout) && pubCandidateDec.lt(0)) {
       return { valid: false, error: 'قيمة publisher_payout_usd غير صالحة في طلب الاسترجاع.' };
     }
 
-    let publisherShareUsd = pubCandidate;
+    let publisherShareDec = pubCandidateDec;
     if (
-      userShareUsd > 0 &&
-      pubCandidate > userShareUsd &&
-      Math.abs(userShareUsd / pubCandidate - CLIXWALL_USER_SHARE_RATIO) <= RATIO_TOLERANCE
+      userShareDec.gt(0) &&
+      pubCandidateDec.gt(userShareDec) &&
+      Math.abs(userShareDec.div(pubCandidateDec).toNumber() - CLIXWALL_USER_SHARE_RATIO) <= RATIO_TOLERANCE
     ) {
-      // Normalized from gross publisher_payout into 30% net publisher share
-      publisherShareUsd = pubCandidate - userShareUsd;
+      publisherShareDec = pubCandidateDec.minus(userShareDec);
     }
+
+    const split = calculateClixWallRevenueSplit({
+      userUsd: userShareDec.toFixed(),
+      publisherUsd: publisherShareDec.toFixed(),
+    });
 
     return {
       valid: true,
-      userShareUsd: round6(userShareUsd),
-      publisherShareUsd: round6(publisherShareUsd),
-      rewardYer: round6(userShareUsd * CLIXWALL_EXCHANGE_RATE),
+      userShareUsd: split.userUsd,
+      publisherShareUsd: split.publisherUsd,
+      totalYer: split.totalYer,
+      rewardYer: split.userYer,
+      publisherYer: split.publisherYer,
     };
   }
 
   // Strict financial validation for 'credit'
-  if (!hasUserPayoutUsd || !Number.isFinite(userUsdRaw) || userUsdRaw <= 0) {
+  const userNum = Number(data.user_payout_usd);
+  if (!hasUserPayoutUsd || !Number.isFinite(userNum) || userUsdDec.lte(0)) {
     return {
       valid: false,
       error: 'البيانات المالية غير صالحة: يجب إرسال user_payout_usd بقيمة موجبة أكبر من صفر.',
     };
   }
 
-  if ((!hasPublisherPayoutUsd && !hasPublisherPayout) || !Number.isFinite(pubRaw) || pubRaw <= 0) {
+  const pubRawVal = hasPublisherPayoutUsd ? data.publisher_payout_usd : data.publisher_payout;
+  const pubNum = Number(pubRawVal);
+  if ((!hasPublisherPayoutUsd && !hasPublisherPayout) || !Number.isFinite(pubNum) || pubDec.lte(0)) {
     return {
       valid: false,
       error: 'البيانات المالية غير صالحة: يجب إرسال حصة الناشر للتحقق من نسبة 70% / 30%.',
@@ -175,26 +190,26 @@ export function validateAndComputeClixWallPayout(
   }
 
   // Case A: Caller passed 70% user_payout_usd and 30% publisher_payout_usd directly
-  const combinedTotal = userUsdRaw + pubRaw;
-  const netUserRatio = userUsdRaw / combinedTotal;
-  const netPubRatio = pubRaw / combinedTotal;
+  const combinedDec = userUsdDec.plus(pubDec);
+  const netUserRatio = userUsdDec.div(combinedDec).toNumber();
+  const netPubRatio = pubDec.div(combinedDec).toNumber();
 
-  let userShareUsd: number;
-  let publisherShareUsd: number;
+  let userShareDec: Decimal;
+  let publisherShareDec: Decimal;
 
   if (
     Math.abs(netUserRatio - CLIXWALL_USER_SHARE_RATIO) <= RATIO_TOLERANCE &&
     Math.abs(netPubRatio - CLIXWALL_PUBLISHER_SHARE_RATIO) <= RATIO_TOLERANCE
   ) {
-    userShareUsd = round6(userUsdRaw);
-    publisherShareUsd = round6(pubRaw);
+    userShareDec = userUsdDec;
+    publisherShareDec = pubDec;
   } else if (
-    // Case B: ClixWall macro sent gross payout in publisher_payout (e.g. 0.001) & 70% in user_payout_usd (0.0007)
-    pubRaw > userUsdRaw &&
-    Math.abs(userUsdRaw / pubRaw - CLIXWALL_USER_SHARE_RATIO) <= RATIO_TOLERANCE
+    // Case B: ClixWall macro sent gross payout in publisher_payout (e.g. 0.00020) & 70% in user_payout_usd (0.00014)
+    pubDec.gt(userUsdDec) &&
+    Math.abs(userUsdDec.div(pubDec).toNumber() - CLIXWALL_USER_SHARE_RATIO) <= RATIO_TOLERANCE
   ) {
-    userShareUsd = round6(userUsdRaw);
-    publisherShareUsd = round6(pubRaw - userUsdRaw);
+    userShareDec = userUsdDec;
+    publisherShareDec = pubDec.minus(userUsdDec);
   } else {
     return {
       valid: false,
@@ -202,8 +217,11 @@ export function validateAndComputeClixWallPayout(
     };
   }
 
-  const rewardYer = round6(userShareUsd * CLIXWALL_EXCHANGE_RATE);
-  if (!Number.isFinite(rewardYer) || rewardYer <= 0 || !Number.isFinite(publisherShareUsd) || publisherShareUsd <= 0) {
+  const split = calculateClixWallRevenueSplit({
+    totalUsd: userShareDec.plus(publisherShareDec).toFixed(),
+  });
+
+  if (split.userYer <= 0 || split.publisherYer <= 0) {
     return {
       valid: false,
       error: 'بيانات المكافأة المحسوبة غير صالحة.',
@@ -212,9 +230,11 @@ export function validateAndComputeClixWallPayout(
 
   return {
     valid: true,
-    userShareUsd,
-    publisherShareUsd,
-    rewardYer,
+    userShareUsd: split.userUsd,
+    publisherShareUsd: split.publisherUsd,
+    totalYer: split.totalYer,
+    rewardYer: split.userYer,
+    publisherYer: split.publisherYer,
   };
 }
 
@@ -352,8 +372,8 @@ export function createClixWallHandlers({ getAdminClient, onPostbackError }: Clix
         }
       }
 
-      let totalUsdEarned = 0;
-      let totalYerCredited = 0;
+      const usdParts: number[] = [];
+      const yerParts: number[] = [];
       let offersCount = 0;
       let reversedCount = 0;
 
@@ -377,16 +397,20 @@ export function createClixWallHandlers({ getAdminClient, onPostbackError }: Clix
         if (!primary) continue;
 
         const baseAmountRow = group.creditRow || primary;
-        const userPayoutUsd = Number(baseAmountRow.user_payout_usd ?? 0);
-        const publisherPayoutUsd = Number(baseAmountRow.publisher_payout_usd ?? 0);
+        const userPayoutUsd = toYerDecimal(baseAmountRow.user_payout_usd ?? 0)
+          .toDecimalPlaces(8)
+          .toNumber();
+        const publisherPayoutUsd = toYerDecimal(baseAmountRow.publisher_payout_usd ?? 0)
+          .toDecimalPlaces(8)
+          .toNumber();
         const exchangeRate = Number(baseAmountRow.exchange_rate || CLIXWALL_EXCHANGE_RATE);
-        const rewardYer = Number(baseAmountRow.reward_yer ?? 0);
+        const rewardYer = roundYer6(baseAmountRow.reward_yer ?? 0);
 
         if (isReversed) {
           reversedCount += 1;
         } else if (group.creditRow) {
-          totalUsdEarned += userPayoutUsd;
-          totalYerCredited += rewardYer;
+          usdParts.push(userPayoutUsd);
+          yerParts.push(rewardYer);
           offersCount += 1;
         }
 
@@ -410,18 +434,17 @@ export function createClixWallHandlers({ getAdminClient, onPostbackError }: Clix
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
 
-      // financial_accounts.balance_units stores exact NUMERIC(30,6) YER directly (Migration 023),
-      // matching supabaseDb.getWallet() / WalletView without dividing by 1,000,000.
+      // financial_accounts.balance_units stores exact NUMERIC(30,6) YER directly.
       const walletBalanceYer =
         walletAccRes.data && walletAccRes.data.balance_units !== undefined
-          ? round6(Number(walletAccRes.data.balance_units))
+          ? roundYer6(walletAccRes.data.balance_units)
           : 0;
 
       return res.json({
         rewards: consolidatedRewards,
         summary: {
-          totalUsdEarned: round6(totalUsdEarned),
-          totalYerCredited: round6(totalYerCredited),
+          totalUsdEarned: sumMoney(usdParts),
+          totalYerCredited: sumMoney(yerParts),
           offersCount,
           reversedCount,
           walletBalanceYer,
@@ -548,7 +571,7 @@ export function createClixWallHandlers({ getAdminClient, onPostbackError }: Clix
       const isDuplicate = !!(rpcResult && typeof rpcResult === 'object' && (rpcResult as any).duplicate);
 
       console.log(
-        `[CLIXWALL_POSTBACK] Processed TID: ${transactionId} (User: ${userId}, Status: ${statusClassification.dbStatus}, UserUSD: ${payoutValidation.userShareUsd}, PubUSD: ${payoutValidation.publisherShareUsd}, YER: ${payoutValidation.rewardYer}, Duplicate: ${isDuplicate})`
+        `[CLIXWALL_POSTBACK] Processed TID: ${transactionId} (User: ${userId}, Status: ${statusClassification.dbStatus}, TotalYER: ${payoutValidation.totalYer}, UserYER: ${payoutValidation.rewardYer}, PublisherYER: ${payoutValidation.publisherYer}, Duplicate: ${isDuplicate})`
       );
 
       return res.status(200).json({
@@ -559,6 +582,9 @@ export function createClixWallHandlers({ getAdminClient, onPostbackError }: Clix
         status: statusClassification.dbStatus,
         user_payout_usd: payoutValidation.userShareUsd,
         publisher_payout_usd: payoutValidation.publisherShareUsd,
+        total_yer: payoutValidation.totalYer,
+        user_yer: payoutValidation.rewardYer,
+        publisher_yer: payoutValidation.publisherYer,
         reward_yer: payoutValidation.rewardYer,
         duplicate: isDuplicate,
       });

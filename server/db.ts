@@ -17,6 +17,14 @@ import type {
   LedgerTransaction,
   LedgerEntry,
 } from '../src/types/index';
+import {
+  addMoney,
+  calcPercentageYer,
+  formatYer,
+  parseMoneyStrict,
+  roundYer6,
+  subMoney,
+} from '../shared/money.js';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'database.json');
@@ -212,7 +220,7 @@ function getCleanInitialDatabase(): DatabaseSchema {
     transactionType: 'TREASURY_INITIALIZATION',
     referenceId: 'GENESIS_TREASURY_10M',
     idempotencyKey: 'GENESIS_TREASURY_INIT_10M',
-    description: 'تهيئة الخزينة الافتراضية المركزية لمنصة كسب اليمن بمبلغ 10,000,000 وحدة',
+    description: 'تهيئة الخزينة الافتراضية المركزية لمنصة كسب اليمن بمبلغ 10,000,000 ر.ي',
     createdBy: AUTHORIZED_OWNER_ID,
     createdAt: now,
   };
@@ -709,11 +717,11 @@ class DatabaseManager {
         throw new Error('رصيدك المتاح غير كافٍ لتنفيذ عملية السحب.');
       }
 
-      const fee = Math.round((payload.amount * methodInfo.feePercentage) / 100) + methodInfo.feeFlat;
-      const netAmount = payload.amount - fee;
+      const fee = addMoney(calcPercentageYer(payload.amount, methodInfo.feePercentage), methodInfo.feeFlat);
+      const netAmount = subMoney(payload.amount, fee);
       const now = new Date().toISOString();
-      const prevBal = wallet.availableBalance;
-      const newBal = prevBal - payload.amount;
+      const prevBal = roundYer6(wallet.availableBalance);
+      const newBal = subMoney(prevBal, payload.amount);
 
       const withdrawalId = crypto.randomUUID();
       const user = this.findUserById(payload.userId);
@@ -1008,7 +1016,7 @@ class DatabaseManager {
         transactionType: 'TREASURY_INITIALIZATION',
         referenceId: 'GENESIS_TREASURY_10M',
         idempotencyKey: 'GENESIS_INIT_10M',
-        description: 'تهيئة الخزينة الافتراضية المركزية لمنصة كسب اليمن بمبلغ 10,000,000 وحدة افتراضية',
+        description: 'تهيئة الخزينة الافتراضية المركزية لمنصة كسب اليمن بمبلغ 10,000,000 ر.ي',
         createdBy: AUTHORIZED_OWNER_ID,
         createdAt: now,
       };
@@ -1106,8 +1114,8 @@ class DatabaseManager {
       totalCredit += entry.creditAmount;
     }
 
-    // Strict accounting balance check
-    if (Math.round(totalDebit * 100) !== Math.round(totalCredit * 100)) {
+    // Strict accounting balance check at 6 decimal places
+    if (roundYer6(totalDebit) !== roundYer6(totalCredit)) {
       throw new Error(`خلل محاسبي: إجمالي المدين (${totalDebit}) لا يتطابق مع إجمالي الدائن (${totalCredit}).`);
     }
 
@@ -1168,10 +1176,11 @@ class DatabaseManager {
     return acquireLock(async () => {
       this.ensureTreasuryAndLedgerIntegrity();
       const { senderId, recipientAddress, amount, note, idempotencyKey } = payload;
-      const numAmount = Math.floor(Number(amount));
-      if (isNaN(numAmount) || numAmount <= 0) {
-        throw new Error('يرجى تحديد مبلغ صحيح للتحويل (أكبر من 0).');
-      }
+      const numAmount = parseMoneyStrict(amount, {
+        allowNegative: false,
+        allowZero: false,
+        fieldLabel: 'مبلغ التحويل',
+      });
 
       const senderUser = this.findUserById(senderId);
       if (!senderUser || senderUser.status === 'suspended') {
@@ -1200,14 +1209,14 @@ class DatabaseManager {
       const transferId = crypto.randomUUID();
 
       // Execute atomic balance updates
-      const senderPrevBal = senderWallet.availableBalance;
-      const senderNewBal = senderPrevBal - numAmount;
+      const senderPrevBal = roundYer6(senderWallet.availableBalance);
+      const senderNewBal = subMoney(senderPrevBal, numAmount);
       senderWallet.availableBalance = senderNewBal;
-      senderWallet.totalTransferred = (senderWallet.totalTransferred || 0) + numAmount;
+      senderWallet.totalTransferred = addMoney(senderWallet.totalTransferred || 0, numAmount);
       senderWallet.updatedAt = now;
 
-      const recipientPrevBal = recipientWallet.availableBalance;
-      const recipientNewBal = recipientPrevBal + numAmount;
+      const recipientPrevBal = roundYer6(recipientWallet.availableBalance);
+      const recipientNewBal = addMoney(recipientPrevBal, numAmount);
       recipientWallet.availableBalance = recipientNewBal;
       recipientWallet.updatedAt = now;
 
@@ -1328,7 +1337,7 @@ class DatabaseManager {
       userPendingTotal,
       withdrawalReservedTotal,
       totalIssuedUnits: treasury.totalIssuedUnits,
-      isReconciled: Math.abs(treasury.totalIssuedUnits - reconciledSum) < 1,
+      isReconciled: roundYer6(treasury.totalIssuedUnits) === roundYer6(reconciledSum),
       activeTasksBudgetTotal,
     };
   }
@@ -1347,10 +1356,11 @@ class DatabaseManager {
         throw new Error('غير مصرح: عملية إصدار الوحدات النقدية محصورة فقط بمالك المنصة المعتمد.');
       }
 
-      const numAmount = Math.floor(Number(amount));
-      if (isNaN(numAmount) || numAmount <= 0) {
-        throw new Error('يجب تحديد مبلغ موجب وصحيح للإصدار.');
-      }
+      const numAmount = parseMoneyStrict(amount, {
+        allowNegative: false,
+        allowZero: false,
+        fieldLabel: 'مبلغ الإصدار',
+      });
       if (!reason || !reason.trim()) {
         throw new Error('يرجى كتابة سبب معتمد لعملية إصدار الرصيد للخزينة.');
       }
@@ -1359,15 +1369,15 @@ class DatabaseManager {
       const treasury = this.data.treasury!;
       const key = idempotencyKey || `ISSUANCE_${Date.now()}`;
 
-      treasury.totalIssuedUnits += numAmount;
-      treasury.treasuryAvailable += numAmount;
+      treasury.totalIssuedUnits = addMoney(treasury.totalIssuedUnits, numAmount);
+      treasury.treasuryAvailable = addMoney(treasury.treasuryAvailable, numAmount);
 
       // Double-entry record
       const ledgerTx = this.recordDoubleEntry({
         transactionType: 'TREASURY_ISSUANCE',
         referenceId: `ISSUE_${Date.now()}`,
         idempotencyKey: key,
-        description: `إصدار وحدات نقدية جديدة للخزينة: ${reason.trim()}`,
+        description: `إصدار رصيد نقدي جديد للخزينة: ${reason.trim()}`,
         createdBy: adminId,
         entries: [
           { accountId: 'ISSUED_CAPITAL', debitAmount: numAmount, creditAmount: 0 },
@@ -1380,7 +1390,7 @@ class DatabaseManager {
         'TREASURY_ISSUANCE',
         'TREASURY',
         'TREASURY_AVAILABLE',
-        `إصدار ${numAmount.toLocaleString()} وحدة للخزينة. السبب: ${reason}`
+        `إصدار ${formatYer(numAmount, { withCurrency: true })} للخزينة. السبب: ${reason}`
       );
 
       this.save();
@@ -1395,17 +1405,17 @@ class DatabaseManager {
     this.ensureTreasuryAndLedgerIntegrity();
     const treasury = this.data.treasury!;
     if (treasury.treasuryAvailable < budget) {
-      throw new Error(`رصيد الخزينة المتاح (${treasury.treasuryAvailable.toLocaleString()} وحدة) غير كافٍ لحجز ميزانية المهمة (${budget.toLocaleString()} وحدة).`);
+      throw new Error(`رصيد الخزينة المتاح (${formatYer(treasury.treasuryAvailable, { withCurrency: true })}) غير كافٍ لحجز ميزانية المهمة (${formatYer(budget, { withCurrency: true })}).`);
     }
 
-    treasury.treasuryAvailable -= budget;
-    treasury.taskBudgetReserved += budget;
+    treasury.treasuryAvailable = subMoney(treasury.treasuryAvailable, budget);
+    treasury.taskBudgetReserved = addMoney(treasury.taskBudgetReserved, budget);
 
     const tx = this.recordDoubleEntry({
       transactionType: 'TASK_BUDGET_RESERVATION',
       referenceId: taskId,
       idempotencyKey: `TASK_BUDGET_${taskId}`,
-      description: `حجز ميزانية لمهمة جديدة: "${taskTitle}" (${budget} وحدة)`,
+      description: `حجز ميزانية لمهمة جديدة: "${taskTitle}" (${formatYer(budget, { withCurrency: true })})`,
       createdBy: adminId,
       entries: [
         { accountId: 'TREASURY_AVAILABLE', debitAmount: budget, creditAmount: 0 },

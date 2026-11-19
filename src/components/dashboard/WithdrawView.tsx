@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import type { WithdrawalRequest, PayoutMethod } from '../../types/index.ts';
+import { addMoney, calcPercentageYer, formatYer, roundYer6, subMoney } from '../../../shared/money.ts';
 import {
   Banknote,
   Building2,
@@ -55,12 +56,12 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
   }, [user]);
 
   const activeMethod = methods.find((m) => m.code === selectedMethod) || methods[0];
-  const numAmount = Number(amount) || 0;
+  const numAmount = roundYer6(amount || 0);
   const fee = activeMethod
-    ? Math.round((numAmount * activeMethod.feePercentage) / 100) + activeMethod.feeFlat
+    ? addMoney(calcPercentageYer(numAmount, activeMethod.feePercentage), activeMethod.feeFlat || 0)
     : 0;
-  const netAmount = Math.max(0, numAmount - fee);
-  const availableBal = wallet?.availableBalance || 0;
+  const netAmount = Math.max(0, subMoney(numAmount, fee));
+  const availableBal = roundYer6(wallet?.availableBalance || 0);
   const isBalanceSufficient = availableBal >= numAmount && numAmount > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -73,12 +74,12 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
     }
 
     if (activeMethod && numAmount < activeMethod.minWithdrawal) {
-      setError(`الحد الأدنى للسحب هو ${activeMethod.minWithdrawal.toLocaleString()} ر.ي.`);
+      setError(`الحد الأدنى للسحب هو ${formatYer(activeMethod.minWithdrawal)} ر.ي.`);
       return;
     }
 
     if (activeMethod && numAmount > activeMethod.maxWithdrawal) {
-      setError(`الحد الأقصى للسحب هو ${activeMethod.maxWithdrawal.toLocaleString()} ر.ي.`);
+      setError(`الحد الأقصى للسحب هو ${formatYer(activeMethod.maxWithdrawal)} ر.ي.`);
       return;
     }
 
@@ -95,7 +96,7 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
     const methodLabel = activeMethod?.nameAr || selectedMethod;
     openConfirmModal({
       title: 'تأكيد طلب السحب المالي',
-      message: `هل تريد تأكيد سحب مبلغ ${numAmount.toLocaleString()} ر.ي (الصافي ${netAmount.toLocaleString()} ر.ي) عبر ${methodLabel}؟`,
+      message: `هل تريد تأكيد سحب مبلغ ${formatYer(numAmount)} ر.ي (الصافي ${formatYer(netAmount)} ر.ي) عبر ${methodLabel}؟`,
       confirmLabel: 'تأكيد السحب',
       cancelLabel: 'إلغاء',
       variant: 'primary',
@@ -214,7 +215,7 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
             <div>
               <span className="text-xs text-slate-500 dark:text-slate-400 block">رصيدك المتاح للسحب حالياً:</span>
               <span className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                {availableBal.toLocaleString()} <span className="text-sm font-normal">ر.ي</span>
+                {formatYer(availableBal)} <span className="text-sm font-normal">ر.ي</span>
               </span>
             </div>
             <button
@@ -298,7 +299,7 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
                   required
                   min={activeMethod?.minWithdrawal || 1000}
                   max={activeMethod?.maxWithdrawal || 500000}
-                  step="100"
+                  step="any"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
                   className="w-full pl-12 pr-4 py-2.5 text-base font-bold font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
@@ -314,19 +315,19 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
               <div className="flex items-center justify-between text-slate-500">
                 <span>المبلغ المطلوب:</span>
                 <span className="tabular-nums font-bold text-slate-700 dark:text-slate-300">
-                  {numAmount.toLocaleString()} ر.ي
+                  {formatYer(numAmount)} ر.ي
                 </span>
               </div>
               <div className="flex items-center justify-between text-slate-500">
                 <span>رسوم التحويل وشبكة الصرافة ({activeMethod?.feePercentage}%):</span>
                 <span className="tabular-nums font-medium text-slate-600 dark:text-slate-400">
-                  {fee.toLocaleString()} ر.ي
+                  {formatYer(fee)} ر.ي
                 </span>
               </div>
               <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700/60 flex items-center justify-between text-slate-900 dark:text-white font-bold text-sm">
                 <span>صافي المبلغ المستلم نقداً:</span>
                 <span className="tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {netAmount.toLocaleString()} ر.ي
+                  {formatYer(netAmount)} ر.ي
                 </span>
               </div>
             </div>
@@ -456,9 +457,9 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
                     </div>
 
                     <div className="flex items-center justify-between font-mono tabular-nums text-slate-600 dark:text-slate-300">
-                      <span>المبلغ: {w.amount.toLocaleString()} ر.ي</span>
+                      <span>المبلغ: {formatYer(w.amount)} ر.ي</span>
                       <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                        الصافي: {w.netAmount.toLocaleString()} ر.ي
+                        الصافي: {formatYer(w.netAmount)} ر.ي
                       </span>
                     </div>
 

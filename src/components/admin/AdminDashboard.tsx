@@ -37,6 +37,7 @@ import {
   CampaignInvoiceModal,
   getCampaignStatusLabel,
 } from '../advertiser/CampaignModals.tsx';
+import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.ts';
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
@@ -135,7 +136,7 @@ export const AdminDashboard: React.FC = () => {
     }
     openConfirmModal({
       title: 'اعتماد إثبات المهمة وصرف المكافأة',
-      message: `هل تريد اعتماد إثبات "${sub.taskTitle}" وإيداع ${sub.taskRewardYer?.toLocaleString() || 0} ر.ي في محفظة ${sub.userFullName}؟`,
+      message: `هل تريد اعتماد إثبات "${sub.taskTitle}" وإيداع ${formatYer(sub.taskRewardYer ?? 0)} ر.ي في محفظة ${sub.userFullName}؟`,
       confirmLabel: 'تأكيد الاعتماد',
       cancelLabel: 'إلغاء',
       variant: 'primary',
@@ -196,7 +197,7 @@ export const AdminDashboard: React.FC = () => {
     }
     openConfirmModal({
       title: 'تأكيد إرسال الحوالة المالية',
-      message: `هل تم تحويل مبلغ ${w.netAmount.toLocaleString()} ر.ي للمستفيد ${w.beneficiaryName} برقم مرجع ${transferRef.trim()}؟`,
+      message: `هل تم تحويل مبلغ ${formatYer(w.netAmount)} ر.ي للمستفيد ${w.beneficiaryName} برقم مرجع ${transferRef.trim()}؟`,
       confirmLabel: 'تأكيد الصرف',
       cancelLabel: 'إلغاء',
       variant: 'primary',
@@ -225,7 +226,7 @@ export const AdminDashboard: React.FC = () => {
     }
     openConfirmModal({
       title: 'رفض السحب واسترجاع الرصيد',
-      message: `هل تريد رفض طلب السحب بمبلغ ${w.amount.toLocaleString()} ر.ي وإعادة الرصيد لمحفظة ${w.beneficiaryName}؟`,
+      message: `هل تريد رفض طلب السحب بمبلغ ${formatYer(w.amount)} ر.ي وإعادة الرصيد لمحفظة ${w.beneficiaryName}؟`,
       confirmLabel: 'تأكيد الرفض',
       cancelLabel: 'إلغاء',
       variant: 'danger',
@@ -294,14 +295,14 @@ export const AdminDashboard: React.FC = () => {
       showToast('يرجى إدخال المبلغ وسبب التعديل الإداري.', 'error');
       return;
     }
-    const numAdjust = Number(adjustAmount);
+    const numAdjust = roundYer6(Number(adjustAmount));
     if (!Number.isFinite(numAdjust) || numAdjust === 0) {
       showToast('يرجى إدخال قيمة تسوية صحيحة غير صفرية.', 'error');
       return;
     }
     openConfirmModal({
       title: 'تأكيد تسوية الرصيد المالي',
-      message: `هل أنت متأكد من ${numAdjust > 0 ? 'إضافة' : 'خصم'} ${Math.abs(numAdjust).toLocaleString()} ر.ي لحساب ${adjustingUser.fullName}؟`,
+      message: `هل أنت متأكد من ${numAdjust > 0 ? 'إضافة' : 'خصم'} ${formatYer(Math.abs(numAdjust))} ر.ي لحساب ${adjustingUser.fullName}؟`,
       confirmLabel: 'تأكيد التسوية',
       cancelLabel: 'إلغاء',
       variant: numAdjust < 0 ? 'danger' : 'warning',
@@ -378,7 +379,7 @@ export const AdminDashboard: React.FC = () => {
   const handleStartCampaignAdmin = (camp: CampaignItem) => {
     openConfirmModal({
       title: 'تشغيل الحملة الإعلانية وإثبات الإيراد',
-      message: `سيتم نشر مهام حملة "${camp.title}" وإثبات رسوم المنصة (${camp.feeUnits.toLocaleString()} ر.ي) في حساب إيرادات الإعلانات مرة واحدة فقط. هل تريد المتابعة؟`,
+    message: `سيتم نشر مهام حملة "${camp.title}" وإثبات رسوم المنصة (${formatYer(camp.feeUnits)} ر.ي) في حساب إيرادات الإعلانات مرة واحدة فقط. هل تريد المتابعة؟`,
       confirmLabel: 'بدء الحملة',
       cancelLabel: 'إلغاء',
       variant: 'primary',
@@ -396,15 +397,17 @@ export const AdminDashboard: React.FC = () => {
 
   const handleSettleCampaignAdmin = (camp: CampaignItem, targetStatus: 'cancelled' | 'completed' = 'cancelled') => {
     const isComplete = targetStatus === 'completed';
-    const refundEstimate =
-      (camp.budgetEscrowBalance ?? 0) + (!camp.startedAt ? (camp.feeEscrowBalance ?? 0) : 0);
+    const refundEstimate = addMoney(
+      camp.budgetEscrowBalance ?? 0,
+      !camp.startedAt ? (camp.feeEscrowBalance ?? 0) : 0
+    );
     openConfirmModal({
       title: isComplete ? 'إنهاء وإكمال الحملة الإعلانية' : 'إلغاء وتسوية الحملة الإعلانية',
       message: isComplete
-        ? `سيتم إغلاق حملة "${camp.title}" بحالة (مكتملة)، وإبقاء رسوم المنصة المستحقة (${camp.feeUnits.toLocaleString()} ر.ي)، وإرجاع أي فائض متبقٍ من ميزانية المكافآت (${refundEstimate.toLocaleString()} ر.ي) لمحفظة المعلن "${camp.advertiserName}".`
+        ? `سيتم إغلاق حملة "${camp.title}" بحالة (مكتملة)، وإبقاء رسوم المنصة المستحقة (${formatYer(camp.feeUnits)} ر.ي)، وإرجاع أي فائض متبقٍ من ميزانية المكافآت (${formatYer(refundEstimate)} ر.ي) لمحفظة المعلن "${camp.advertiserName}".`
         : !camp.startedAt
-          ? `الحملة "${camp.title}" لم تبدأ بعد — سيتم إلغاؤها وإرجاع كامل المبلغ المحجوز (${refundEstimate.toLocaleString()} ر.ي شامل الميزانية والرسوم) لمحفظة المعلن "${camp.advertiserName}".`
-          : `الحملة "${camp.title}" بدأت بالفعل — سيتم إلغاؤها والاحتفاظ برسوم المنصة (${camp.feeUnits.toLocaleString()} ر.ي) وإرجاع غير المستخدم من ميزانية المكافآت (${(camp.budgetEscrowBalance ?? 0).toLocaleString()} ر.ي) لمحفظة المعلن.`,
+          ? `الحملة "${camp.title}" لم تبدأ بعد — سيتم إلغاؤها وإرجاع كامل المبلغ المحجوز (${formatYer(refundEstimate)} ر.ي شامل الميزانية والرسوم) لمحفظة المعلن "${camp.advertiserName}".`
+          : `الحملة "${camp.title}" بدأت بالفعل — سيتم إلغاؤها والاحتفاظ برسوم المنصة (${formatYer(camp.feeUnits)} ر.ي) وإرجاع غير المستخدم من ميزانية المكافآت (${formatYer(camp.budgetEscrowBalance ?? 0)} ر.ي) لمحفظة المعلن.`,
       confirmLabel: isComplete ? 'تأكيد الإكمال والتسوية' : 'تأكيد الإلغاء والتسوية',
       cancelLabel: 'تراجع',
       variant: isComplete ? 'primary' : 'danger',
@@ -412,7 +415,7 @@ export const AdminDashboard: React.FC = () => {
         try {
           const res = await api.settleAdminCampaign(camp.id, { targetStatus });
           showToast(
-            `تم ${isComplete ? 'إكمال' : 'إلغاء'} الحملة وإرجاع ${Number(res?.refundedUnits || 0).toLocaleString()} ر.ي لمحفظة المعلن.`,
+            `تم ${isComplete ? 'إكمال' : 'إلغاء'} الحملة وإرجاع ${formatYer(Number(res?.refundedUnits || 0))} ر.ي لمحفظة المعلن.`,
             'success'
           );
           await loadAllAdminData();
@@ -642,7 +645,7 @@ export const AdminDashboard: React.FC = () => {
                           {sub.taskTitle}
                         </td>
                         <td className="py-3 px-4 font-mono font-bold text-emerald-600">
-                          {sub.taskRewardYer?.toLocaleString()} ر.ي
+                          {formatYer(sub.taskRewardYer ?? 0)} ر.ي
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex flex-wrap items-center gap-2">
@@ -763,9 +766,9 @@ export const AdminDashboard: React.FC = () => {
                           {w.beneficiaryName}
                         </td>
                         <td className="py-3 px-4 font-medium">{w.methodNameAr || w.method}</td>
-                        <td className="py-3 px-4 font-mono tabular-nums">{w.amount.toLocaleString()} ر.ي</td>
+                        <td className="py-3 px-4 font-mono tabular-nums">{formatYer(w.amount)} ر.ي</td>
                         <td className="py-3 px-4 font-mono font-bold tabular-nums text-emerald-600">
-                          {w.netAmount.toLocaleString()} ر.ي
+                          {formatYer(w.netAmount)} ر.ي
                         </td>
                         <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
                           <div>هاتف: {w.phoneNumber}</div>
@@ -869,11 +872,11 @@ export const AdminDashboard: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2 text-xs font-mono tabular-nums pt-2 border-t border-slate-100 dark:border-slate-800">
                       <div>
                         <span className="text-[10px] text-slate-400 block font-sans">الميزانية / المنجز</span>
-                        <span>{camp.budgetUnits.toLocaleString()} ر.ي ({camp.approvedCount ?? 0}/{camp.slots})</span>
+                        <span>{formatYer(camp.budgetUnits)} ر.ي ({camp.approvedCount ?? 0}/{camp.slots})</span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block font-sans">رسوم ({camp.feePercentage}%)</span>
-                        <span>{camp.feeUnits.toLocaleString()} ر.ي</span>
+                        <span>{formatYer(camp.feeUnits)} ر.ي</span>
                       </div>
                     </div>
 
@@ -969,16 +972,16 @@ export const AdminDashboard: React.FC = () => {
                             </div>
                           </td>
                           <td className="py-3 px-4 font-mono tabular-nums">
-                            <div>{camp.budgetUnits.toLocaleString()} ر.ي</div>
+                            <div>{formatYer(camp.budgetUnits)} ر.ي</div>
                             <div className="text-[10px] text-slate-400">{camp.approvedCount ?? 0} / {camp.slots} مهمة</div>
                           </td>
                           <td className="py-3 px-4 font-mono tabular-nums">
-                            <div>{camp.feeUnits.toLocaleString()} ر.ي</div>
+                            <div>{formatYer(camp.feeUnits)} ر.ي</div>
                             <div className="text-[10px] text-slate-400">({camp.feePercentage}%)</div>
                           </td>
                           <td className="py-3 px-4 font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
-                            <div>مكافآت: {(camp.budgetEscrowBalance ?? 0).toLocaleString()} ر.ي</div>
-                            <div className="text-[10px] text-amber-600">رسوم معلقة: {(camp.feeEscrowBalance ?? 0).toLocaleString()} ر.ي</div>
+                            <div>مكافآت: {formatYer(camp.budgetEscrowBalance ?? 0)} ر.ي</div>
+                            <div className="text-[10px] text-amber-600">رسوم معلقة: {formatYer(camp.feeEscrowBalance ?? 0)} ر.ي</div>
                           </td>
                           <td className="py-3 px-4">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${statusMeta.cls}`}>
@@ -1132,11 +1135,11 @@ export const AdminDashboard: React.FC = () => {
                   <input
                     type="number"
                     required
-                    min="1"
+                    min="0.000001"
                     step="any"
                     value={newTaskReward}
                     onChange={(e) => setNewTaskReward(e.target.value)}
-                    placeholder="مثال: 10 أو 25 أو 50 أو 100..."
+                    placeholder="مثال: 0.25 أو 10 أو 25 أو 50..."
                     className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
                   />
                   {/* Quick reward presets */}
@@ -1200,7 +1203,7 @@ export const AdminDashboard: React.FC = () => {
               <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs flex items-center justify-between text-emerald-900 dark:text-emerald-200">
                 <span>إجمالي ميزانية المهمة (ستخصم بالكامل من محفظة المدير وتُعلق في حساب المهام الجارية):</span>
                 <span className="font-mono font-extrabold text-sm">
-                  {((Number(newTaskReward) || 0) * (Number(newTaskQty) || 0)).toLocaleString()} ر.ي
+                  {formatYer(mulMoney(Number(newTaskReward) || 0, Number(newTaskQty) || 0))} ر.ي
                 </span>
               </div>
 
@@ -1251,7 +1254,7 @@ export const AdminDashboard: React.FC = () => {
                   {t.locationLabel || t.countryNameAr || 'جميع الدول العربية'}
                 </div>
                 <div className="flex items-center justify-between font-mono text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <span>المكافأة: {t.rewardYer.toLocaleString()} ر.ي</span>
+                  <span>المكافأة: {formatYer(t.rewardYer)} ر.ي</span>
                   <span>المكتمل: {t.completedQuantity} / {t.totalQuantity}</span>
                   <button
                     type="button"
@@ -1334,10 +1337,10 @@ export const AdminDashboard: React.FC = () => {
                       </td>
                       <td className="py-3 px-4 font-mono">{u.phone}</td>
                       <td className="py-3 px-4 font-mono font-bold text-emerald-600 tabular-nums">
-                        {u.wallet?.availableBalance.toLocaleString() || '0'} ر.ي
+                        {formatYer(u.wallet?.availableBalance ?? 0)} ر.ي
                       </td>
                       <td className="py-3 px-4 font-mono text-amber-600 tabular-nums">
-                        {u.wallet?.pendingBalance.toLocaleString() || '0'} ر.ي
+                        {formatYer(u.wallet?.pendingBalance ?? 0)} ر.ي
                       </td>
                       <td className="py-3 px-4 font-mono">{u.completedCount || 0}</td>
                       <td className="py-3 px-4">
@@ -1555,7 +1558,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl text-xs space-y-1 font-mono">
               <div>المستفيد: <strong>{payingWithdrawal.beneficiaryName}</strong></div>
               <div>الهاتف: {payingWithdrawal.phoneNumber}</div>
-              <div>الصافي المطلوب تحويله: <strong className="text-emerald-600">{payingWithdrawal.netAmount.toLocaleString()} ر.ي</strong></div>
+              <div>الصافي المطلوب تحويله: <strong className="text-emerald-600">{formatYer(payingWithdrawal.netAmount)} ر.ي</strong></div>
             </div>
 
             <div>
@@ -1635,9 +1638,10 @@ export const AdminDashboard: React.FC = () => {
               <input
                 type="number"
                 required
+                step="any"
                 value={adjustAmount}
                 onChange={(e) => setAdjustAmount(e.target.value)}
-                placeholder="مثال: 500 أو -500"
+                placeholder="مثال: 500 أو -500 أو 0.5"
                 className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
               />
             </div>

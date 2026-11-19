@@ -14,12 +14,13 @@ import { api } from '../../../api/client.ts';
 import { useAuth } from '../../../context/AuthContext.tsx';
 import type { FinancialAuditLog, LedgerTransaction } from '../../../types/index.ts';
 import { CampaignServiceFeeDetails } from '../../advertiser/CampaignServiceFeeDetails.tsx';
+import { formatYer } from '../../../../shared/money.ts';
 
 interface LedgerAuditViewProps {
   onRefreshAll: () => Promise<void>;
 }
 
-const fmt = (n: number | undefined | null) => Math.round(Number(n || 0)).toLocaleString('en-US');
+const fmt = (n: number | undefined | null) => formatYer(n ?? 0);
 
 export const LedgerAuditView: React.FC<LedgerAuditViewProps> = ({ onRefreshAll }) => {
   const { user, showToast, openConfirmModal } = useAuth();

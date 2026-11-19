@@ -11,6 +11,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import Decimal from 'decimal.js';
+import {
+  addMoney,
+  calcWalletTransferBreakdown,
+  calculateCampaignFeePolicyCosts,
+  calculateClixWallRevenueSplit,
+  formatYer,
+  parseMoneyStrict,
+  roundYer6,
+} from '../shared/money.js';
 import app, { supabaseServer } from './app.js';
 import {
   buildDoubleEntryForOperation,
@@ -103,30 +113,34 @@ class LedgerConsistencyVerifier {
       return { txId: existing.id, idempotent: true };
     }
 
-    let debits = 0;
-    let credits = 0;
+    let debits = new Decimal(0);
+    let credits = new Decimal(0);
     for (const e of entries) {
-      assert.ok(Number.isInteger(e.amount_units) && e.amount_units > 0, 'Amount must be positive integer');
-      if (e.side === 'debit') debits += e.amount_units;
-      else credits += e.amount_units;
+      const amtDec = new Decimal(String(e.amount_units));
+      assert.ok(amtDec.isFinite() && amtDec.gt(0), 'Amount must be positive > 0');
+      assert.ok(amtDec.equals(amtDec.toDecimalPlaces(6, Decimal.ROUND_HALF_UP)), 'Max 6 decimal places allowed');
+      if (e.side === 'debit') debits = debits.plus(amtDec);
+      else credits = credits.plus(amtDec);
     }
-    assert.strictEqual(debits, credits, `Unbalanced ledger entry for ${type}: ${debits} != ${credits}`);
+    assert.ok(debits.equals(credits), `Unbalanced ledger entry for ${type}: ${debits.toFixed(6)} != ${credits.toFixed(6)}`);
 
     // Validate non-negative balances before mutating (atomic rollback simulation)
-    const pendingDeltas = new Map<string, number>();
+    const pendingDeltas = new Map<string, Decimal>();
     for (const e of entries) {
       const acc = this.accountsById.get(e.account_id);
       assert.ok(acc, `Missing account ${e.account_id}`);
-      const delta = acc.normalSide === e.side ? e.amount_units : -e.amount_units;
-      pendingDeltas.set(acc.id, (pendingDeltas.get(acc.id) || 0) + delta);
+      const amtDec = new Decimal(String(e.amount_units));
+      const delta = acc.normalSide === e.side ? amtDec : amtDec.neg();
+      pendingDeltas.set(acc.id, (pendingDeltas.get(acc.id) || new Decimal(0)).plus(delta));
     }
     for (const [accId, delta] of pendingDeltas.entries()) {
       const acc = this.accountsById.get(accId)!;
-      assert.ok(acc.balance + delta >= 0, `Negative balance prevented on ${acc.code}`);
+      assert.ok(new Decimal(String(acc.balance)).plus(delta).gte(0), `Negative balance prevented on ${acc.code}`);
     }
 
     for (const [accId, delta] of pendingDeltas.entries()) {
-      this.accountsById.get(accId)!.balance += delta;
+      const acc = this.accountsById.get(accId)!;
+      acc.balance = new Decimal(String(acc.balance)).plus(delta).toDecimalPlaces(6, Decimal.ROUND_HALF_UP).toNumber();
     }
 
     const txId = crypto.randomUUID();
@@ -134,7 +148,7 @@ class LedgerConsistencyVerifier {
     this.txByIdempotencyKey.set(idempotencyKey, record);
     this.txById.set(txId, record);
     for (const e of entries) {
-      this.allEntries.push({ txId, accountId: e.account_id, side: e.side, amount: e.amount_units });
+      this.allEntries.push({ txId, accountId: e.account_id, side: e.side, amount: roundYer6(e.amount_units) });
     }
     return { txId, idempotent: false };
   }
@@ -152,30 +166,31 @@ class LedgerConsistencyVerifier {
   }
 
   bal(code: string): number {
-    return this.accountsByCode.get(code)?.balance || 0;
+    return roundYer6(this.accountsByCode.get(code)?.balance || 0);
   }
 
   assertReconciled(extraEscrowCodes: string[] = [], extraWalletCodes: string[] = [], withdrawalFeeRevenue = 0) {
-    const totalDebits = this.allEntries.filter((e) => e.side === 'debit').reduce((s, e) => s + e.amount, 0);
-    const totalCredits = this.allEntries.filter((e) => e.side === 'credit').reduce((s, e) => s + e.amount, 0);
-    assert.strictEqual(totalDebits, totalCredits, 'Global ledger debits must equal global ledger credits');
+    let totalDebits = new Decimal(0);
+    let totalCredits = new Decimal(0);
+    for (const e of this.allEntries) {
+      if (e.side === 'debit') totalDebits = totalDebits.plus(String(e.amount));
+      else totalCredits = totalCredits.plus(String(e.amount));
+    }
+    assert.ok(totalDebits.equals(totalCredits), `Global ledger debits (${totalDebits.toFixed(6)}) must equal credits (${totalCredits.toFixed(6)})`);
 
-    const totalIssued = this.bal('VIRTUAL-ISSUANCE-CONTROL');
-    const escrowSum = extraEscrowCodes.reduce((s, c) => s + this.bal(c), 0);
-    const walletSum = extraWalletCodes.reduce((s, c) => s + this.bal(c), 0);
-    const supplySum =
-      this.bal('PLATFORM-TREASURY') +
-      escrowSum +
-      walletSum +
-      this.bal('WITHDRAWAL-RESERVED') +
-      this.bal('WITHDRAWAL-SETTLED') +
-      this.bal('PLATFORM-REVENUE-TASKS') +
-      withdrawalFeeRevenue;
+    const totalIssued = new Decimal(String(this.bal('VIRTUAL-ISSUANCE-CONTROL')));
+    let supplySum = new Decimal(String(this.bal('PLATFORM-TREASURY')))
+      .plus(String(this.bal('WITHDRAWAL-RESERVED')))
+      .plus(String(this.bal('WITHDRAWAL-SETTLED')))
+      .plus(String(this.bal('PLATFORM-REVENUE-TASKS')))
+      .plus(String(withdrawalFeeRevenue));
 
-    assert.strictEqual(
-      supplySum,
-      totalIssued,
-      `Closed-loop reconciliation mismatch: supply(${supplySum}) !== issued(${totalIssued})`
+    for (const c of extraEscrowCodes) supplySum = supplySum.plus(String(this.bal(c)));
+    for (const c of extraWalletCodes) supplySum = supplySum.plus(String(this.bal(c)));
+
+    assert.ok(
+      supplySum.equals(totalIssued),
+      `Closed-loop reconciliation mismatch: supply(${supplySum.toFixed(6)}) !== issued(${totalIssued.toFixed(6)})`
     );
   }
 }
@@ -1842,6 +1857,159 @@ async function runPhase6SecurityAndIntegrationTests() {
   console.log('  - Verified all 17 Phase 6 financial & security scenarios, Express 403 RBAC guards, SQL RLS/RPC permissions & AuthModal/App role routing.');
 }
 
+function runDirectYerUnificationAndMigration032Tests() {
+  console.log('\n[13/13] Direct YER Unification (Zero Micro-Unit Scaling, 6-Decimal Precision & Migration 032 Audit)...');
+
+  // Scenario 9: Exact 6-decimal formatting, parsing, and ultra-micro ClixWall USD split
+  assert.strictEqual(formatYer(25), '25');
+  assert.strictEqual(formatYer(0.224), '0.224');
+  assert.strictEqual(formatYer(0.096), '0.096');
+  assert.strictEqual(formatYer(14.448), '14.448');
+  assert.strictEqual(formatYer(0.000001), '0.000001');
+  assert.strictEqual(formatYer(10000), '10,000');
+  assert.strictEqual(parseMoneyStrict('0.000001'), 0.000001);
+  assert.throws(() => parseMoneyStrict('0.0000001'), /6 منازل عشرية/);
+
+  const clixTiny = calculateClixWallRevenueSplit({ totalUsd: '0.000001' });
+  assert.strictEqual(clixTiny.totalYer, 0.0016);
+  assert.strictEqual(clixTiny.userYer, 0.00112);
+  assert.strictEqual(clixTiny.publisherYer, 0.00048);
+  assert.strictEqual(addMoney(clixTiny.userYer, clixTiny.publisherYer), clixTiny.totalYer);
+
+  // Scenario 2: ClixWall $0.00020 offer -> 0.320 YER total = 0.224 YER user (70%) + 0.096 YER publisher (30%)
+  const clixOffer = calculateClixWallRevenueSplit({ totalUsd: '0.00020' });
+  assert.strictEqual(clixOffer.totalYer, 0.32);
+  assert.strictEqual(clixOffer.userYer, 0.224);
+  assert.strictEqual(clixOffer.publisherYer, 0.096);
+
+  // Scenario 3: 15 YER P2P transfer -> exact 3% = 0.45 fee + 14.55 net (no 1-YER floor)
+  const trf15 = calcWalletTransferBreakdown(15);
+  assert.strictEqual(trf15.amount, 15);
+  assert.strictEqual(trf15.fee, 0.45);
+  assert.strictEqual(trf15.net, 14.55);
+
+  // Closed-loop simulation of direct-YER Scenarios 1, 2, 3, 4, 5, 6, 10
+  const v = new LedgerConsistencyVerifier();
+  const ids = v.accountIdsMap();
+  const clixRecv = v.createAccount('CLIXWALL-RECEIVABLE', 'asset', 'debit');
+  const clixPubRev = v.createAccount('PLATFORM-REVENUE-CLIXWALL', 'revenue', 'credit');
+  const extKuraimi = v.createAccount('EXT-KURAIMI-YER', 'asset', 'debit');
+  const taskEscrow = v.createAccount('TASK-ESCROW-25', 'escrow', 'credit');
+  const workerWallet = v.createAccount('WALLET-WORKER-YER', 'wallet', 'credit');
+  const friendWallet = v.createAccount('WALLET-FRIEND-YER', 'wallet', 'credit');
+  const advWallet = v.createAccount('WALLET-ADV-YER', 'wallet', 'credit');
+  const campBudget = v.createAccount('CAMP-BUDGET-50', 'escrow', 'credit');
+  const campFee = v.createAccount('CAMP-FEE-10', 'escrow', 'credit');
+
+  // Seed 100 YER treasury
+  v.post('TREASURY_ISSUANCE', 'YER-INIT', [
+    { account_id: ids['VIRTUAL-ISSUANCE-CONTROL'], side: 'debit', amount_units: 100, memo: 'Treasury issuance' },
+    { account_id: ids['PLATFORM-TREASURY'], side: 'credit', amount_units: 100, memo: 'Treasury balance' },
+  ]);
+
+  // Scenario 1: Task reward 25 YER directly (never 25,000,000)
+  v.post('task_budget_reservation', 'YER-FUND-25', [
+    { account_id: ids['PLATFORM-TREASURY'], side: 'debit', amount_units: 25, memo: 'Reserve 25 YER' },
+    { account_id: taskEscrow.id, side: 'credit', amount_units: 25, memo: 'Escrow 25 YER' },
+  ]);
+  v.post('TASK_REWARD_PAYOUT', 'YER-PAY-25', [
+    { account_id: taskEscrow.id, side: 'debit', amount_units: 25, memo: 'Task payout 25 YER' },
+    { account_id: workerWallet.id, side: 'credit', amount_units: 25, memo: 'Worker earned 25 YER' },
+  ]);
+  assert.strictEqual(v.bal(workerWallet.code), 25);
+
+  // Scenario 2: ClixWall $0.00020 -> 0.224 user + 0.096 PLATFORM-REVENUE-CLIXWALL
+  v.post('CLIXWALL_REWARD', 'YER-CLIX-1', [
+    { account_id: clixRecv.id, side: 'debit', amount_units: clixOffer.totalYer, memo: 'ClixWall receivable 0.32 YER' },
+    { account_id: workerWallet.id, side: 'credit', amount_units: clixOffer.userYer, memo: 'ClixWall 70% user 0.224 YER' },
+    { account_id: clixPubRev.id, side: 'credit', amount_units: clixOffer.publisherYer, memo: 'ClixWall 30% publisher 0.096 YER' },
+  ]);
+  assert.strictEqual(v.bal(workerWallet.code), 25.224);
+  assert.strictEqual(v.bal(clixPubRev.code), 0.096);
+  assert.strictEqual(v.bal(clixRecv.code), 0.32);
+
+  // Scenario 3: 15 YER transfer -> 0.45 fee + 14.55 net
+  v.post('WALLET_TRANSFER', 'YER-TRF-15', [
+    { account_id: workerWallet.id, side: 'debit', amount_units: trf15.amount, memo: 'Transfer 15 YER' },
+    { account_id: friendWallet.id, side: 'credit', amount_units: trf15.net, memo: 'Net 14.55 YER' },
+    { account_id: ids['PLATFORM-REVENUE-SERVICES'], side: 'credit', amount_units: trf15.fee, memo: '3% fee 0.45 YER' },
+  ]);
+  assert.strictEqual(v.bal(workerWallet.code), 10.224);
+  assert.strictEqual(v.bal(friendWallet.code), 14.55);
+
+  // Scenario 4: 10.224 YER withdrawal (fractional direct YER reserve & settle)
+  v.post('WITHDRAWAL_REQUEST', 'YER-WD-RES', [
+    { account_id: workerWallet.id, side: 'debit', amount_units: 10.224, memo: 'Reserve 10.224 YER withdrawal' },
+    { account_id: ids['WITHDRAWAL-RESERVED'], side: 'credit', amount_units: 10.224, memo: 'Hold 10.224 YER' },
+  ]);
+  v.post('WITHDRAWAL_PAYOUT', 'YER-WD-PAY', [
+    { account_id: ids['WITHDRAWAL-RESERVED'], side: 'debit', amount_units: 10.224, memo: 'Settle withdrawal' },
+    { account_id: ids['WITHDRAWAL-SETTLED'], side: 'credit', amount_units: 10.224, memo: 'Paid 10.224 YER' },
+  ]);
+  assert.strictEqual(v.bal(workerWallet.code), 0);
+
+  // Scenario 5: 100 YER advertiser external deposit
+  v.post(
+    'EXTERNAL_ADVERTISER_DEPOSIT',
+    'YER-DEP-100',
+    buildExternalDepositApprovalEntries({
+      externalFinAccountId: extKuraimi.id,
+      targetFinAccountId: advWallet.id,
+      amountUnits: 100,
+      externalAccountName: 'الكريمي',
+      referenceNumber: 'YER-DEP-REF-100',
+      depositPurpose: 'advertiser_wallet',
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 100);
+  assert.strictEqual(v.bal(extKuraimi.code), 100);
+
+  // Scenario 6: 50 YER campaign reserve + 20% fee (10 YER)
+  const campCost = calculateCampaignFeePolicyCosts({ rewardUnits: 5, slots: 10, fallbackFeePercentage: 20 });
+  assert.strictEqual(campCost.budgetUnits, 50);
+  assert.strictEqual(campCost.feeUnits, 10);
+  assert.strictEqual(campCost.totalUnits, 60);
+
+  v.post(
+    'CAMPAIGN_FUNDING_RESERVE',
+    'YER-CAMP-RES-50',
+    buildCampaignReserveEntries({
+      title: 'حملة 50 ريال',
+      walletAccountId: advWallet.id,
+      budgetEscrowAccountId: campBudget.id,
+      feeEscrowAccountId: campFee.id,
+      budgetUnits: campCost.budgetUnits,
+      feeUnits: campCost.feeUnits,
+      feePercentage: 20,
+    })
+  );
+  assert.strictEqual(v.bal(advWallet.code), 40);
+  assert.strictEqual(v.bal(campBudget.code), 50);
+  assert.strictEqual(v.bal(campFee.code), 10);
+
+  // Scenario 10: Verify Migration 032 SQL invariants & global trial balance
+  let totalDebits = new Decimal(0);
+  let totalCredits = new Decimal(0);
+  for (const e of v.allEntries) {
+    if (e.side === 'debit') totalDebits = totalDebits.plus(String(e.amount));
+    else totalCredits = totalCredits.plus(String(e.amount));
+  }
+  assert.ok(totalDebits.equals(totalCredits), `Trial balance must match: ${totalDebits.toFixed(6)} != ${totalCredits.toFixed(6)}`);
+
+  const sql032 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/032_unify_yer_currency_and_historical_clixwall_reconciliation.sql'),
+    'utf8'
+  );
+  assert.ok(sql032.includes('PLATFORM-REVENUE-CLIXWALL'), 'Migration 032 must seed PLATFORM-REVENUE-CLIXWALL');
+  assert.ok(sql032.includes('financial_migration_032_backup'), 'Migration 032 must snapshot backup table');
+  assert.ok(sql032.includes('ROLLBACK SQL'), 'Migration 032 must document rollback SQL');
+  assert.ok(sql032.includes('14.448000') && sql032.includes('0.640000') && sql032.includes('0.192000'), 'Migration 032 must reconcile exact ClixWall historical balances');
+  assert.ok(sql032.includes('REVOKE ALL ON FUNCTION public.process_clixwall_postback') && sql032.includes('TO service_role'), 'Migration 032 must restrict process_clixwall_postback strictly to service_role');
+  assert.ok(!sql032.includes('1000000'), 'Migration 032 must not contain * 1000000 scaling');
+
+  console.log('  - All direct-YER scenarios (25 YER task, 0.224/0.096 ClixWall, 15 YER 3% transfer, 100 YER deposit, 50+10 YER campaign, 0.000001 precision) & Migration 032 audit passed.');
+}
+
 async function main() {
   console.log('=== YEMEN MICRO-TASKS FINANCIAL & REFERRAL VERIFICATION SUITE ===');
   await runLiveReadOnlyProbe();
@@ -1856,7 +2024,8 @@ async function main() {
   runPhase4AdvertiserIdentityAndUiTests();
   runPhase5ExternalAccountsAndSegregationTests();
   await runPhase6SecurityAndIntegrationTests();
-  console.log('\n=== VERIFICATION COMPLETED SUCCESSFULLY (ALL 12 SUITES PASSED) ===');
+  runDirectYerUnificationAndMigration032Tests();
+  console.log('\n=== VERIFICATION COMPLETED SUCCESSFULLY (ALL 13 SUITES PASSED) ===');
 }
 
 main().catch((err) => {

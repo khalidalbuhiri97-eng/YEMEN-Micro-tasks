@@ -12,13 +12,14 @@ import { api } from '../../../api/client.ts';
 import { useAuth } from '../../../context/AuthContext.tsx';
 import { fetchGeoCountries } from '../../../services/geoService.ts';
 import type { CountryItem, TaxDefinition, TaxSettlement, TreasurySummary } from '../../../types/index.ts';
+import { addMoney, calcPercentageYer, formatYer, parseMoneyStrict } from '../../../../shared/money.ts';
 
 interface TaxManagementViewProps {
   treasury: TreasurySummary | null;
   onRefreshAll: () => Promise<void>;
 }
 
-const fmt = (n: number | undefined | null) => Math.round(Number(n || 0)).toLocaleString('en-US');
+const fmt = (n: number | undefined | null) => formatYer(n ?? 0);
 
 export const TaxManagementView: React.FC<TaxManagementViewProps> = ({ treasury, onRefreshAll }) => {
   const { user, showToast, openConfirmModal } = useAuth();
@@ -185,12 +186,18 @@ export const TaxManagementView: React.FC<TaxManagementViewProps> = ({ treasury, 
       showToast('يرجى اختيار قاعدة ضريبية مفعلة.', 'error');
       return;
     }
-    const baseAmt = Math.round(Number(taxableAmount));
-    if (!Number.isFinite(baseAmt) || baseAmt <= 0) {
-      showToast('يرجى إدخال قيمة الوعاء الضريبي الخاضع للحساب.', 'error');
+    let baseAmt: number;
+    try {
+      baseAmt = parseMoneyStrict(taxableAmount, {
+        allowNegative: false,
+        allowZero: false,
+        fieldLabel: 'الوعاء الضريبي',
+      });
+    } catch (err: any) {
+      showToast(err.message || 'يرجى إدخال قيمة الوعاء الضريبي الخاضع للحساب.', 'error');
       return;
     }
-    const expectedTax = Math.round((baseAmt * def.ratePercentage) / 100) + def.flatAmount;
+    const expectedTax = addMoney(calcPercentageYer(baseAmt, def.ratePercentage), def.flatAmount);
 
     openConfirmModal({
       title: 'تأكيد إثبات استحقاق ضريبي في الدفتر',

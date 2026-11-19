@@ -1,19 +1,26 @@
+import Decimal from 'decimal.js';
+
 /**
- * Kasb Yemen - Deterministic 6-Decimal Fixed-Point Monetary Engine (BigInt Micro-Units)
- * Scale: 1 YER = 1,000,000 micro-units (NUMERIC(30,6))
- * Zero floating-point drift, zero Math.round/Math.ceil/Math.floor on money.
+ * Kasb Yemen (كسب اليمن) - Exact Decimal Yemeni Rial (YER) Monetary Engine
+ * Currency Base: 1 YER stored, calculated, and displayed directly (NUMERIC(30,6))
+ * Precision: Up to 6 decimal places (0.000001 YER), zero floating-point drift, zero micro-unit scaling.
  */
 
+Decimal.set({
+  precision: 36,
+  rounding: Decimal.ROUND_HALF_UP,
+});
+
 export const MONEY_DECIMALS = 6;
-export const MONEY_SCALE = 1_000_000n;
+export const USD_TO_YER_RATE = 1600;
 
 export type ParsedMoney = {
-  micros: bigint;
+  decimal: Decimal;
   numericString: string;
   numberValue: number;
   valueOf(): number;
   [Symbol.toPrimitive](hint: string): number;
-} & number;
+};
 
 export interface CampaignFeePolicy {
   defaultPercentage: number;
@@ -29,11 +36,41 @@ export const DEFAULT_CAMPAIGN_FEE_POLICY: CampaignFeePolicy = {
 };
 
 /**
- * Normalizes a numeric/string input into a clean decimal string and validates
- * against invalid syntax, NaN, Infinity, negative values (unless allowed),
- * and fractional precision > 6 digits.
+ * Safely converts an unknown numeric/string/Decimal input into a finite Decimal.
+ * Returns Decimal(0) for empty/null/invalid read inputs (for display/aggregation).
  */
-export function parseMoneyStrict(
+export function toYerDecimal(
+  input: number | string | bigint | Decimal | undefined | null
+): Decimal {
+  if (input === null || input === undefined || input === '') {
+    return new Decimal(0);
+  }
+  if (input instanceof Decimal) {
+    return input.isFinite() ? input : new Decimal(0);
+  }
+  if (typeof input === 'bigint') {
+    return new Decimal(input.toString());
+  }
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input)) return new Decimal(0);
+    // String(input) in JS is exact for standard decimal literals without float noise when rounded cleanly
+    return new Decimal(String(input));
+  }
+  const cleaned = String(input).trim().replace(/,/g, '');
+  if (!cleaned) return new Decimal(0);
+  try {
+    const d = new Decimal(cleaned);
+    return d.isFinite() ? d : new Decimal(0);
+  } catch {
+    return new Decimal(0);
+  }
+}
+
+/**
+ * Strictly parses and validates a user/API monetary value in YER (max 6 decimal places),
+ * returning a rich ParsedMoney object with Decimal, fixed numericString, and numberValue.
+ */
+export function parseMoneyDecimal(
   input: unknown,
   options: {
     allowNegative?: boolean;
@@ -54,14 +91,16 @@ export function parseMoneyStrict(
   }
 
   let raw = '';
-  if (typeof input === 'bigint') {
+  if (input instanceof Decimal) {
+    if (!input.isFinite()) throw new Error(`${fieldLabel} غير صالح.`);
+    raw = input.toFixed();
+  } else if (typeof input === 'bigint') {
     raw = input.toString();
   } else if (typeof input === 'number') {
     if (!Number.isFinite(input)) {
       throw new Error(`${fieldLabel} غير صالح.`);
     }
-    // Avoid binary float noise like 0.1 + 0.2 = 0.30000000000000004 while preserving real up-to-6dp decimals
-    raw = Number.isInteger(input) ? String(input) : input.toFixed(10).replace(/\.?0+$/, '');
+    raw = String(input);
   } else {
     raw = String(input).trim().replace(/,/g, '');
   }
@@ -70,182 +109,170 @@ export function parseMoneyStrict(
     throw new Error(`${fieldLabel} مطلوب.`);
   }
 
-  // Handle scientific notation if somehow passed cleanly (e.g. 1e-6)
-  if (/^[+-]?\d+(?:\.\d+)?[eE][+-]?\d+$/.test(raw)) {
-    const asNum = Number(raw);
-    if (!Number.isFinite(asNum)) {
-      throw new Error(`${fieldLabel} غير صالح.`);
-    }
-    raw = asNum.toFixed(10).replace(/\.?0+$/, '');
-  }
-
-  const match = raw.match(/^([+-])?(\d+)(?:\.(\d+))?$/);
-  if (!match) {
+  let dec: Decimal;
+  try {
+    dec = new Decimal(raw);
+  } catch {
     throw new Error(`صيغة ${fieldLabel} غير صالحة.`);
   }
 
-  const sign = match[1] === '-' ? -1n : 1n;
-  const intPartStr = match[2];
-  const fracRaw = match[3] || '';
-  const fracTrimmed = fracRaw.replace(/0+$/, '');
+  if (!dec.isFinite()) {
+    throw new Error(`${fieldLabel} غير صالح.`);
+  }
 
-  if (fracTrimmed.length > maxDecimals) {
+  // Normalize without trailing fractional zeros to verify max decimal precision
+  const fixedCheck = dec.toDecimalPlaces(maxDecimals, Decimal.ROUND_HALF_UP);
+  if (!dec.equals(fixedCheck)) {
     throw new Error(`${fieldLabel} يقبل بحد أقصى ${maxDecimals} منازل عشرية.`);
   }
 
-  const fracPadded = fracTrimmed.padEnd(MONEY_DECIMALS, '0');
-  const absMicros = BigInt(intPartStr) * MONEY_SCALE + BigInt(fracPadded || '0');
-  const micros = sign * absMicros;
-
-  if (!allowNegative && micros < 0n) {
+  if (!allowNegative && dec.isNegative()) {
     throw new Error(`${fieldLabel} لا يمكن أن يكون سالباً.`);
   }
-  if (!allowZero && micros === 0n) {
+  if (!allowZero && dec.isZero()) {
     throw new Error(`${fieldLabel} يجب أن يكون أكبر من صفر.`);
   }
 
-  const numericString = fromMicrosFixed(micros);
-  const numberValue = Number(fromMicros(micros));
+  const rounded = dec.toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  const numericString = rounded.toFixed(MONEY_DECIMALS);
+  const numberValue = rounded.toNumber();
+
   return {
-    micros,
+    decimal: rounded,
     numericString,
     numberValue,
-    valueOf() { return numberValue; },
-    [Symbol.toPrimitive]() { return numberValue; },
-  } as unknown as ParsedMoney;
+    valueOf() {
+      return numberValue;
+    },
+    [Symbol.toPrimitive]() {
+      return numberValue;
+    },
+  };
 }
 
 /**
- * Permissive conversion for existing DB read values -> exact BigInt micro-units.
+ * Strictly parses and validates a user/API monetary value in YER (max 6 decimal places),
+ * returning a validated 6-decimal number.
  */
-export function toMicros(input: string | number | bigint | undefined | null): bigint {
-  if (input === null || input === undefined || input === '') return 0n;
-  if (typeof input === 'bigint') return input * MONEY_SCALE;
-  if (typeof input === 'number') {
-    if (!Number.isFinite(input)) return 0n;
-    const str = Number.isInteger(input) ? String(input) : input.toFixed(MONEY_DECIMALS);
-    return toMicrosFromCleanString(str);
+export function parseMoneyStrict(
+  input: unknown,
+  options: {
+    allowNegative?: boolean;
+    allowZero?: boolean;
+    fieldLabel?: string;
+    maxDecimals?: number;
+  } = {}
+): number {
+  return parseMoneyDecimal(input, options).numberValue;
+}
+
+export function roundYer6(val: number | string | bigint | Decimal | undefined | null): number {
+  return toYerDecimal(val).toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP).toNumber();
+}
+
+export function formatYerFixed(
+  val: number | string | bigint | Decimal | undefined | null,
+  decimals = MONEY_DECIMALS
+): string {
+  return toYerDecimal(val).toDecimalPlaces(decimals, Decimal.ROUND_HALF_UP).toFixed(decimals);
+}
+
+export function addMoney(
+  a: number | string | bigint | Decimal | undefined | null,
+  b: number | string | bigint | Decimal | undefined | null
+): number {
+  return toYerDecimal(a)
+    .plus(toYerDecimal(b))
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP)
+    .toNumber();
+}
+
+export function subMoney(
+  a: number | string | bigint | Decimal | undefined | null,
+  b: number | string | bigint | Decimal | undefined | null
+): number {
+  return toYerDecimal(a)
+    .minus(toYerDecimal(b))
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP)
+    .toNumber();
+}
+
+export function mulMoney(
+  a: number | string | bigint | Decimal | undefined | null,
+  b: number | string | bigint | Decimal | undefined | null
+): number {
+  return toYerDecimal(a)
+    .times(toYerDecimal(b))
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP)
+    .toNumber();
+}
+
+export function sumMoney(
+  values: Array<number | string | bigint | Decimal | undefined | null>
+): number {
+  let acc = new Decimal(0);
+  for (const v of values) {
+    acc = acc.plus(toYerDecimal(v));
   }
-  const str = String(input).trim().replace(/,/g, '');
-  if (!str) return 0n;
-  if (/^[+-]?\d+(?:\.\d+)?[eE][+-]?\d+$/.test(str)) {
-    const asNum = Number(str);
-    return Number.isFinite(asNum) ? toMicros(asNum) : 0n;
-  }
-  return toMicrosFromCleanString(str);
-}
-
-function toMicrosFromCleanString(str: string): bigint {
-  const match = str.match(/^([+-])?(\d+)(?:\.(\d+))?$/);
-  if (!match) return 0n;
-  const sign = match[1] === '-' ? -1n : 1n;
-  const intPart = BigInt(match[2]);
-  const fracDigits = (match[3] || '').slice(0, MONEY_DECIMALS).padEnd(MONEY_DECIMALS, '0');
-  // Half-up round if string came from >6 digits
-  let absMicros = intPart * MONEY_SCALE + BigInt(fracDigits || '0');
-  if ((match[3] || '').length > MONEY_DECIMALS && Number((match[3] || '')[MONEY_DECIMALS]) >= 5) {
-    absMicros += 1n;
-  }
-  return sign * absMicros;
-}
-
-/**
- * Always emits exact 6 fractional digits e.g. "15.000000" or "0.450000" for SQL NUMERIC(30,6).
- */
-export function fromMicrosFixed(micros: bigint): string {
-  const neg = micros < 0n;
-  const abs = neg ? -micros : micros;
-  const intPart = abs / MONEY_SCALE;
-  const fracPart = (abs % MONEY_SCALE).toString().padStart(MONEY_DECIMALS, '0');
-  return `${neg ? '-' : ''}${intPart.toString()}.${fracPart}`;
-}
-
-/**
- * Formats micro-units trimming trailing zeros cleanly:
- * 15000000n -> "15", 450000n -> "0.45", 300n -> "0.0003"
- */
-export function fromMicros(micros: bigint): string {
-  const neg = micros < 0n;
-  const abs = neg ? -micros : micros;
-  const intPart = abs / MONEY_SCALE;
-  const fracRaw = (abs % MONEY_SCALE).toString().padStart(MONEY_DECIMALS, '0').replace(/0+$/, '');
-  const base = fracRaw.length > 0 ? `${intPart.toString()}.${fracRaw}` : intPart.toString();
-  return neg && abs > 0n ? `-${base}` : base;
-}
-
-export function microsToNumber(micros: bigint): number {
-  return Number(fromMicros(micros));
-}
-
-export function addMoney(a: number | string | bigint | undefined | null, b: number | string | bigint | undefined | null): number {
-  return microsToNumber(toMicros(a) + toMicros(b));
-}
-
-export function subMoney(a: number | string | bigint | undefined | null, b: number | string | bigint | undefined | null): number {
-  return microsToNumber(toMicros(a) - toMicros(b));
-}
-
-export function sumMoney(values: Array<number | string | bigint | undefined | null>): number {
-  let acc = 0n;
-  for (const v of values) acc += toMicros(v);
-  return microsToNumber(acc);
-}
-
-/**
- * Exact half-up BigInt division: round(numerator / denominator)
- */
-export function roundHalfUpMicros(numerator: bigint, denominator: bigint): bigint {
-  if (denominator === 0n) throw new Error('Division by zero in monetary calculation.');
-  const neg = (numerator < 0n) !== (denominator < 0n);
-  const absNum = numerator < 0n ? -numerator : numerator;
-  const absDen = denominator < 0n ? -denominator : denominator;
-  const q = absNum / absDen;
-  const r = absNum % absDen;
-  const rounded = r * 2n >= absDen ? q + 1n : q;
-  return neg && rounded > 0n ? -rounded : rounded;
+  return acc.toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP).toNumber();
 }
 
 /**
  * Exact 6-decimal percentage computation: ROUND(amount * percentage / 100, 6)
  */
-export function calcPercentageMicros(amountMicros: bigint, percentage: number | string): bigint {
-  const pctParsed = parseMoneyStrict(percentage, {
-    allowNegative: false,
-    allowZero: true,
-    fieldLabel: 'النسبة المئوية',
-  });
-  return roundHalfUpMicros(amountMicros * pctParsed.micros, 100n * MONEY_SCALE);
+export function calcPercentageYer(
+  amountInput: number | string | bigint | Decimal | undefined | null,
+  percentageInput: number | string | Decimal
+): number {
+  const amt = toYerDecimal(amountInput);
+  const pct = toYerDecimal(percentageInput);
+  return amt
+    .times(pct)
+    .div(100)
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP)
+    .toNumber();
 }
 
 /**
- * Wallet P2P Transfer breakdown:
- * Exact 3% fee = ROUND(amount * 0.03, 6) with NO minimum 1-unit floor.
+ * Wallet P2P Transfer breakdown in direct YER:
+ * Exact 3% fee = ROUND(amount * 0.03, 6) with NO minimum 1-YER floor.
  * Examples:
- * - 15 -> fee 0.45, net 14.55
- * - 0.01 -> fee 0.0003, net 0.0097
+ * - 15 YER -> fee 0.45 YER, net 14.55 YER
+ * - 0.01 YER -> fee 0.0003 YER, net 0.0097 YER
  */
 export function calcWalletTransferBreakdown(amountInput: unknown): {
   amount: number;
-  amountMicros: bigint;
   fee: number;
-  feeMicros: bigint;
   net: number;
-  netMicros: bigint;
+  amountDecimal: Decimal;
+  feeDecimal: Decimal;
+  netDecimal: Decimal;
+  amountFixed: string;
+  feeFixed: string;
+  netFixed: string;
 } {
-  const parsed = parseMoneyStrict(amountInput, {
+  const parsed = parseMoneyDecimal(amountInput, {
     allowNegative: false,
     allowZero: false,
     fieldLabel: 'مبلغ التحويل',
   });
-  const feeMicros = roundHalfUpMicros(parsed.micros * 3n, 100n);
-  const netMicros = parsed.micros - feeMicros;
+  const feeDecimal = parsed.decimal
+    .times('0.03')
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  const netDecimal = parsed.decimal
+    .minus(feeDecimal)
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+
   return {
     amount: parsed.numberValue,
-    amountMicros: parsed.micros,
-    fee: microsToNumber(feeMicros),
-    feeMicros,
-    net: microsToNumber(netMicros),
-    netMicros,
+    fee: feeDecimal.toNumber(),
+    net: netDecimal.toNumber(),
+    amountDecimal: parsed.decimal,
+    feeDecimal,
+    netDecimal,
+    amountFixed: parsed.decimal.toFixed(MONEY_DECIMALS),
+    feeFixed: feeDecimal.toFixed(MONEY_DECIMALS),
+    netFixed: netDecimal.toFixed(MONEY_DECIMALS),
   };
 }
 
@@ -257,10 +284,11 @@ export function normalizeCampaignFeePolicy(
   fallbackPercentage = 20
 ): CampaignFeePolicy {
   const rawDefault = Number(policy?.defaultPercentage ?? fallbackPercentage);
-  const defaultPercentage = Number.isFinite(rawDefault) && rawDefault >= 0 && rawDefault <= 100 ? rawDefault : 20;
+  const defaultPercentage =
+    Number.isFinite(rawDefault) && rawDefault >= 0 && rawDefault <= 100 ? rawDefault : 20;
 
   const rawMin = Number(policy?.minFeeUnits ?? 0);
-  const minFeeUnits = Number.isFinite(rawMin) && rawMin >= 0 ? microsToNumber(toMicros(rawMin)) : 0;
+  const minFeeUnits = Number.isFinite(rawMin) && rawMin >= 0 ? roundYer6(rawMin) : 0;
 
   const categoryFees: Record<string, number> = {};
   if (policy?.categoryFees && typeof policy.categoryFees === 'object') {
@@ -282,7 +310,7 @@ export function normalizeCampaignFeePolicy(
 
 /**
  * Computes campaign budget, platform service fee (with optional category override & min fee floor),
- * and total required using exact BigInt 6-decimal arithmetic.
+ * and total required directly in YER using Decimal arithmetic.
  */
 export function calculateCampaignFeePolicyCosts(params: {
   rewardUnits: unknown;
@@ -299,13 +327,10 @@ export function calculateCampaignFeePolicyCosts(params: {
   minFeeApplied: boolean;
   feeUnits: number;
   totalUnits: number;
-  budgetMicros: bigint;
-  feeMicros: bigint;
-  totalMicros: bigint;
   appliedPolicySnapshot: CampaignFeePolicy;
   policySnapshot: CampaignFeePolicy;
 } {
-  const parsedReward = parseMoneyStrict(params.rewardUnits, {
+  const parsedReward = parseMoneyDecimal(params.rewardUnits, {
     allowNegative: false,
     allowZero: false,
     fieldLabel: 'سعر المهمة',
@@ -315,33 +340,45 @@ export function calculateCampaignFeePolicyCosts(params: {
     throw new Error('عدد المهمات المطلوبة يجب أن يكون عدداً صحيحاً أكبر من صفر.');
   }
 
-  const normalizedPolicy = normalizeCampaignFeePolicy(params.policy, params.fallbackFeePercentage ?? 20);
+  const normalizedPolicy = normalizeCampaignFeePolicy(
+    params.policy,
+    params.fallbackFeePercentage ?? 20
+  );
   const categoryKey = String(params.category || '').trim();
   const appliedPercentage =
-    categoryKey && normalizedPolicy.categoryFees && normalizedPolicy.categoryFees[categoryKey] !== undefined
+    categoryKey &&
+    normalizedPolicy.categoryFees &&
+    normalizedPolicy.categoryFees[categoryKey] !== undefined
       ? normalizedPolicy.categoryFees[categoryKey]
       : normalizedPolicy.defaultPercentage;
 
-  const budgetMicros = parsedReward.micros * BigInt(slotsNum);
-  const rawFeeMicros = calcPercentageMicros(budgetMicros, appliedPercentage);
-  const minFeeMicros = toMicros(normalizedPolicy.minFeeUnits || 0);
+  const budgetDecimal = parsedReward.decimal
+    .times(slotsNum)
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  const rawFeeDecimal = budgetDecimal
+    .times(new Decimal(appliedPercentage))
+    .div(100)
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  const minFeeDecimal = toYerDecimal(normalizedPolicy.minFeeUnits || 0).toDecimalPlaces(
+    MONEY_DECIMALS,
+    Decimal.ROUND_HALF_UP
+  );
 
-  const minFeeApplied = minFeeMicros > 0n && rawFeeMicros < minFeeMicros;
-  const feeMicros = minFeeApplied ? minFeeMicros : rawFeeMicros;
-  const totalMicros = budgetMicros + feeMicros;
+  const minFeeApplied = minFeeDecimal.gt(0) && rawFeeDecimal.lt(minFeeDecimal);
+  const feeDecimal = minFeeApplied ? minFeeDecimal : rawFeeDecimal;
+  const totalDecimal = budgetDecimal
+    .plus(feeDecimal)
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
 
   return {
     rewardUnits: parsedReward.numberValue,
     slots: slotsNum,
-    budgetUnits: microsToNumber(budgetMicros),
+    budgetUnits: budgetDecimal.toNumber(),
     feePercentage: appliedPercentage,
     effectiveFeePercentage: appliedPercentage,
     minFeeApplied,
-    feeUnits: microsToNumber(feeMicros),
-    totalUnits: microsToNumber(totalMicros),
-    budgetMicros,
-    feeMicros,
-    totalMicros,
+    feeUnits: feeDecimal.toNumber(),
+    totalUnits: totalDecimal.toNumber(),
     appliedPolicySnapshot: {
       defaultPercentage: normalizedPolicy.defaultPercentage,
       minFeeUnits: normalizedPolicy.minFeeUnits || 0,
@@ -356,69 +393,126 @@ export function calculateCampaignFeePolicyCosts(params: {
 }
 
 /**
- * Referral 5% recurring share strictly on platform net profit.
- * Returns 0 if net profit <= 0.
+ * ClixWall 70% User / 30% Publisher revenue split directly in YER (1 USD = 1600 YER).
+ * Example: total_usd = 0.00020 -> total_yer = 0.320, user_yer = 0.224, publisher_yer = 0.096.
  */
-export function calculateReferralNetProfitShare(netProfitInput: unknown): {
-  netProfit: number;
-  shareUnits: number;
-  shareMicros: bigint;
+export function calculateClixWallRevenueSplit(params: {
+  totalUsd?: number | string;
+  userUsd?: number | string;
+  publisherUsd?: number | string;
+  exchangeRate?: number;
+}): {
+  totalUsd: number;
+  userUsd: number;
+  publisherUsd: number;
+  totalYer: number;
+  userYer: number;
+  publisherYer: number;
+  exchangeRate: number;
 } {
-  const parsed = parseMoneyStrict(netProfitInput, {
-    allowNegative: true,
-    allowZero: true,
-    fieldLabel: 'صافي ربح المنصة',
-  });
-  if (parsed.micros <= 0n) {
-    return { netProfit: parsed.numberValue, shareUnits: 0, shareMicros: 0n };
+  const rate = new Decimal(params.exchangeRate ?? USD_TO_YER_RATE);
+  let totalUsdDec: Decimal;
+  let userUsdDec: Decimal;
+  let publisherUsdDec: Decimal;
+
+  if (params.totalUsd !== undefined) {
+    totalUsdDec = toYerDecimal(params.totalUsd);
+    userUsdDec = totalUsdDec.times('0.70').toDecimalPlaces(8, Decimal.ROUND_HALF_UP);
+    publisherUsdDec = totalUsdDec.minus(userUsdDec).toDecimalPlaces(8, Decimal.ROUND_HALF_UP);
+  } else {
+    userUsdDec = toYerDecimal(params.userUsd ?? 0);
+    publisherUsdDec = toYerDecimal(params.publisherUsd ?? 0);
+    totalUsdDec = userUsdDec.plus(publisherUsdDec);
   }
-  const shareMicros = roundHalfUpMicros(parsed.micros * 5n, 100n);
+
+  const totalYerDec = totalUsdDec.times(rate).toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  const userYerDec = totalUsdDec
+    .times(rate)
+    .times('0.70')
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  const publisherYerDec = totalYerDec
+    .minus(userYerDec)
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+
   return {
-    netProfit: parsed.numberValue,
-    shareUnits: microsToNumber(shareMicros),
-    shareMicros,
+    totalUsd: totalUsdDec.toDecimalPlaces(8, Decimal.ROUND_HALF_UP).toNumber(),
+    userUsd: userUsdDec.toDecimalPlaces(8, Decimal.ROUND_HALF_UP).toNumber(),
+    publisherUsd: publisherUsdDec.toDecimalPlaces(8, Decimal.ROUND_HALF_UP).toNumber(),
+    totalYer: totalYerDec.toNumber(),
+    userYer: userYerDec.toNumber(),
+    publisherYer: publisherYerDec.toNumber(),
+    exchangeRate: rate.toNumber(),
   };
 }
 
 /**
- * Validates that debit sum === credit sum at exact 6-decimal micro-unit scale.
+ * Referral 5% recurring share strictly on platform net profit (in YER).
+ */
+export function calculateReferralNetProfitShare(netProfitInput: unknown): {
+  netProfit: number;
+  shareUnits: number;
+} {
+  const parsed = parseMoneyDecimal(netProfitInput, {
+    allowNegative: true,
+    allowZero: true,
+    fieldLabel: 'صافي ربح المنصة',
+  });
+  if (parsed.decimal.lte(0)) {
+    return { netProfit: parsed.numberValue, shareUnits: 0 };
+  }
+  const shareDecimal = parsed.decimal
+    .times('0.05')
+    .toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  return {
+    netProfit: parsed.numberValue,
+    shareUnits: shareDecimal.toNumber(),
+  };
+}
+
+/**
+ * Validates that debit sum === credit sum at exact 6-decimal YER precision.
  */
 export function assertBalancedLedgerEntries(
   entries: Array<{ side: 'debit' | 'credit'; amount_units: unknown }>
-): { totalDebitMicros: bigint; totalCreditMicros: bigint } {
-  let debit = 0n;
-  let credit = 0n;
+): { totalDebit: string; totalCredit: string } {
+  let debit = new Decimal(0);
+  let credit = new Decimal(0);
   for (const e of entries) {
-    const parsed = parseMoneyStrict(e.amount_units, {
+    const parsed = parseMoneyDecimal(e.amount_units, {
       allowNegative: false,
       allowZero: false,
       fieldLabel: 'مبلغ القيد المحاسبي',
     });
-    if (e.side === 'debit') debit += parsed.micros;
-    else credit += parsed.micros;
+    if (e.side === 'debit') debit = debit.plus(parsed.decimal);
+    else credit = credit.plus(parsed.decimal);
   }
-  if (debit <= 0n || debit !== credit) {
+  if (debit.lte(0) || !debit.equals(credit)) {
     throw new Error(
-      `القيد غير متوازن محاسبياً: إجمالي المدين (${fromMicros(debit)}) لا يساوي إجمالي الدائن (${fromMicros(credit)}).`
+      `القيد غير متوازن محاسبياً: إجمالي المدين (${formatYer(debit)}) لا يساوي إجمالي الدائن (${formatYer(credit)}).`
     );
   }
-  return { totalDebitMicros: debit, totalCreditMicros: credit };
+  return {
+    totalDebit: debit.toFixed(MONEY_DECIMALS),
+    totalCredit: credit.toFixed(MONEY_DECIMALS),
+  };
 }
 
 /**
- * Display formatter supporting up to 6 decimals without trailing zeros:
- * 15 -> "15", 0.45 -> "0.45", 0.0003 -> "0.0003", 10000 -> "10,000"
+ * Display formatter for Yemeni Rial supporting up to 6 decimal places without trailing zeros:
+ * 25 -> "25", 0.224 -> "0.224", 0.000001 -> "0.000001", 10000 -> "10,000"
  */
 export function formatYer(
-  val: number | string | bigint | undefined | null,
+  val: number | string | bigint | Decimal | undefined | null,
   options: { withCurrency?: boolean } = {}
 ): string {
-  const micros = toMicros(val);
-  const str = fromMicros(micros);
-  const neg = str.startsWith('-');
-  const unsigned = neg ? str.slice(1) : str;
-  const [intStr, fracStr] = unsigned.split('.');
+  const dec = toYerDecimal(val).toDecimalPlaces(MONEY_DECIMALS, Decimal.ROUND_HALF_UP);
+  const fixed = dec.toFixed(MONEY_DECIMALS);
+  const neg = fixed.startsWith('-');
+  const unsigned = neg ? fixed.slice(1) : fixed;
+  const [intStr, fracRaw] = unsigned.split('.');
+  const fracTrimmed = (fracRaw || '').replace(/0+$/, '');
   const formattedInt = intStr.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const numStr = `${neg ? '-' : ''}${formattedInt}${fracStr ? `.${fracStr}` : ''}`;
+  const isZero = /^0+$/.test(intStr) && fracTrimmed.length === 0;
+  const numStr = `${neg && !isZero ? '-' : ''}${formattedInt}${fracTrimmed ? `.${fracTrimmed}` : ''}`;
   return options.withCurrency ? `${numStr} ر.ي` : numStr;
 }
