@@ -337,7 +337,15 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
                   return (
                     <tr key={tx.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                       <td className="py-3 px-3 font-semibold text-slate-800 dark:text-slate-200">
-                        {tx.type === 'TASK_REWARD' ? 'مكافأة مهمة' : tx.type === 'WITHDRAWAL_REQUEST' ? 'طلب سحب' : 'حركة مالية'}
+                        {tx.type === 'TASK_REWARD'
+                          ? 'مكافأة مهمة'
+                          : tx.type === 'CLIXWALL_REWARD'
+                          ? 'مكافأة ClixWall'
+                          : tx.type === 'CLIXWALL_REVERSAL'
+                          ? 'استرجاع ClixWall'
+                          : tx.type === 'WITHDRAWAL_REQUEST'
+                          ? 'طلب سحب'
+                          : 'حركة مالية'}
                       </td>
                       <td className="py-3 px-3 text-slate-600 dark:text-slate-300 max-w-xs truncate">
                         {tx.description}

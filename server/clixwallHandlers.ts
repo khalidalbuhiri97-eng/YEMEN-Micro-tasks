@@ -228,11 +228,21 @@ export function isValidClixWallApiKey(apiKey: string): boolean {
   return true;
 }
 
-export interface ClixWallHandlersDeps {
-  getAdminClient: () => SupabaseClient<any, any, any>;
+export interface ClixWallPostbackErrorInfo {
+  transactionId?: string;
+  userId?: string;
+  route?: string;
+  httpStatus: number;
+  reason: string;
+  rawStatus?: string;
 }
 
-export function createClixWallHandlers({ getAdminClient }: ClixWallHandlersDeps) {
+export interface ClixWallHandlersDeps {
+  getAdminClient: () => SupabaseClient<any, any, any>;
+  onPostbackError?: (info: ClixWallPostbackErrorInfo) => Promise<void> | void;
+}
+
+export function createClixWallHandlers({ getAdminClient, onPostbackError }: ClixWallHandlersDeps) {
   const getOfferWallUrl = async (req: AuthenticatedClixWallRequest, res: Response) => {
     try {
       const user = req.user;
@@ -271,19 +281,34 @@ export function createClixWallHandlers({ getAdminClient }: ClixWallHandlersDeps)
       if (!user) return res.status(401).json({ error: 'غير مصرح.' });
 
       const adminClient = getAdminClient();
-      const [postbacksRes, walletAccRes] = await Promise.all([
+      const [postbacksRes, walletRowRes] = await Promise.all([
         adminClient
           .from('clixwall_postbacks')
           .select('id, transaction_id, user_id, offer_id, offer_name, status, user_payout_usd, publisher_payout_usd, exchange_rate, reward_yer, ledger_transaction_id, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false }),
         adminClient
-          .from('financial_accounts')
-          .select('balance_units')
-          .eq('owner_user_id', user.id)
-          .eq('account_type', 'wallet')
+          .from('wallets')
+          .select('id')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: true })
+          .limit(1)
           .maybeSingle(),
       ]);
+
+      const walletId = walletRowRes.data?.id ? String(walletRowRes.data.id) : null;
+      const faFilter = walletId
+        ? `wallet_id.eq.${walletId},owner_user_id.eq.${user.id}`
+        : `owner_user_id.eq.${user.id}`;
+
+      const walletAccRes = await adminClient
+        .from('financial_accounts')
+        .select('id, balance_units')
+        .eq('account_type', 'wallet')
+        .or(faFilter)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
       if (postbacksRes.error) {
         if (postbacksRes.error.code === '42P01') {
@@ -385,9 +410,11 @@ export function createClixWallHandlers({ getAdminClient }: ClixWallHandlersDeps)
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
 
+      // financial_accounts.balance_units stores exact NUMERIC(30,6) YER directly (Migration 023),
+      // matching supabaseDb.getWallet() / WalletView without dividing by 1,000,000.
       const walletBalanceYer =
         walletAccRes.data && walletAccRes.data.balance_units !== undefined
-          ? round6(Number(walletAccRes.data.balance_units) / 1_000_000)
+          ? round6(Number(walletAccRes.data.balance_units))
           : 0;
 
       return res.json({
@@ -406,35 +433,58 @@ export function createClixWallHandlers({ getAdminClient }: ClixWallHandlersDeps)
   };
 
   const handlePostback = async (req: Request, res: Response) => {
-    try {
-      const data = { ...(req.query || {}), ...(req.body && typeof req.body === 'object' ? req.body : {}) };
-      const transactionId = String(data.transaction_id || data.tid || data.trans_id || '').trim();
-      const userId = String(data.user_id || data.subid || data.user || '').trim();
-      const offerId = String(data.offer_id || data.oid || '').trim();
-      const offerName = String(data.offer_name || data.oname || data.name || '').trim();
+    const data = { ...(req.query || {}), ...(req.body && typeof req.body === 'object' ? req.body : {}) };
+    const transactionId = String(data.transaction_id || data.tid || data.trans_id || '').trim();
+    const userId = String(data.user_id || data.subid || data.user || '').trim();
+    const offerId = String(data.offer_id || data.oid || '').trim();
+    const offerName = String(data.offer_name || data.oname || data.name || '').trim();
+    const rawStatusStr = data.status !== undefined && data.status !== null ? String(data.status).trim() : '';
 
+    const recordFailure = async (httpStatus: number, reason: string) => {
+      console.error(
+        `[CLIXWALL_POSTBACK_ERROR] HTTP=${httpStatus} TID=${transactionId || 'N/A'} User=${userId || 'N/A'} Reason=${reason}`
+      );
+      if (onPostbackError) {
+        try {
+          await onPostbackError({
+            transactionId: transactionId || undefined,
+            userId: userId || undefined,
+            route: req.originalUrl ? req.originalUrl.split('?')[0] : req.path,
+            httpStatus,
+            reason,
+            rawStatus: rawStatusStr || undefined,
+          });
+        } catch {
+          // Never fail response due to error logging
+        }
+      }
+    };
+
+    try {
       // 1. Secret verification: Strictly enforce CLIXWALL_POSTBACK_SECRET using constant-time compare
       const expectedSecret = (process.env.CLIXWALL_POSTBACK_SECRET || process.env.CLIXWALL_SECRET || '').trim();
       const secretParam = String(data.secret || data.hash || data.signature || '').trim();
 
       if (!expectedSecret || !timingSafeSecretEquals(expectedSecret, secretParam)) {
-        console.warn('[CLIXWALL_POSTBACK] Postback secret verification failed (secret mismatch or missing).');
+        await recordFailure(403, expectedSecret ? 'SECRET_MISMATCH_OR_MISSING' : 'SERVER_POSTBACK_SECRET_NOT_CONFIGURED');
         return res.status(403).json({ error: 'مفتاح الأمان (Secret) غير صالح أو مفقود.' });
       }
 
       if (!transactionId || !userId) {
+        await recordFailure(400, 'MISSING_TRANSACTION_ID_OR_USER_ID');
         return res.status(400).json({ error: 'معاملات Postback ناقصة (transaction_id أو user_id مفقود).' });
       }
 
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       if (!uuidRegex.test(userId)) {
+        await recordFailure(400, 'INVALID_USER_ID_UUID_FORMAT');
         return res.status(400).json({ error: 'صيغة معرّف المستخدم (user_id) غير صالحة، يجب أن تكون UUID صالحة.' });
       }
 
       // 2. Explicit Status Classification
       const statusClassification = classifyClixWallStatus(data.status);
       if (statusClassification.kind === 'invalid') {
-        console.warn('[CLIXWALL_POSTBACK] Rejected postback: Invalid or missing status.');
+        await recordFailure(400, statusClassification.error);
         return res.status(400).json({ error: statusClassification.error });
       }
 
@@ -458,7 +508,7 @@ export function createClixWallHandlers({ getAdminClient }: ClixWallHandlersDeps)
       // 4. Validate 70/30 financial split & conversion rate before touching the ledger
       const payoutValidation = validateAndComputeClixWallPayout(data, statusClassification.kind);
       if (payoutValidation.valid === false) {
-        console.warn(`[CLIXWALL_POSTBACK] Rejected invalid payout for TID ${transactionId}: ${payoutValidation.error}`);
+        await recordFailure(400, payoutValidation.error);
         return res.status(400).json({ error: payoutValidation.error });
       }
 
@@ -479,16 +529,19 @@ export function createClixWallHandlers({ getAdminClient }: ClixWallHandlersDeps)
       });
 
       if (rpcError) {
-        console.error('[CLIXWALL_POSTBACK] RPC execution error:', rpcError.message);
         if (rpcError.message.includes('UNKNOWN_USER')) {
+          await recordFailure(404, rpcError.message);
           return res.status(404).json({ error: 'حساب المستخدم غير موجود في النظام.' });
         }
         if (rpcError.message.includes('REVERSAL_WITHOUT_ORIGINAL_CREDIT')) {
+          await recordFailure(400, rpcError.message);
           return res.status(400).json({ error: 'لا يمكن استرجاع معاملة لم يتم قيدها مسبقاً.' });
         }
         if (rpcError.message.includes('INVALID_PAYOUT_AMOUNT')) {
+          await recordFailure(400, rpcError.message);
           return res.status(400).json({ error: 'قيمة المكافأة غير صالحة.' });
         }
+        await recordFailure(500, rpcError.message || 'RPC_EXECUTION_FAILED');
         return res.status(500).json({ error: rpcError.message });
       }
 
@@ -510,8 +563,9 @@ export function createClixWallHandlers({ getAdminClient }: ClixWallHandlersDeps)
         duplicate: isDuplicate,
       });
     } catch (err: any) {
-      console.error('[CLIXWALL_POSTBACK] Unhandled exception:', err?.message || err);
-      return res.status(500).json({ error: err?.message || 'خطأ داخلي في معالجة Postback.' });
+      const msg = err?.message || 'خطأ داخلي في معالجة Postback.';
+      await recordFailure(500, msg);
+      return res.status(500).json({ error: msg });
     }
   };
 

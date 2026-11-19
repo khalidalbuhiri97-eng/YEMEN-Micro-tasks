@@ -44,23 +44,81 @@ interface MockPostbackRow {
   created_at: string;
 }
 
+interface MockLedgerTransactionRow {
+  id: string;
+  transaction_type: 'CLIXWALL_REWARD' | 'CLIXWALL_REVERSAL';
+  reference: string;
+  idempotency_key: string;
+  status: 'posted';
+  metadata: Record<string, unknown>;
+}
+
+interface MockLedgerEntryRow {
+  id: string;
+  transaction_id: string;
+  account_id: string;
+  entry_side: 'credit' | 'debit';
+  amount_units: number;
+  memo: string;
+}
+
+function round6(val: number): number {
+  return Math.round(val * 1_000_000) / 1_000_000;
+}
+
 /**
- * Faithful in-memory simulator matching live Supabase schema:
+ * Faithful in-memory simulator matching live Supabase schema (Migration 023 + 031):
+ * - wallets (wallet row per user)
+ * - financial_accounts (wallet + CLIXWALL-RECEIVABLE in exact NUMERIC(30,6) YER, unit_scale = 1)
+ * - ledger_transactions & ledger_entries (double-entry accounting)
  * - clixwall_postbacks (append-only, unique on (transaction_id, status))
- * - financial_accounts (wallet + CLIXWALL-RECEIVABLE in micros)
  * - process_clixwall_postback (9-param exact RPC contract)
  */
 function createMockSupabaseAdmin(testUserId: string) {
+  const mockWalletId = '22222222-2222-4222-8222-222222222222';
+  const userWalletAccId = '33333333-3333-4333-8333-333333333333';
+  const receivableAccId = '44444444-4444-4444-8444-444444444444';
+
   const postbacks: MockPostbackRow[] = [];
-  const balances = new Map<string, number>([
-    [`wallet:${testUserId}`, 0],
-    ['CLIXWALL-RECEIVABLE', 0],
-  ]);
+  const ledgerTransactions: MockLedgerTransactionRow[] = [];
+  const ledgerEntries: MockLedgerEntryRow[] = [];
+
+  const financialAccounts = [
+    {
+      id: userWalletAccId,
+      account_code: `WALLET-${mockWalletId}`,
+      account_type: 'wallet',
+      owner_user_id: testUserId,
+      wallet_id: mockWalletId,
+      balance_units: 0,
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: receivableAccId,
+      account_code: 'CLIXWALL-RECEIVABLE',
+      account_type: 'asset',
+      owner_user_id: null,
+      wallet_id: null,
+      balance_units: 0,
+      created_at: new Date().toISOString(),
+    },
+  ];
+
   let idSeq = 1;
 
+  const getWalletAcc = () => financialAccounts[0];
+  const getReceivableAcc = () => financialAccounts[1];
+
   const client = {
-    balances,
+    mockWalletId,
+    userWalletAccId,
+    receivableAccId,
     postbacks,
+    ledgerTransactions,
+    ledgerEntries,
+    financialAccounts,
+    getWalletBalanceYer: () => getWalletAcc().balance_units,
+    getReceivableBalanceYer: () => getReceivableAcc().balance_units,
     async rpc(fnName: string, args: Record<string, any>) {
       if (fnName !== 'process_clixwall_postback') {
         return { data: null, error: { message: `Unknown RPC: ${fnName}` } };
@@ -91,12 +149,44 @@ function createMockSupabaseAdmin(testUserId: string) {
           return { data: { ok: true, reversal: true, duplicate: true }, error: null };
         }
 
-        const amountUnits = Math.round(existingCredit.reward_yer * 1_000_000);
-        const walletKey = `wallet:${existingCredit.user_id}`;
-        balances.set(walletKey, Math.max(0, (balances.get(walletKey) || 0) - amountUnits));
-        balances.set(
-          'CLIXWALL-RECEIVABLE',
-          Math.max(0, (balances.get('CLIXWALL-RECEIVABLE') || 0) - amountUnits)
+        const rewardYer = round6(existingCredit.reward_yer);
+        const walletAcc = getWalletAcc();
+        const recvAcc = getReceivableAcc();
+        walletAcc.balance_units = round6(Math.max(0, walletAcc.balance_units - rewardYer));
+        recvAcc.balance_units = round6(Math.max(0, recvAcc.balance_units - rewardYer));
+
+        const ltxId = `ltx-rev-${idSeq++}`;
+        ledgerTransactions.push({
+          id: ltxId,
+          transaction_type: 'CLIXWALL_REVERSAL',
+          reference: `CLIXWALL:${tid}`,
+          idempotency_key: `CLIXWALL:${tid}:REVERSAL`,
+          status: 'posted',
+          metadata: {
+            provider: 'ClixWall',
+            original_transaction_id: tid,
+            user_id: existingCredit.user_id,
+            reward_yer: rewardYer,
+            unit_scale: 1,
+          },
+        });
+        ledgerEntries.push(
+          {
+            id: `le-${idSeq++}`,
+            transaction_id: ltxId,
+            account_id: walletAcc.id,
+            entry_side: 'debit',
+            amount_units: rewardYer,
+            memo: 'ClixWall reward reversal',
+          },
+          {
+            id: `le-${idSeq++}`,
+            transaction_id: ltxId,
+            account_id: recvAcc.id,
+            entry_side: 'credit',
+            amount_units: rewardYer,
+            memo: 'ClixWall receivable reversal',
+          }
         );
 
         postbacks.push({
@@ -109,8 +199,8 @@ function createMockSupabaseAdmin(testUserId: string) {
           user_payout_usd: existingCredit.user_payout_usd,
           publisher_payout_usd: existingCredit.publisher_payout_usd,
           exchange_rate: CLIXWALL_EXCHANGE_RATE,
-          reward_yer: existingCredit.reward_yer,
-          ledger_transaction_id: `ltx-rev-${idSeq}`,
+          reward_yer: rewardYer,
+          ledger_transaction_id: ltxId,
           raw_status: String(args.p_raw_status || '2'),
           payload: args.p_payload ?? {},
           created_at: new Date(Date.now() + idSeq * 1000).toISOString(),
@@ -130,11 +220,45 @@ function createMockSupabaseAdmin(testUserId: string) {
           return { data: null, error: { message: 'INVALID_PAYOUT_AMOUNT' } };
         }
 
-        const rewardYer = Math.round(userPayoutUsd * CLIXWALL_EXCHANGE_RATE * 1_000_000) / 1_000_000;
-        const amountUnits = Math.round(rewardYer * 1_000_000);
-        const walletKey = `wallet:${userId}`;
-        balances.set(walletKey, (balances.get(walletKey) || 0) + amountUnits);
-        balances.set('CLIXWALL-RECEIVABLE', (balances.get('CLIXWALL-RECEIVABLE') || 0) + amountUnits);
+        const rewardYer = round6(userPayoutUsd * CLIXWALL_EXCHANGE_RATE);
+        const walletAcc = getWalletAcc();
+        const recvAcc = getReceivableAcc();
+        walletAcc.balance_units = round6(walletAcc.balance_units + rewardYer);
+        recvAcc.balance_units = round6(recvAcc.balance_units + rewardYer);
+
+        const ltxId = `ltx-crd-${idSeq++}`;
+        ledgerTransactions.push({
+          id: ltxId,
+          transaction_type: 'CLIXWALL_REWARD',
+          reference: `CLIXWALL:${tid}`,
+          idempotency_key: `CLIXWALL:${tid}:CREDIT`,
+          status: 'posted',
+          metadata: {
+            provider: 'ClixWall',
+            transaction_id: tid,
+            user_id: userId,
+            reward_yer: rewardYer,
+            unit_scale: 1,
+          },
+        });
+        ledgerEntries.push(
+          {
+            id: `le-${idSeq++}`,
+            transaction_id: ltxId,
+            account_id: recvAcc.id,
+            entry_side: 'debit',
+            amount_units: rewardYer,
+            memo: 'ClixWall publisher receivable',
+          },
+          {
+            id: `le-${idSeq++}`,
+            transaction_id: ltxId,
+            account_id: walletAcc.id,
+            entry_side: 'credit',
+            amount_units: rewardYer,
+            memo: 'ClixWall user reward',
+          }
+        );
 
         postbacks.push({
           id: `pb-${idSeq++}`,
@@ -147,7 +271,7 @@ function createMockSupabaseAdmin(testUserId: string) {
           publisher_payout_usd: publisherPayoutUsd,
           exchange_rate: CLIXWALL_EXCHANGE_RATE,
           reward_yer: rewardYer,
-          ledger_transaction_id: `ltx-crd-${idSeq}`,
+          ledger_transaction_id: ltxId,
           raw_status: String(args.p_raw_status || '1'),
           payload: args.p_payload ?? {},
           created_at: new Date(Date.now() + idSeq * 1000).toISOString(),
@@ -160,7 +284,26 @@ function createMockSupabaseAdmin(testUserId: string) {
     },
     from(table: string) {
       const filters: Record<string, any> = {};
+      let orClause = '';
       let orderAsc = false;
+      let limitCount: number | null = null;
+
+      const filterFinancialAccounts = () =>
+        financialAccounts.filter((acc) => {
+          if (filters.account_type && acc.account_type !== filters.account_type) return false;
+          if (filters.account_code && acc.account_code !== filters.account_code) return false;
+          if (filters.owner_user_id && acc.owner_user_id !== filters.owner_user_id) return false;
+          if (orClause) {
+            const parts = orClause.split(',').map((p) => p.trim());
+            const matchesAny = parts.some((p) => {
+              const [col, op, val] = p.split('.');
+              if (op === 'eq') return String((acc as any)[col]) === val;
+              return false;
+            });
+            if (!matchesAny) return false;
+          }
+          return true;
+        });
 
       const builder: any = {
         select() {
@@ -170,19 +313,27 @@ function createMockSupabaseAdmin(testUserId: string) {
           filters[col] = val;
           return builder;
         },
+        or(expr: string) {
+          orClause = expr;
+          return builder;
+        },
         order(_col: string, opts?: { ascending?: boolean }) {
           orderAsc = Boolean(opts?.ascending);
           return builder;
         },
+        limit(n: number) {
+          limitCount = n;
+          return builder;
+        },
         maybeSingle() {
+          if (table === 'wallets') {
+            const match = filters.user_id === testUserId ? { id: mockWalletId } : null;
+            return Promise.resolve({ data: match, error: null });
+          }
           if (table === 'financial_accounts') {
-            const key =
-              filters.owner_user_id && filters.account_type === 'wallet'
-                ? `wallet:${filters.owner_user_id}`
-                : filters.account_code;
-            const bal = key ? balances.get(key) : undefined;
+            const matches = filterFinancialAccounts();
             return Promise.resolve({
-              data: bal !== undefined ? { balance_units: bal } : null,
+              data: matches[0] ? { id: matches[0].id, balance_units: matches[0].balance_units } : null,
               error: null,
             });
           }
@@ -199,6 +350,7 @@ function createMockSupabaseAdmin(testUserId: string) {
                   ? a.created_at.localeCompare(b.created_at)
                   : b.created_at.localeCompare(a.created_at)
               );
+              if (limitCount !== null) rows = rows.slice(0, limitCount);
               return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
             }
             return Promise.resolve({ data: [], error: null }).then(resolve, reject);
@@ -356,7 +508,13 @@ async function runIsolatedEndToEndSuite(expectedSecret: string, apiKey: string) 
   console.log('\n--- Part C: Isolated End-to-End Lifecycle & Accounting Suite ---');
   const testUserId = '11111111-1111-4111-8111-111111111111';
   const mockDb = createMockSupabaseAdmin(testUserId);
-  const handlers = createClixWallHandlers({ getAdminClient: () => mockDb });
+  const loggedErrors: Array<Record<string, unknown>> = [];
+  const handlers = createClixWallHandlers({
+    getAdminClient: () => mockDb,
+    onPostbackError: (info) => {
+      loggedErrors.push({ ...info });
+    },
+  });
 
   const app = express();
   app.use(express.json());
@@ -378,38 +536,79 @@ async function runIsolatedEndToEndSuite(expectedSecret: string, apiKey: string) 
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
   try {
-    // 1. Test Credit with 70/30 split & gross publisher_payout normalization ($0.001 total -> $0.0007 user, $0.0003 publisher, 1.12 YER)
-    const tid1 = 'E2E_TX_001';
+    // 1. Standalone Credited Flow (NEVER reversed): verify all 4 DB artifacts & wallet balance parity
+    const tidStandalone = 'E2E_STANDALONE_CREDIT_001';
     const res1 = await fetch(
-      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&user_payout_usd=0.0007&publisher_payout=0.001&status=1&offer_id=O1&offer_name=GrossNormalizedOffer`
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tidStandalone}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&user_payout_usd=0.0007&publisher_payout=0.001&status=1&offer_id=O1&offer_name=StandaloneVerifiedOffer`
     );
-    assert(res1.status === 200, `Credit 1 failed with ${res1.status}`);
+    assert(res1.status === 200, `Standalone credit failed with ${res1.status}`);
     const j1 = await res1.json();
-    assert(j1.status === 'credited' && !j1.duplicate, 'Credit 1 should be credited and not duplicate');
+    assert(j1.status === 'credited' && !j1.duplicate, 'Standalone credit should be credited and not duplicate');
     assert(Math.abs(j1.user_payout_usd - 0.0007) < 1e-6, `Expected 0.0007 user share, got ${j1.user_payout_usd}`);
     assert(Math.abs(j1.publisher_payout_usd - 0.0003) < 1e-6, `Expected 0.0003 publisher share, got ${j1.publisher_payout_usd}`);
     assert(Math.abs(j1.reward_yer - 1.12) < 1e-6, `Expected 1.12 YER, got ${j1.reward_yer}`);
+
+    // (a) clixwall_postbacks credited row
     assert(
-      mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000,
-      'Wallet balance_units should equal 1,120,000 micros (1.12 YER)'
+      mockDb.postbacks.length === 1 &&
+        mockDb.postbacks[0].transaction_id === tidStandalone &&
+        mockDb.postbacks[0].status === 'credited' &&
+        mockDb.postbacks[0].reward_yer === 1.12,
+      'clixwall_postbacks must contain standalone credited row (1.12 YER)'
+    );
+    // (b) ledger_transactions CLIXWALL_REWARD row
+    const standaloneLtx = mockDb.ledgerTransactions.find(
+      (t: MockLedgerTransactionRow) =>
+        t.id === mockDb.postbacks[0].ledger_transaction_id && t.transaction_type === 'CLIXWALL_REWARD'
+    );
+    assert(standaloneLtx, 'ledger_transactions must contain CLIXWALL_REWARD row');
+    // (c) ledger_entries credit on user wallet financial_accounts ID + debit on CLIXWALL-RECEIVABLE
+    const walletCreditEntry = mockDb.ledgerEntries.find(
+      (e: MockLedgerEntryRow) =>
+        e.transaction_id === standaloneLtx.id &&
+        e.account_id === mockDb.userWalletAccId &&
+        e.entry_side === 'credit' &&
+        e.amount_units === 1.12
+    );
+    const recvDebitEntry = mockDb.ledgerEntries.find(
+      (e: MockLedgerEntryRow) =>
+        e.transaction_id === standaloneLtx.id &&
+        e.account_id === mockDb.receivableAccId &&
+        e.entry_side === 'debit' &&
+        e.amount_units === 1.12
+    );
+    assert(walletCreditEntry && recvDebitEntry, 'ledger_entries must balance credit(wallet) and debit(CLIXWALL-RECEIVABLE)');
+    // (d) financial_accounts.balance_units updated in YER (unit_scale = 1)
+    assert(
+      mockDb.getWalletBalanceYer() === 1.12,
+      `financial_accounts.balance_units should equal 1.12 YER, got ${mockDb.getWalletBalanceYer()}`
+    );
+    // (e) Immediate rewards & wallet parity check before any subsequent event
+    const immediateRewardsRes = await fetch(`${baseUrl}/api/clixwall/rewards`);
+    const immediateRewardsJson = await immediateRewardsRes.json();
+    assert(
+      immediateRewardsJson.summary.offersCount === 1 &&
+        immediateRewardsJson.summary.totalYerCredited === 1.12 &&
+        immediateRewardsJson.summary.walletBalanceYer === mockDb.getWalletBalanceYer(),
+      `Standalone credited balance mismatch between ClixWall UI & financial_accounts: ${JSON.stringify(immediateRewardsJson.summary)}`
     );
     assert(
       JSON.stringify(mockDb.postbacks[0].payload).includes('[REDACTED_SENSITIVE_DATA]') &&
         !JSON.stringify(mockDb.postbacks[0].payload).includes(expectedSecret),
       'Secret must be redacted before persisting payload'
     );
-    console.log('  ✓ [C1] 70/30 gross normalization ($0.001 -> $0.0007/$0.0003 = 1.12 YER) & payload redaction passed.');
+    console.log('  ✓ [C1] Standalone credited flow (no reversal): 4 DB/ledger records + 1.12 YER wallet parity + payload redaction passed.');
 
     // 2. Duplicate postback idempotency
     const resDup = await fetch(
-      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&user_payout_usd=0.0007&publisher_payout=0.001&status=approved`
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tidStandalone}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&user_payout_usd=0.0007&publisher_payout=0.001&status=approved`
     );
     const jDup = await resDup.json();
     assert(resDup.status === 200 && jDup.duplicate === true, 'Duplicate postback must return duplicate=true');
-    assert(mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000, 'Balance must NOT increase on duplicate');
+    assert(mockDb.getWalletBalanceYer() === 1.12, 'Balance must NOT increase on duplicate');
     console.log('  ✓ [C2] Duplicate credit idempotency passed (no double credit).');
 
-    // 3. POST JSON & form-urlencoded second offer ($1.00 gross -> $0.70 user, $0.30 publisher = 1120 YER)
+    // 3. POST form-urlencoded second offer ($1.00 gross -> $0.70 user, $0.30 publisher = 1120 YER)
     const tid2 = 'E2E_TX_002';
     const formBody = new URLSearchParams({
       transaction_id: tid2,
@@ -428,16 +627,20 @@ async function runIsolatedEndToEndSuite(expectedSecret: string, apiKey: string) 
     });
     const j2 = await res2.json();
     assert(res2.status === 200 && j2.status === 'credited' && j2.reward_yer === 1120, 'Form-urlencoded credit failed');
+    assert(
+      mockDb.getWalletBalanceYer() === 1121.12,
+      `Expected combined balance 1121.12 YER, got ${mockDb.getWalletBalanceYer()}`
+    );
     console.log('  ✓ [C3] POST form-urlencoded direct 70/30 credit ($0.70/$0.30 -> 1,120 YER) passed.');
 
-    // 4. Rejected / Cancelled / Failed / Pending / 0 must NOT credit new TID and must NOT reverse tid1
-    const balanceBeforeIgnore = mockDb.balances.get(`wallet:${testUserId}`);
+    // 4. Rejected / Cancelled / Failed / Pending / 0 must NOT credit new TID and must NOT reverse tidStandalone
+    const balanceBeforeIgnore = mockDb.getWalletBalanceYer();
     for (const statusVal of ['0', 'rejected', 'cancelled', 'failed', 'pending']) {
       const igRes = await fetch(`${baseUrl}/api/postbacks/clixwall`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transaction_id: tid1, // even targeting an existing credited TID!
+          transaction_id: tidStandalone,
           user_id: testUserId,
           secret: expectedSecret,
           status: statusVal,
@@ -452,35 +655,35 @@ async function runIsolatedEndToEndSuite(expectedSecret: string, apiKey: string) 
       );
     }
     assert(
-      mockDb.balances.get(`wallet:${testUserId}`) === balanceBeforeIgnore,
+      mockDb.getWalletBalanceYer() === balanceBeforeIgnore,
       'Non-actionable statuses must not mutate wallet balance'
     );
     console.log('  ✓ [C4] Rejected/cancelled/failed/pending/0 neither credited nor reversed existing reward.');
 
-    // 5. Chargeback / Reversal of tid1
+    // 5. Chargeback / Reversal of tid2 ONLY (leaving tidStandalone credited in wallet!)
     const revRes = await fetch(
-      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&status=chargeback`
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid2}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&status=chargeback`
     );
     const revJson = await revRes.json();
     assert(revRes.status === 200 && revJson.status === 'reversed' && !revJson.duplicate, 'Chargeback reversal failed');
     assert(
-      mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000_000, // Only tid2 (1120 YER) remains
-      `Wallet balance after reversing tid1 should equal 1120 YER (1,120,000,000 micros), got ${mockDb.balances.get(`wallet:${testUserId}`)}`
+      mockDb.getWalletBalanceYer() === 1.12,
+      `Wallet balance after reversing tid2 should equal 1.12 YER (tidStandalone intact), got ${mockDb.getWalletBalanceYer()}`
     );
 
     // Duplicate reversal must be idempotent
     const revDupRes = await fetch(
-      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&status=2`
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid2}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&status=2`
     );
     const revDupJson = await revDupRes.json();
     assert(revDupRes.status === 200 && revDupJson.duplicate === true, 'Duplicate reversal must return duplicate=true');
     assert(
-      mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000_000,
+      mockDb.getWalletBalanceYer() === 1.12,
       'Duplicate reversal must not double-deduct wallet balance'
     );
-    console.log('  ✓ [C5] Chargeback & duplicate reversal idempotency passed.');
+    console.log('  ✓ [C5] Chargeback & duplicate reversal idempotency passed (standalone credit intact).');
 
-    // 6. GET /api/clixwall/rewards excludes reversed transactions and reconciles with financial_accounts
+    // 6. GET /api/clixwall/rewards excludes reversed tid2 and reconciles 1:1 with financial_accounts (1.12 YER)
     const rewardsRes = await fetch(`${baseUrl}/api/clixwall/rewards`);
     assert(rewardsRes.status === 200, 'GET /api/clixwall/rewards failed');
     const rewardsJson = await rewardsRes.json();
@@ -488,14 +691,16 @@ async function runIsolatedEndToEndSuite(expectedSecret: string, apiKey: string) 
     assert(rewardsJson.summary.offersCount === 1, `Expected 1 net approved offer, got ${rewardsJson.summary.offersCount}`);
     assert(rewardsJson.summary.reversedCount === 1, `Expected 1 reversed offer, got ${rewardsJson.summary.reversedCount}`);
     assert(
-      Math.abs(rewardsJson.summary.totalUsdEarned - 0.7) < 1e-6,
-      `Expected net USD $0.70 (tid1 excluded), got ${rewardsJson.summary.totalUsdEarned}`
+      Math.abs(rewardsJson.summary.totalUsdEarned - 0.0007) < 1e-6,
+      `Expected net USD $0.0007 (tid2 excluded), got ${rewardsJson.summary.totalUsdEarned}`
     );
     assert(
-      rewardsJson.summary.totalYerCredited === 1120 && rewardsJson.summary.walletBalanceYer === 1120,
-      `Expected net YER 1120 == walletBalanceYer 1120, got ${JSON.stringify(rewardsJson.summary)}`
+      rewardsJson.summary.totalYerCredited === 1.12 &&
+        rewardsJson.summary.walletBalanceYer === 1.12 &&
+        rewardsJson.summary.walletBalanceYer === mockDb.getWalletBalanceYer(),
+      `Expected net YER 1.12 == walletBalanceYer 1.12, got ${JSON.stringify(rewardsJson.summary)}`
     );
-    console.log('  ✓ [C6] GET /api/clixwall/rewards excluded reversed transaction & matched ledger wallet balance (1,120 YER).');
+    console.log('  ✓ [C6] GET /api/clixwall/rewards excluded reversed tx & matched financial_accounts balance (1.12 YER).');
 
     // 7. OfferWall URL template & missing/placeholder API key enforcement
     if (apiKey) {
@@ -524,13 +729,31 @@ async function runIsolatedEndToEndSuite(expectedSecret: string, apiKey: string) 
     }
     console.log('  ✓ [C7] OfferWall URL generation & missing/placeholder API key rejection (503) passed.');
 
-    // Verify sanitizeClixWallPayload redacts nested secrets cleanly
+    // 8. Secret redaction & sanitized Postback error logging (transaction_id + reason, zero secrets)
+    const badAttemptTid = 'E2E_ERR_LOG_001';
+    const bogusSecret = 'ATTACKER_SECRET_VALUE_999';
+    const errRes = await fetch(
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${badAttemptTid}&user_id=${testUserId}&secret=${bogusSecret}&status=1`
+    );
+    assert(errRes.status === 403, `Expected 403 for invalid secret, got ${errRes.status}`);
+    assert(loggedErrors.length === 1, `Expected 1 logged Postback error, got ${loggedErrors.length}`);
+    const errEntry = loggedErrors[0];
+    const serializedErr = JSON.stringify(errEntry);
+    assert(
+      errEntry.transactionId === badAttemptTid &&
+        errEntry.httpStatus === 403 &&
+        errEntry.reason === 'SECRET_MISMATCH_OR_MISSING' &&
+        !serializedErr.includes(expectedSecret) &&
+        !serializedErr.includes(bogusSecret),
+      `Postback error log must record transaction_id and reason without leaking secrets: ${serializedErr}`
+    );
+
     const clean = sanitizeClixWallPayload({ secret: 'abc', nested: { api_key: 'xyz', ok: 1 } }) as any;
     assert(
       clean.secret === '[REDACTED_SENSITIVE_DATA]' && clean.nested.api_key === '[REDACTED_SENSITIVE_DATA]',
       'sanitizeClixWallPayload must redact nested secret and api_key fields'
     );
-    console.log('  ✓ [C8] Payload secret sanitization verified.');
+    console.log('  ✓ [C8] Payload secret redaction & Postback error logging (transaction_id + reason, zero secrets) verified.');
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

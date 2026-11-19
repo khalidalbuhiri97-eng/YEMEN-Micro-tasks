@@ -230,6 +230,10 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
         return 'تعديل تدقيق إداري';
       case 'PROMOTIONAL_BONUS':
         return 'مكافأة منصة';
+      case 'CLIXWALL_REWARD':
+        return 'مكافأة عروض ClixWall';
+      case 'CLIXWALL_REVERSAL':
+        return 'عكس / استرجاع مكافأة ClixWall';
       default:
         return 'حركة قيود مالية';
     }

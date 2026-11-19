@@ -224,7 +224,13 @@ export async function logSupabaseError(params: {
   };
 
   try {
-    await supabaseServer.from('system_error_logs').insert({
+    let logClient = supabaseServer;
+    try {
+      logClient = getSupabaseAdminClient();
+    } catch {
+      logClient = supabaseServer;
+    }
+    await logClient.from('system_error_logs').insert({
       error_code: code,
       error_type: errorType,
       severity: severity,
@@ -3314,6 +3320,22 @@ app.post('/api/admin/geo/countries/:countryId/import', adminMiddleware, async (r
 
 const clixwallHandlers = createClixWallHandlers({
   getAdminClient: getSupabaseAdminClient,
+  onPostbackError: async (info) => {
+    await logSupabaseError({
+      err: new Error(info.reason),
+      operation: 'CLIXWALL_POSTBACK',
+      sourceTable: 'clixwall_postbacks',
+      sourceFunction: 'process_clixwall_postback',
+      apiRoute: info.route || '/api/postbacks/clixwall',
+      details: {
+        transaction_id: info.transactionId || null,
+        user_id: info.userId || null,
+        http_status: info.httpStatus,
+        raw_status: info.rawStatus || null,
+        reason: info.reason,
+      },
+    });
+  },
 });
 
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);

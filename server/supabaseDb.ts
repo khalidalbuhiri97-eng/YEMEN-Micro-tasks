@@ -754,6 +754,10 @@ function mapLedgerTxType(rawType: string, entrySide: 'debit' | 'credit'): Transa
       return 'CAMPAIGN_FUNDING_RESERVE';
     case 'CAMPAIGN_ESCROW_REFUND':
       return 'CAMPAIGN_ESCROW_REFUND';
+    case 'CLIXWALL_REWARD':
+      return 'CLIXWALL_REWARD';
+    case 'CLIXWALL_REVERSAL':
+      return 'CLIXWALL_REVERSAL';
     default:
       return (entrySide === 'credit' ? 'TASK_REWARD' : 'ADMIN_ADJUSTMENT') as TransactionType;
   }
@@ -1375,6 +1379,7 @@ export const supabaseDb = {
       .select('id, account_code, account_type, owner_user_id, wallet_id, normal_side, balance_units, status, created_at')
       .eq('account_type', 'wallet')
       .or(`wallet_id.eq.${walletRow.id},owner_user_id.eq.${cleanUserId}`)
+      .order('created_at', { ascending: true })
       .limit(1);
 
     if (faErr) {
@@ -1481,9 +1486,13 @@ export const supabaseDb = {
           (txType === 'TASK_REWARD_PAYOUT' ||
             txType === 'TASK_REWARD' ||
             txType === 'REFERRAL_REWARD' ||
-            txType === 'PROMOTIONAL_BONUS')
+            txType === 'PROMOTIONAL_BONUS' ||
+            txType === 'CLIXWALL_REWARD')
         ) {
           totalEarned += amt;
+        }
+        if (e.entry_side === 'debit' && txType === 'CLIXWALL_REVERSAL') {
+          totalEarned = Math.max(0, totalEarned - amt);
         }
         if (
           e.entry_side === 'debit' &&

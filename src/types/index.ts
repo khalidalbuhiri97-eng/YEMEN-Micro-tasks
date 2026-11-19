@@ -182,6 +182,8 @@ export type TransactionType =
   | 'TAX_SETTLEMENT'
   | 'CAMPAIGN_FUNDING_RESERVE'
   | 'CAMPAIGN_ESCROW_REFUND'
+  | 'CLIXWALL_REWARD'
+  | 'CLIXWALL_REVERSAL'
   | 'REVERSAL';
 
 export interface WalletTransaction {

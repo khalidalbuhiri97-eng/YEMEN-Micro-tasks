@@ -104,8 +104,8 @@ DECLARE
     v_credit_row RECORD;
     v_reversal_exists BOOLEAN := FALSE;
     v_exchange_rate NUMERIC := 1600.000000;
-    v_reward_yer NUMERIC;
-    v_amount_units BIGINT;
+    v_reward_yer NUMERIC(30,6);
+    v_wallet_id UUID;
     v_user_wallet_acc_id UUID;
     v_clixwall_acc_id UUID;
     v_ledger_tx_id UUID;
@@ -160,11 +160,10 @@ BEGIN
             RETURN jsonb_build_object('ok', true, 'reversal', true, 'duplicate', true);
         END IF;
 
-        -- Always reverse the exact original credited reward amount
+        -- Always reverse the exact original credited reward amount in YER (NUMERIC(30,6))
         v_reward_yer := ROUND(COALESCE(v_credit_row.reward_yer, COALESCE(v_credit_row.user_payout_usd, 0) * v_exchange_rate), 6);
-        v_amount_units := ROUND(v_reward_yer * 1000000)::BIGINT;
 
-        IF v_amount_units <= 0 THEN
+        IF v_reward_yer <= 0 THEN
             RAISE EXCEPTION 'INVALID_PAYOUT_AMOUNT';
         END IF;
 
@@ -173,10 +172,20 @@ BEGIN
          WHERE account_code = 'CLIXWALL-RECEIVABLE'
          LIMIT 1;
 
+        SELECT id INTO v_wallet_id
+          FROM public.wallets
+         WHERE user_id = v_credit_row.user_id
+         ORDER BY created_at ASC
+         LIMIT 1;
+
         SELECT id INTO v_user_wallet_acc_id
           FROM public.financial_accounts
-         WHERE owner_user_id = v_credit_row.user_id
-           AND account_type = 'wallet'
+         WHERE account_type = 'wallet'
+           AND (
+               (v_wallet_id IS NOT NULL AND wallet_id = v_wallet_id)
+               OR owner_user_id = v_credit_row.user_id
+           )
+         ORDER BY created_at ASC
          LIMIT 1;
 
         IF v_user_wallet_acc_id IS NULL OR v_clixwall_acc_id IS NULL THEN
@@ -199,22 +208,22 @@ BEGIN
                 'publisher_payout_usd', v_credit_row.publisher_payout_usd,
                 'reward_yer', v_reward_yer,
                 'exchange_rate', v_exchange_rate,
-                'unit_scale', 1000000
+                'unit_scale', 1
             )
         )
         RETURNING id INTO v_ledger_tx_id;
 
         INSERT INTO public.ledger_entries (id, transaction_id, account_id, entry_side, amount_units, memo)
         VALUES
-            (gen_random_uuid(), v_ledger_tx_id, v_user_wallet_acc_id, 'debit', v_amount_units, 'ClixWall reward reversal'),
-            (gen_random_uuid(), v_ledger_tx_id, v_clixwall_acc_id, 'credit', v_amount_units, 'ClixWall receivable reversal');
+            (gen_random_uuid(), v_ledger_tx_id, v_user_wallet_acc_id, 'debit', v_reward_yer, 'ClixWall reward reversal'),
+            (gen_random_uuid(), v_ledger_tx_id, v_clixwall_acc_id, 'credit', v_reward_yer, 'ClixWall receivable reversal');
 
         UPDATE public.financial_accounts
-           SET balance_units = GREATEST(0, balance_units - v_amount_units)
+           SET balance_units = GREATEST(0, balance_units - v_reward_yer)
          WHERE id = v_user_wallet_acc_id;
 
         UPDATE public.financial_accounts
-           SET balance_units = GREATEST(0, balance_units - v_amount_units)
+           SET balance_units = GREATEST(0, balance_units - v_reward_yer)
          WHERE id = v_clixwall_acc_id;
 
         INSERT INTO public.clixwall_postbacks (
@@ -266,10 +275,10 @@ BEGIN
         RAISE EXCEPTION 'INVALID_PAYOUT_AMOUNT';
     END IF;
 
+    -- Store exact YER amount (NUMERIC(30,6), 1 unit = 1 YER, aligned with Migration 023)
     v_reward_yer := ROUND(p_user_payout_usd * v_exchange_rate, 6);
-    v_amount_units := ROUND(v_reward_yer * 1000000)::BIGINT;
 
-    IF v_amount_units <= 0 THEN
+    IF v_reward_yer <= 0 THEN
         RAISE EXCEPTION 'INVALID_PAYOUT_AMOUNT';
     END IF;
 
@@ -287,35 +296,47 @@ BEGIN
         RETURNING id INTO v_clixwall_acc_id;
     END IF;
 
-    SELECT id INTO v_user_wallet_acc_id
-      FROM public.financial_accounts
-     WHERE owner_user_id = p_user_id
-       AND account_type = 'wallet'
-     LIMIT 1;
-
-    IF v_user_wallet_acc_id IS NULL THEN
-        INSERT INTO public.financial_accounts (
-            id, account_code, account_type, normal_side, balance_units, owner_user_id, status
-        ) VALUES (
-            gen_random_uuid(),
-            'WALLET-' || substring(p_user_id::text, 1, 8),
-            'wallet',
-            'credit',
-            0,
-            p_user_id,
-            'active'
-        )
-        RETURNING id INTO v_user_wallet_acc_id;
-    END IF;
-
+    -- Ensure wallets row exists first so financial_accounts links wallet_id identically to ensureUserFinancialAccount
     INSERT INTO public.wallets (id, user_id, wallet_address, status)
     VALUES (
         gen_random_uuid(),
         p_user_id,
-        'KY-' || upper(substring(md5(p_user_id::text || now()::text), 1, 12)),
+        'KY-' || upper(substring(md5(p_user_id::text || '_kasb_wallet_salt_yemen_v1'), 1, 12)),
         'active'
     )
     ON CONFLICT (user_id) DO NOTHING;
+
+    SELECT id INTO v_wallet_id
+      FROM public.wallets
+     WHERE user_id = p_user_id
+     ORDER BY created_at ASC
+     LIMIT 1;
+
+    SELECT id INTO v_user_wallet_acc_id
+      FROM public.financial_accounts
+     WHERE account_type = 'wallet'
+       AND (
+           (v_wallet_id IS NOT NULL AND wallet_id = v_wallet_id)
+           OR owner_user_id = p_user_id
+       )
+     ORDER BY created_at ASC
+     LIMIT 1;
+
+    IF v_user_wallet_acc_id IS NULL THEN
+        INSERT INTO public.financial_accounts (
+            id, account_code, account_type, normal_side, balance_units, owner_user_id, wallet_id, status
+        ) VALUES (
+            gen_random_uuid(),
+            'WALLET-' || COALESCE(v_wallet_id::text, substring(p_user_id::text, 1, 8)),
+            'wallet',
+            'credit',
+            0,
+            p_user_id,
+            v_wallet_id,
+            'active'
+        )
+        RETURNING id INTO v_user_wallet_acc_id;
+    END IF;
 
     INSERT INTO public.ledger_transactions (
         id, transaction_type, reference, idempotency_key, status, metadata
@@ -335,22 +356,22 @@ BEGIN
             'publisher_payout_usd', p_publisher_payout_usd,
             'exchange_rate', v_exchange_rate,
             'reward_yer', v_reward_yer,
-            'unit_scale', 1000000
+            'unit_scale', 1
         )
     )
     RETURNING id INTO v_ledger_tx_id;
 
     INSERT INTO public.ledger_entries (id, transaction_id, account_id, entry_side, amount_units, memo)
     VALUES
-        (gen_random_uuid(), v_ledger_tx_id, v_clixwall_acc_id, 'debit', v_amount_units, 'ClixWall publisher receivable'),
-        (gen_random_uuid(), v_ledger_tx_id, v_user_wallet_acc_id, 'credit', v_amount_units, 'ClixWall user reward');
+        (gen_random_uuid(), v_ledger_tx_id, v_clixwall_acc_id, 'debit', v_reward_yer, 'ClixWall publisher receivable'),
+        (gen_random_uuid(), v_ledger_tx_id, v_user_wallet_acc_id, 'credit', v_reward_yer, 'ClixWall user reward');
 
     UPDATE public.financial_accounts
-       SET balance_units = balance_units + v_amount_units
+       SET balance_units = balance_units + v_reward_yer
      WHERE id = v_user_wallet_acc_id;
 
     UPDATE public.financial_accounts
-       SET balance_units = balance_units + v_amount_units
+       SET balance_units = balance_units + v_reward_yer
      WHERE id = v_clixwall_acc_id;
 
     INSERT INTO public.clixwall_postbacks (
