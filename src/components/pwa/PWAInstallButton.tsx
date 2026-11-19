@@ -11,7 +11,9 @@ export const PWAInstallButton: React.FC = () => {
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOS, setIsIOS] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  const [dismissed, setDismissed] = useState(() => {
+    return localStorage.getItem('kasb_pwa_dismissed') === 'true';
+  });
 
   useEffect(() => {
     // Check if running in standalone mode (already installed)
@@ -47,6 +49,12 @@ export const PWAInstallButton: React.FC = () => {
 
   if (isInstalled || dismissed) return null;
 
+  const handleDismiss = () => {
+    setDismissed(true);
+    localStorage.setItem('kasb_pwa_dismissed', 'true');
+    setShowModal(false);
+  };
+
   const handleInstallClick = async () => {
     if (deferredPrompt) {
       await deferredPrompt.prompt();
@@ -78,7 +86,7 @@ export const PWAInstallButton: React.FC = () => {
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-md w-full p-6 space-y-5 text-right relative">
             <button
               type="button"
-              onClick={() => setShowModal(false)}
+              onClick={handleDismiss}
               className="absolute left-4 top-4 p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full"
             >
               <X className="w-5 h-5" />
@@ -138,7 +146,7 @@ export const PWAInstallButton: React.FC = () => {
               ) : (
                 <button
                   type="button"
-                  onClick={() => setDismissed(true)}
+                  onClick={handleDismiss}
                   className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-lg shadow-blue-500/25 transition-all"
                 >
                   حسناً، فهمت
@@ -146,7 +154,7 @@ export const PWAInstallButton: React.FC = () => {
               )}
               <button
                 type="button"
-                onClick={() => setShowModal(false)}
+                onClick={handleDismiss}
                 className="min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-slate-200 transition-all"
               >
                 إغلاق
