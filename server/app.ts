@@ -3354,16 +3354,38 @@ app.get('/api/clixwall/rewards', authMiddleware, async (req: AuthenticatedReques
       throw new Error(error.message);
     }
 
-    const totalUsdEarned = (data || []).reduce((sum, item) => sum + (item.status === 'completed' ? Number(item.reward_usd || 0) : 0), 0);
-    const totalYerCredited = (data || []).reduce((sum, item) => sum + (item.status === 'completed' ? Number(item.reward_yer || 0) : 0), 0);
+    const items = data || [];
+    const totalUsdEarned = items.reduce(
+      (sum, item) => sum + (item.status === 'credited' ? Number(item.user_payout_usd ?? item.reward_usd ?? 0) : 0),
+      0
+    );
+    const totalYerCredited = items.reduce(
+      (sum, item) => sum + (item.status === 'credited' ? Number(item.reward_yer || 0) : 0),
+      0
+    );
+    const offersCount = items.filter(i => i.status === 'credited').length;
+
+    const formattedRewards = items.map((item) => ({
+      id: item.id,
+      transaction_id: item.transaction_id,
+      offer_id: item.offer_id,
+      offer_name: item.offer_name,
+      user_payout_usd: Number(item.user_payout_usd ?? item.reward_usd ?? 0),
+      reward_usd: Number(item.user_payout_usd ?? item.reward_usd ?? 0),
+      publisher_payout_usd: Number(item.publisher_payout_usd || 0),
+      exchange_rate: Number(item.exchange_rate || 1600),
+      reward_yer: Number(item.reward_yer || 0),
+      status: item.status, // 'credited' | 'reversed'
+      created_at: item.created_at,
+    }));
 
     return res.json({
-      rewards: data || [],
+      rewards: formattedRewards,
       summary: {
         totalUsdEarned,
         totalYerCredited,
-        offersCount: (data || []).filter(i => i.status === 'completed').length,
-      }
+        offersCount,
+      },
     });
   } catch (err: any) {
     return res.status(500).json({ error: err?.message || 'فشل جلب مكافآت ClixWall.' });
@@ -3378,7 +3400,50 @@ const handleClixWallPostback = async (req: Request, res: Response) => {
     const offerId = String(data.offer_id || data.oid || '').trim();
     const offerName = String(data.offer_name || data.oname || data.name || '').trim();
 
-    // Prioritize user_payout_usd as explicitly instructed
+    // 1. Secret verification: Strictly enforce CLIXWALL_POSTBACK_SECRET
+    const expectedSecret = (process.env.CLIXWALL_POSTBACK_SECRET || process.env.CLIXWALL_SECRET || '').trim();
+    const secretParam = String(data.secret || data.hash || data.signature || '').trim();
+
+    if (!expectedSecret || !secretParam || secretParam !== expectedSecret) {
+      console.warn('[CLIXWALL_POSTBACK] Postback secret verification failed (secret mismatch or missing).');
+      return res.status(403).json({ error: 'مفتاح الأمان (Secret) غير صالح أو مفقود.' });
+    }
+
+    // 2. Explicit Status Verification: Do NOT treat missing status as success
+    if (data.status === undefined || data.status === null || String(data.status).trim() === '') {
+      console.warn('[CLIXWALL_POSTBACK] Rejected postback: Missing explicit status.');
+      return res.status(400).json({ error: 'حالة العملية مفقودة من ClixWall (status required).' });
+    }
+
+    const rawStatus = String(data.status).trim();
+    const lowerStatus = rawStatus.toLowerCase();
+
+    // Explicit success status vs explicit reversal status
+    let status: 'credited' | 'reversed';
+    if (
+      rawStatus === '1' ||
+      lowerStatus === 'credited' ||
+      lowerStatus === 'approved' ||
+      lowerStatus === 'completed' ||
+      lowerStatus === 'success'
+    ) {
+      status = 'credited';
+    } else if (
+      rawStatus === '2' ||
+      rawStatus === '0' ||
+      lowerStatus === 'reversed' ||
+      lowerStatus === 'chargeback' ||
+      lowerStatus === 'rejected' ||
+      lowerStatus === 'canceled' ||
+      lowerStatus === 'cancelled'
+    ) {
+      status = 'reversed';
+    } else {
+      console.warn(`[CLIXWALL_POSTBACK] Rejected postback: Unsupported status value '${rawStatus}'.`);
+      return res.status(400).json({ error: `حالة العملية غير مدعومة أو غير صالحة من ClixWall (${rawStatus}).` });
+    }
+
+    // 3. Prioritize user_payout_usd as explicitly instructed
     const userPayoutUsdRaw =
       data.user_payout_usd !== undefined && data.user_payout_usd !== ''
         ? data.user_payout_usd
@@ -3396,31 +3461,6 @@ const handleClixWallPostback = async (req: Request, res: Response) => {
         : data.revenue || data.payout_usd || 0;
     const publisherPayoutUsd = Math.max(0, Number(publisherPayoutRaw) || 0);
 
-    const rawStatus = String(data.status !== undefined ? data.status : '1').trim();
-    const lowerStatus = rawStatus.toLowerCase();
-    let status = 'completed';
-    if (
-      lowerStatus === '2' ||
-      lowerStatus === '0' ||
-      lowerStatus === 'reversed' ||
-      lowerStatus === 'chargeback' ||
-      lowerStatus === 'canceled' ||
-      lowerStatus === 'cancelled'
-    ) {
-      status = 'reversed';
-    }
-
-    // Secret verification using CLIXWALL_POSTBACK_SECRET (or CLIXWALL_SECRET)
-    const expectedSecret = (process.env.CLIXWALL_POSTBACK_SECRET || process.env.CLIXWALL_SECRET || '').trim();
-    const secretParam = String(data.secret || data.hash || data.signature || '').trim();
-
-    if (expectedSecret) {
-      if (!secretParam || secretParam !== expectedSecret) {
-        console.warn('[CLIXWALL_POSTBACK] Postback secret verification failed (secret mismatch or missing).');
-        return res.status(403).json({ error: 'مفتاح الأمان (Secret) غير صالح أو مفقود.' });
-      }
-    }
-
     if (!transactionId || !userId) {
       return res.status(400).json({ error: 'معاملات Postback ناقصة (transaction_id أو user_id مفقود).' });
     }
@@ -3430,13 +3470,8 @@ const handleClixWallPostback = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'صيغة معرّف المستخدم (user_id) غير صالحة، يجب أن تكون UUID صالحة.' });
     }
 
-    const dbClient = (() => {
-      try {
-        return getSupabaseAdminClient();
-      } catch {
-        return supabaseServer;
-      }
-    })();
+    // 4. Strictly use getSupabaseAdminClient for calling process_clixwall_postback
+    const dbClient = getSupabaseAdminClient();
 
     const { data: rpcResult, error: rpcError } = await dbClient.rpc('process_clixwall_postback', {
       p_transaction_id: transactionId,
@@ -3452,17 +3487,26 @@ const handleClixWallPostback = async (req: Request, res: Response) => {
 
     if (rpcError) {
       console.error('[CLIXWALL_POSTBACK] RPC execution error:', rpcError.message);
+      if (rpcError.message === 'UNKNOWN_USER') {
+        return res.status(404).json({ error: 'حساب المستخدم غير موجود في النظام.' });
+      }
+      if (rpcError.message === 'REVERSAL_WITHOUT_ORIGINAL_CREDIT') {
+        return res.status(400).json({ error: 'لا يمكن استرجاع معاملة لم يتم قيدها مسبقاً.' });
+      }
       return res.status(500).json({ error: rpcError.message });
     }
 
-    console.log(`[CLIXWALL_POSTBACK] Processed successfully TID: ${transactionId} (User: ${userId}, Status: ${status}, USD: ${userPayoutUsd})`);
+    const isDuplicate = !!(rpcResult && typeof rpcResult === 'object' && (rpcResult as any).duplicate);
+
+    console.log(`[CLIXWALL_POSTBACK] Processed successfully TID: ${transactionId} (User: ${userId}, Status: ${status}, USD: ${userPayoutUsd}, Duplicate: ${isDuplicate})`);
 
     return res.status(200).json({
       result: 1,
       success: true,
-      postback_id: rpcResult,
+      data: rpcResult,
       transaction_id: transactionId,
       status,
+      duplicate: isDuplicate,
     });
   } catch (err: any) {
     console.error('[CLIXWALL_POSTBACK] Unhandled exception:', err?.message || err);

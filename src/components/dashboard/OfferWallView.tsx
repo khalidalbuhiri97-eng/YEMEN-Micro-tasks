@@ -18,7 +18,9 @@ interface ClixWallReward {
   id: string;
   transaction_id: string;
   offer_name?: string;
-  reward_usd: number;
+  user_payout_usd: number;
+  reward_usd?: number;
+  publisher_payout_usd?: number;
   exchange_rate: number;
   reward_yer: number;
   status: string;
@@ -302,16 +304,16 @@ export const OfferWallView: React.FC = () => {
                     <tr key={r.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/25 transition">
                       <td className="py-3 px-4 font-mono text-xs text-slate-500">{r.transaction_id}</td>
                       <td className="py-3 px-4 font-medium">{r.offer_name || 'عرض مخصص'}</td>
-                      <td className="py-3 px-4 text-emerald-600 dark:text-emerald-400 font-semibold">${fmt(r.reward_usd)}</td>
+                      <td className="py-3 px-4 text-emerald-600 dark:text-emerald-400 font-semibold">${fmt(r.user_payout_usd ?? r.reward_usd ?? 0)}</td>
                       <td className="py-3 px-4 font-mono text-xs">{fmt(r.exchange_rate || 1600)}</td>
                       <td className="py-3 px-4 font-bold text-teal-600 dark:text-teal-400">{fmt(r.reward_yer)} ر.ي</td>
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
-                          r.status === 'completed'
+                          r.status === 'credited' || r.status === 'completed'
                             ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400'
                             : 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400'
                         }`}>
-                          {r.status === 'completed' ? 'مكتمل ومودع' : 'معكوس / مرتجع'}
+                          {r.status === 'credited' || r.status === 'completed' ? 'مكتمل ومودع' : 'مسترجع / معكوس'}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-xs text-slate-500">{new Date(r.created_at).toLocaleString('ar-YE')}</td>

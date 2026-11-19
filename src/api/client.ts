@@ -581,7 +581,9 @@ export const api = {
         id: string;
         transaction_id: string;
         offer_name?: string;
-        reward_usd: number;
+        user_payout_usd: number;
+        reward_usd?: number;
+        publisher_payout_usd?: number;
         exchange_rate: number;
         reward_yer: number;
         status: string;
