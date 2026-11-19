@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { Wallet, Moon, Sun, Shield, LogOut, User, Megaphone } from 'lucide-react';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
+import { PWAInstallButton } from '../pwa/PWAInstallButton.tsx';
 
 interface NavbarProps {
   currentTab: string;
@@ -105,7 +106,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
             </nav>
 
             {/* Zone 3: User Profile Icon Dropdown & Theme Toggle */}
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-2.5 shrink-0">
+              <PWAInstallButton />
               <button
                 type="button"
                 onClick={onToggleDark}

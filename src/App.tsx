@@ -20,6 +20,7 @@ import { AdvertiserPortal } from './components/advertiser/AdvertiserPortal.tsx';
 import { LegalModal } from './components/public/LegalPages.tsx';
 import { AdsterraAd } from './components/ads/AdsterraAd.tsx';
 import { OfferWallView } from './components/dashboard/OfferWallView.tsx';
+import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
@@ -80,6 +81,9 @@ function MainApp() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors overflow-x-hidden w-full max-w-full">
+      {/* Offline Status Indicator */}
+      <OfflineIndicator />
+
       {/* Top Bar Navigation */}
       <Navbar
         currentTab={currentTab}
