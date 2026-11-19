@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 import {
-  Gift,
   ExternalLink,
   ShieldCheck,
   CheckCircle2,
@@ -12,11 +12,14 @@ import {
   DollarSign,
   Coins,
   LogIn,
+  Wallet,
+  RotateCcw,
 } from 'lucide-react';
 
 interface ClixWallReward {
   id: string;
   transaction_id: string;
+  offer_id?: string | null;
   offer_name?: string;
   user_payout_usd: number;
   reward_usd?: number;
@@ -31,6 +34,8 @@ interface ClixWallSummary {
   totalUsdEarned: number;
   totalYerCredited: number;
   offersCount: number;
+  reversedCount?: number;
+  walletBalanceYer?: number;
 }
 
 export const OfferWallView: React.FC = () => {
@@ -42,6 +47,8 @@ export const OfferWallView: React.FC = () => {
     totalUsdEarned: 0,
     totalYerCredited: 0,
     offersCount: 0,
+    reversedCount: 0,
+    walletBalanceYer: 0,
   });
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +85,8 @@ export const OfferWallView: React.FC = () => {
             totalUsdEarned: 0,
             totalYerCredited: 0,
             offersCount: 0,
+            reversedCount: 0,
+            walletBalanceYer: 0,
           }
         );
       }
@@ -92,17 +101,17 @@ export const OfferWallView: React.FC = () => {
     fetchOfferWallData();
   }, [fetchOfferWallData]);
 
-  const fmt = (n: number) =>
+  const fmt = (n: number, maxDecimals = 2) =>
     Number(n || 0).toLocaleString('en-US', {
       minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: maxDecimals,
     });
 
   if (!user) {
     return (
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-8 text-center space-y-4" dir="rtl">
-        <div className="w-14 h-14 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-2xl flex items-center justify-center mx-auto">
-          <Gift className="w-8 h-8" />
+        <div className="w-16 h-16 bg-blue-50 dark:bg-blue-950/50 rounded-2xl flex items-center justify-center mx-auto border border-blue-100 dark:border-blue-900">
+          <ClixWallIcon size={40} />
         </div>
         <h2 className="text-lg font-bold text-slate-800 dark:text-white">تسجيل الدخول مطلوب</h2>
         <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
@@ -123,13 +132,13 @@ export const OfferWallView: React.FC = () => {
     <div className="space-y-6 pb-12" dir="rtl">
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
-        <div className="absolute left-0 bottom-0 opacity-10 transform translate-x-8 translate-y-8">
-          <Gift size={180} />
+        <div className="absolute left-4 bottom-2 opacity-15 pointer-events-none">
+          <ClixWallIcon size={130} />
         </div>
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-2">
-            <span className="bg-white/20 p-2.5 rounded-xl backdrop-blur-md">
-              <Gift className="w-7 h-7 text-emerald-100" />
+            <span className="bg-white/20 p-2 rounded-xl backdrop-blur-md shadow-inner">
+              <ClixWallIcon size={32} />
             </span>
             <h1 className="text-2xl font-bold">عروض كسب الإضافية (ClixWall Offer Wall)</h1>
           </div>
@@ -140,14 +149,14 @@ export const OfferWallView: React.FC = () => {
       </div>
 
       {/* Summary Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm flex items-center gap-4">
           <div className="p-3 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl">
             <DollarSign className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">إجمالي الأرباح (USD)</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">${fmt(summary.totalUsdEarned)}</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">صافي الأرباح (USD)</p>
+            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">${fmt(summary.totalUsdEarned, 4)}</h3>
           </div>
         </div>
 
@@ -156,7 +165,7 @@ export const OfferWallView: React.FC = () => {
             <Coins className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">المكافأة المودعة (YER)</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">صافي مكافآت ClixWall (YER)</p>
             <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">{fmt(summary.totalYerCredited)} ر.ي</h3>
           </div>
         </div>
@@ -166,8 +175,28 @@ export const OfferWallView: React.FC = () => {
             <CheckCircle2 className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">العروض المنجزة</p>
-            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">{summary.offersCount} عرض</h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">العروض المنجزة (الصافية)</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <h3 className="text-xl font-bold text-slate-800 dark:text-white">{summary.offersCount} عرض</h3>
+              {(summary.reversedCount ?? 0) > 0 && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300">
+                  <RotateCcw className="w-3 h-3" />
+                  {summary.reversedCount} مسترجع
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm flex items-center gap-4">
+          <div className="p-3 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl">
+            <Wallet className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">رصيد المحفظة (دفتر الأستاذ)</p>
+            <h3 className="text-xl font-bold text-slate-800 dark:text-white mt-0.5">
+              {fmt(summary.walletBalanceYer ?? 0)} ر.ي
+            </h3>
           </div>
         </div>
       </div>
@@ -280,8 +309,10 @@ export const OfferWallView: React.FC = () => {
           </div>
 
           {rewards.length === 0 ? (
-            <div className="py-16 text-center">
-              <Gift className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <div className="py-16 text-center space-y-3">
+              <div className="flex justify-center opacity-60">
+                <ClixWallIcon size={44} />
+              </div>
               <p className="text-slate-500 dark:text-slate-400 font-medium text-sm">لا توجد مكافآت مسجلة حتى الآن.</p>
               <p className="text-slate-400 dark:text-slate-500 text-xs mt-1">ابدأ بإتمام العروض من حائط العروض لتظهر هنا فوراً.</p>
             </div>
@@ -300,25 +331,46 @@ export const OfferWallView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700 text-sm text-slate-700 dark:text-slate-200">
-                  {rewards.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/25 transition">
-                      <td className="py-3 px-4 font-mono text-xs text-slate-500">{r.transaction_id}</td>
-                      <td className="py-3 px-4 font-medium">{r.offer_name || 'عرض مخصص'}</td>
-                      <td className="py-3 px-4 text-emerald-600 dark:text-emerald-400 font-semibold">${fmt(r.user_payout_usd ?? r.reward_usd ?? 0)}</td>
-                      <td className="py-3 px-4 font-mono text-xs">{fmt(r.exchange_rate || 1600)}</td>
-                      <td className="py-3 px-4 font-bold text-teal-600 dark:text-teal-400">{fmt(r.reward_yer)} ر.ي</td>
-                      <td className="py-3 px-4">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
-                          r.status === 'credited' || r.status === 'completed'
-                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400'
-                            : 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400'
-                        }`}>
-                          {r.status === 'credited' || r.status === 'completed' ? 'مكتمل ومودع' : 'مسترجع / معكوس'}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-xs text-slate-500">{new Date(r.created_at).toLocaleString('ar-YE')}</td>
-                    </tr>
-                  ))}
+                  {rewards.map((r) => {
+                    const isCredited = r.status === 'credited' || r.status === 'completed';
+                    return (
+                      <tr key={r.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/25 transition">
+                        <td className="py-3 px-4 font-mono text-xs text-slate-500">{r.transaction_id}</td>
+                        <td className="py-3 px-4 font-medium">{r.offer_name || 'عرض ClixWall'}</td>
+                        <td
+                          className={`py-3 px-4 font-semibold ${
+                            isCredited
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-rose-500/80 dark:text-rose-400/80 line-through'
+                          }`}
+                        >
+                          ${fmt(r.user_payout_usd ?? r.reward_usd ?? 0, 4)}
+                        </td>
+                        <td className="py-3 px-4 font-mono text-xs">{fmt(r.exchange_rate || 1600)}</td>
+                        <td
+                          className={`py-3 px-4 font-bold ${
+                            isCredited
+                              ? 'text-teal-600 dark:text-teal-400'
+                              : 'text-rose-500/80 dark:text-rose-400/80 line-through'
+                          }`}
+                        >
+                          {fmt(r.reward_yer)} ر.ي
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
+                              isCredited
+                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400'
+                                : 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-400'
+                            }`}
+                          >
+                            {isCredited ? 'مكتمل ومودع' : 'مسترجع / معكوس (مستبعد)'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-xs text-slate-500">{new Date(r.created_at).toLocaleString('ar-YE')}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

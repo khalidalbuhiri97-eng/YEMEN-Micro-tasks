@@ -580,6 +580,7 @@ export const api = {
       rewards: Array<{
         id: string;
         transaction_id: string;
+        offer_id?: string | null;
         offer_name?: string;
         user_payout_usd: number;
         reward_usd?: number;
@@ -589,7 +590,13 @@ export const api = {
         status: string;
         created_at: string;
       }>;
-      summary: { totalUsdEarned: number; totalYerCredited: number; offersCount: number };
+      summary: {
+        totalUsdEarned: number;
+        totalYerCredited: number;
+        offersCount: number;
+        reversedCount?: number;
+        walletBalanceYer?: number;
+      };
     }>('/clixwall/rewards'),
 };
 

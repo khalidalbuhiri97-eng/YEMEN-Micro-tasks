@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { Wallet, Moon, Sun, Shield, LogOut, User, Megaphone } from 'lucide-react';
+import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 
 interface NavbarProps {
   currentTab: string;
@@ -59,6 +60,18 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
                 }`}
               >
                 المحفظة والسحب
+              </button>
+              <button
+                onClick={() => onNavigate('offerwall')}
+                className={`hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 flex items-center gap-1.5 ${
+                  currentTab === 'offerwall' ? 'text-blue-600 dark:text-blue-400 font-bold border-b-2 border-blue-600' : ''
+                }`}
+              >
+                <ClixWallIcon size={16} />
+                <span>عروض ClixWall</span>
+                <span className="text-[10px] bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-1.5 py-0.2 rounded-full font-bold">
+                  USD
+                </span>
               </button>
               <button
                 onClick={() => onNavigate('how_it_works')}

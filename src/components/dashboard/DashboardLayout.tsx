@@ -7,7 +7,6 @@ import { WalletView } from './WalletView.tsx';
 import { WithdrawView } from './WithdrawView.tsx';
 import { ReferralView } from './ReferralView.tsx';
 import { SupportView } from './SupportView.tsx';
-import { OfferWallView } from './OfferWallView.tsx';
 import { AdvertiserPortal } from '../advertiser/AdvertiserPortal.tsx';
 import {
   LayoutDashboard,
@@ -18,7 +17,6 @@ import {
   Users,
   HelpCircle,
   Megaphone,
-  Gift,
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -54,7 +52,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
       : [
           { id: 'overview', label: 'نظرة عامة', icon: LayoutDashboard },
           { id: 'tasks', label: 'المهام المتاحة', icon: CheckSquare },
-          { id: 'offerwall', label: 'عروض كسب المجانية', icon: Gift },
           { id: 'submissions', label: 'إثباتاتي المرفوعة', icon: FileCheck },
           { id: 'wallet', label: 'المحفظة وسجل الحركات', icon: Wallet },
           { id: 'withdraw', label: 'سحب الأرباح نقداً', icon: Banknote },
@@ -160,7 +157,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               onGoToWallet={() => setSubTab('wallet')}
             />
           )}
-          {subTab === 'offerwall' && <OfferWallView />}
           {subTab === 'submissions' && (
             <MySubmissionsView onBrowseTasks={() => setSubTab('tasks')} />
           )}

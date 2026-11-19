@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, CheckCircle2, ShieldCheck, Zap } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Zap } from 'lucide-react';
 import { api } from '../../api/client.ts';
+import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
+import { HomeAdWindow } from '../ads/HomeAdWindow.tsx';
+import { ClixWallHomeCard } from '../home/ClixWallHomeCard.tsx';
 
 interface HeroProps {
   onStartEarning: () => void;
   onExploreTasks: () => void;
+  onGoToOfferWall?: () => void;
 }
 
-export const Hero: React.FC<HeroProps> = ({ onStartEarning, onExploreTasks }) => {
+export const Hero: React.FC<HeroProps> = ({ onStartEarning, onExploreTasks, onGoToOfferWall }) => {
   const [stats, setStats] = useState<{
     totalCompletedTasks: number;
     totalWithdrawnYer: number;
@@ -38,9 +42,9 @@ export const Hero: React.FC<HeroProps> = ({ onStartEarning, onExploreTasks }) =>
   return (
     <section className="relative overflow-hidden bg-slate-50 dark:bg-slate-950 py-12 lg:py-16 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
           {/* Right Column: Copy & Actions (RTL first) */}
-          <div className="lg:col-span-7 flex flex-col justify-center">
+          <div className="lg:col-span-6 flex flex-col justify-center">
             {/* Context line */}
             <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400 mb-3">
               <Zap className="w-4 h-4 shrink-0" />
@@ -53,16 +57,16 @@ export const Hero: React.FC<HeroProps> = ({ onStartEarning, onExploreTasks }) =>
             </h1>
 
             {/* Subheading */}
-            <p className="text-base sm:text-lg text-slate-600 dark:text-slate-300 leading-relaxed mb-8 max-w-2xl">
+            <p className="text-base sm:text-lg text-slate-600 dark:text-slate-300 leading-relaxed mb-6 max-w-2xl">
               سوق عمل مصغر موجه للشباب في صنعاء، عدن، تعز وجميع المحافظات اليمنية. اربح مكافآت نقدية فعلية عند إنجاز المهام المعتمدة مع سحب مباشر عبر الكريمي وشبكة النجم ومحفظة جوالي.
             </p>
 
-            {/* Actions */}
-            <div className="flex flex-wrap items-center gap-4 mb-10">
+            {/* Actions: Main Buttons + ClixWall Button */}
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-8">
               <button
                 type="button"
                 onClick={onStartEarning}
-                className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 shrink-0"
+                className="px-5 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 shrink-0 cursor-pointer"
               >
                 <span>ابدأ الكسب وسجل حسابك</span>
                 <ArrowLeft className="w-4 h-4" />
@@ -71,9 +75,23 @@ export const Hero: React.FC<HeroProps> = ({ onStartEarning, onExploreTasks }) =>
               <button
                 type="button"
                 onClick={onExploreTasks}
-                className="px-6 py-3.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-semibold text-sm rounded-xl border border-slate-300 dark:border-slate-700 transition-colors shrink-0"
+                className="px-5 py-3.5 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-900 dark:text-white font-semibold text-sm rounded-xl border border-slate-300 dark:border-slate-700 transition-colors shrink-0 cursor-pointer"
               >
                 تصفح المهام المتاحة
+              </button>
+
+              {/* ClixWall Dedicated Action Button */}
+              <button
+                type="button"
+                onClick={onGoToOfferWall || onStartEarning}
+                title="فتح حائط عروض ClixWall اليومية"
+                className="px-4 py-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white font-bold text-sm rounded-xl shadow-md hover:shadow-lg transition-all flex items-center gap-2 shrink-0 cursor-pointer group"
+              >
+                <ClixWallIcon size={20} className="brightness-125 transition-transform group-hover:scale-110" />
+                <span>عروض ClixWall</span>
+                <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-extrabold uppercase">
+                  USD
+                </span>
               </button>
             </div>
 
@@ -89,34 +107,24 @@ export const Hero: React.FC<HeroProps> = ({ onStartEarning, onExploreTasks }) =>
               </span>
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                دفتر أستاذ مالي مدقق بالكامل
+                عروض دولية فورية مع ClixWall
               </span>
             </div>
           </div>
 
-          {/* Left Column: Visual Banner */}
-          <div className="lg:col-span-5 relative flex items-center">
-            <div className="relative w-full h-full min-h-[340px] rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 shadow-xl bg-slate-900">
-              <img
-                src="/src/assets/images/hero_yemen_earning_1793978996548.jpg"
-                alt="شباب يمنيون يعملون على منصة كسب اليمن"
-                referrerPolicy="no-referrer"
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent"></div>
+          {/* Left Column: Visual Area (300x250 Ad Window + ClixWall Card Paired) */}
+          <div className="lg:col-span-6 flex flex-col sm:flex-row lg:flex-row gap-4 items-center justify-center">
+            {/* 1. The Ad Window (300x250) replacing the old image */}
+            <div className="w-full sm:w-auto flex justify-center">
+              <HomeAdWindow />
+            </div>
 
-              <div className="absolute bottom-4 right-4 left-4 p-4 rounded-xl bg-slate-900/85 backdrop-blur-md border border-white/10 text-white">
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="font-semibold text-emerald-400 flex items-center gap-1">
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    تحويل مباشر معتمد
-                  </span>
-                  <span className="font-mono tabular-nums text-slate-300">صنعاء / عدن</span>
-                </div>
-                <p className="text-xs text-slate-200">
-                  معاملات مالية حقيقية وتوثيق فوري لجميع حركات الصرف عبر شبكات الصرافة اليمنية.
-                </p>
-              </div>
+            {/* 2. The ClixWall Card placed directly next to the ad window */}
+            <div className="w-full sm:w-auto flex-1 max-w-[340px]">
+              <ClixWallHomeCard
+                onOpenOfferWall={onGoToOfferWall || onStartEarning}
+                className="h-full min-h-[314px]"
+              />
             </div>
           </div>
         </div>

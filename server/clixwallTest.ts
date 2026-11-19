@@ -1,280 +1,561 @@
 /**
- * Comprehensive ClixWall Offer Wall & Postback Integration Test Suite
+ * Comprehensive ClixWall Offer Wall & Postback Verification Suite
  * Yemen Task (كسب اليمن)
+ *
+ * SAFETY GUARANTEE:
+ * - Zero mutations to live production user accounts, balances, or ledger tables.
+ * - Live checks are strictly read-only (or validation-only rejections before DB writes).
+ * - Full financial lifecycle (70/30 split, idempotency, reversals, net rewards) is
+ *   verified end-to-end against an isolated Express instance using the real
+ *   createClixWallHandlers implementation and a faithful append-only ledger simulator.
  */
 
 import 'dotenv/config';
+import express from 'express';
+import http from 'node:http';
+import { createClient } from '@supabase/supabase-js';
 import { getSupabaseAdminClient } from './app.js';
+import {
+  createClixWallHandlers,
+  CLIXWALL_EXCHANGE_RATE,
+  sanitizeClixWallPayload,
+} from './clixwallHandlers.js';
 
-async function runClixWallTest() {
-  console.log('==================================================================');
-  console.log('       Yemen Task - ClixWall Comprehensive Integration Suite       ');
-  console.log('==================================================================');
-
-  const adminClient = getSupabaseAdminClient();
-  console.log('  - Supabase Admin Client initialized with Service Role Key.');
-
-  const expectedSecret = (process.env.CLIXWALL_POSTBACK_SECRET || process.env.CLIXWALL_SECRET || '').trim();
-  const apiKey = (process.env.CLIXWALL_API_KEY || '').trim();
-  const testUserId = 'a6d10676-a306-4594-84bf-22b1880b06aa'; // Designated test user account
-
-  console.log(`  - Configured Secret: ${expectedSecret ? '***' + expectedSecret.slice(-4) : 'MISSING'}`);
-  console.log(`  - Configured API Key: ${apiKey ? apiKey.slice(0, 4) + '...' + apiKey.slice(-4) : 'MISSING'}`);
-
-  if (!expectedSecret) {
-    throw new Error('CLIXWALL_POSTBACK_SECRET must be configured.');
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(`Assertion failed: ${message}`);
   }
+}
 
-  // ----------------------------------------------------------------------------
-  // 1. Verify CLIXWALL-RECEIVABLE ledger account
-  // ----------------------------------------------------------------------------
-  console.log('\n[1/10] Verifying CLIXWALL-RECEIVABLE ledger account in financial_accounts...');
+interface MockPostbackRow {
+  id: string;
+  transaction_id: string;
+  user_id: string;
+  offer_id: string | null;
+  offer_name: string | null;
+  status: 'credited' | 'reversed';
+  user_payout_usd: number;
+  publisher_payout_usd: number;
+  exchange_rate: number;
+  reward_yer: number;
+  ledger_transaction_id: string;
+  raw_status: string;
+  payload: unknown;
+  created_at: string;
+}
+
+/**
+ * Faithful in-memory simulator matching live Supabase schema:
+ * - clixwall_postbacks (append-only, unique on (transaction_id, status))
+ * - financial_accounts (wallet + CLIXWALL-RECEIVABLE in micros)
+ * - process_clixwall_postback (9-param exact RPC contract)
+ */
+function createMockSupabaseAdmin(testUserId: string) {
+  const postbacks: MockPostbackRow[] = [];
+  const balances = new Map<string, number>([
+    [`wallet:${testUserId}`, 0],
+    ['CLIXWALL-RECEIVABLE', 0],
+  ]);
+  let idSeq = 1;
+
+  const client = {
+    balances,
+    postbacks,
+    async rpc(fnName: string, args: Record<string, any>) {
+      if (fnName !== 'process_clixwall_postback') {
+        return { data: null, error: { message: `Unknown RPC: ${fnName}` } };
+      }
+
+      const tid = String(args.p_transaction_id || '').trim();
+      const userId = String(args.p_user_id || '').trim();
+      const status = String(args.p_status || '').trim();
+      const userPayoutUsd = Number(args.p_user_payout_usd || 0);
+      const publisherPayoutUsd = Number(args.p_publisher_payout_usd || 0);
+
+      if (userId !== testUserId) {
+        return { data: null, error: { message: 'UNKNOWN_USER' } };
+      }
+
+      const existingCredit = postbacks.find(
+        (r) => r.transaction_id === tid && r.status === 'credited'
+      );
+      const existingReversal = postbacks.find(
+        (r) => r.transaction_id === tid && r.status === 'reversed'
+      );
+
+      if (status === 'reversed') {
+        if (!existingCredit) {
+          return { data: null, error: { message: 'REVERSAL_WITHOUT_ORIGINAL_CREDIT' } };
+        }
+        if (existingReversal) {
+          return { data: { ok: true, reversal: true, duplicate: true }, error: null };
+        }
+
+        const amountUnits = Math.round(existingCredit.reward_yer * 1_000_000);
+        const walletKey = `wallet:${existingCredit.user_id}`;
+        balances.set(walletKey, Math.max(0, (balances.get(walletKey) || 0) - amountUnits));
+        balances.set(
+          'CLIXWALL-RECEIVABLE',
+          Math.max(0, (balances.get('CLIXWALL-RECEIVABLE') || 0) - amountUnits)
+        );
+
+        postbacks.push({
+          id: `pb-${idSeq++}`,
+          transaction_id: tid,
+          user_id: existingCredit.user_id,
+          offer_id: args.p_offer_id ?? existingCredit.offer_id,
+          offer_name: args.p_offer_name ?? existingCredit.offer_name,
+          status: 'reversed',
+          user_payout_usd: existingCredit.user_payout_usd,
+          publisher_payout_usd: existingCredit.publisher_payout_usd,
+          exchange_rate: CLIXWALL_EXCHANGE_RATE,
+          reward_yer: existingCredit.reward_yer,
+          ledger_transaction_id: `ltx-rev-${idSeq}`,
+          raw_status: String(args.p_raw_status || '2'),
+          payload: args.p_payload ?? {},
+          created_at: new Date(Date.now() + idSeq * 1000).toISOString(),
+        });
+
+        return { data: { ok: true, reversal: true, duplicate: false }, error: null };
+      }
+
+      if (status === 'credited') {
+        if (existingCredit) {
+          return { data: { ok: true, status: 'credited', duplicate: true }, error: null };
+        }
+        if (existingReversal) {
+          return { data: { ok: true, status: 'reversed', duplicate: true }, error: null };
+        }
+        if (userPayoutUsd <= 0 || publisherPayoutUsd <= 0) {
+          return { data: null, error: { message: 'INVALID_PAYOUT_AMOUNT' } };
+        }
+
+        const rewardYer = Math.round(userPayoutUsd * CLIXWALL_EXCHANGE_RATE * 1_000_000) / 1_000_000;
+        const amountUnits = Math.round(rewardYer * 1_000_000);
+        const walletKey = `wallet:${userId}`;
+        balances.set(walletKey, (balances.get(walletKey) || 0) + amountUnits);
+        balances.set('CLIXWALL-RECEIVABLE', (balances.get('CLIXWALL-RECEIVABLE') || 0) + amountUnits);
+
+        postbacks.push({
+          id: `pb-${idSeq++}`,
+          transaction_id: tid,
+          user_id: userId,
+          offer_id: args.p_offer_id ?? null,
+          offer_name: args.p_offer_name ?? 'عرض ClixWall',
+          status: 'credited',
+          user_payout_usd: userPayoutUsd,
+          publisher_payout_usd: publisherPayoutUsd,
+          exchange_rate: CLIXWALL_EXCHANGE_RATE,
+          reward_yer: rewardYer,
+          ledger_transaction_id: `ltx-crd-${idSeq}`,
+          raw_status: String(args.p_raw_status || '1'),
+          payload: args.p_payload ?? {},
+          created_at: new Date(Date.now() + idSeq * 1000).toISOString(),
+        });
+
+        return { data: { ok: true, status: 'credited', duplicate: false }, error: null };
+      }
+
+      return { data: null, error: { message: `INVALID_POSTBACK_STATUS: ${status}` } };
+    },
+    from(table: string) {
+      const filters: Record<string, any> = {};
+      let orderAsc = false;
+
+      const builder: any = {
+        select() {
+          return builder;
+        },
+        eq(col: string, val: any) {
+          filters[col] = val;
+          return builder;
+        },
+        order(_col: string, opts?: { ascending?: boolean }) {
+          orderAsc = Boolean(opts?.ascending);
+          return builder;
+        },
+        maybeSingle() {
+          if (table === 'financial_accounts') {
+            const key =
+              filters.owner_user_id && filters.account_type === 'wallet'
+                ? `wallet:${filters.owner_user_id}`
+                : filters.account_code;
+            const bal = key ? balances.get(key) : undefined;
+            return Promise.resolve({
+              data: bal !== undefined ? { balance_units: bal } : null,
+              error: null,
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        },
+        then(resolve: any, reject: any) {
+          try {
+            if (table === 'clixwall_postbacks') {
+              let rows = postbacks.filter((r) =>
+                filters.user_id ? r.user_id === filters.user_id : true
+              );
+              rows = [...rows].sort((a, b) =>
+                orderAsc
+                  ? a.created_at.localeCompare(b.created_at)
+                  : b.created_at.localeCompare(a.created_at)
+              );
+              return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
+            }
+            return Promise.resolve({ data: [], error: null }).then(resolve, reject);
+          } catch (err) {
+            return Promise.reject(err).then(resolve, reject);
+          }
+        },
+      };
+      return builder;
+    },
+  };
+
+  return client as any;
+}
+
+async function runReadOnlyLiveSupabaseChecks() {
+  console.log('\n--- Part A: Read-Only Live Supabase Verification ---');
+  const adminClient = getSupabaseAdminClient();
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+
+  // 1. Verify CLIXWALL-RECEIVABLE
   const { data: acc, error: accErr } = await adminClient
     .from('financial_accounts')
-    .select('*')
+    .select('id, account_code, account_type, normal_side, status, balance_units')
     .eq('account_code', 'CLIXWALL-RECEIVABLE')
     .single();
 
-  if (accErr || !acc) {
-    throw new Error(`CLIXWALL-RECEIVABLE account not found: ${accErr?.message}`);
-  }
-  console.log(`  ✓ Verified account: ${acc.account_name} (${acc.currency}, type: ${acc.account_type}, side: ${acc.normal_side})`);
+  assert(!accErr && acc, `CLIXWALL-RECEIVABLE not found: ${accErr?.message}`);
+  console.log(
+    `  ✓ [A1] CLIXWALL-RECEIVABLE exists (${acc.account_code}, ${acc.account_type}/${acc.normal_side}, status=${acc.status}, balance_units=${acc.balance_units})`
+  );
 
-  // ----------------------------------------------------------------------------
-  // 2. Verify clixwall_postbacks table schema (user_payout_usd, publisher_payout_usd, status)
-  // ----------------------------------------------------------------------------
-  console.log('\n[2/10] Verifying clixwall_postbacks table schema & columns...');
-  const { data: samplePostback, error: tblErr } = await adminClient
+  // 2. Verify clixwall_postbacks schema
+  const { data: postbackRows, error: pbErr } = await adminClient
     .from('clixwall_postbacks')
-    .select('id, transaction_id, user_id, user_payout_usd, publisher_payout_usd, exchange_rate, reward_yer, status')
-    .limit(1);
+    .select(
+      'id, transaction_id, user_id, offer_id, offer_name, user_payout_usd, publisher_payout_usd, exchange_rate, reward_yer, status, created_at'
+    )
+    .order('created_at', { ascending: false });
 
-  if (tblErr) {
-    throw new Error(`clixwall_postbacks table query failed: ${tblErr.message}`);
+  assert(!pbErr && Array.isArray(postbackRows), `clixwall_postbacks query failed: ${pbErr?.message}`);
+  console.log(`  ✓ [A2] clixwall_postbacks schema verified (${postbackRows.length} historical rows read-only).`);
+
+  // 3. Reconcile net ClixWall postbacks vs financial_accounts for existing users (read-only)
+  const txGroups = new Map<string, { credit: any | null; reversed: boolean }>();
+  for (const row of postbackRows) {
+    const tid = String(row.transaction_id);
+    if (!txGroups.has(tid)) txGroups.set(tid, { credit: null, reversed: false });
+    const g = txGroups.get(tid)!;
+    if (row.status === 'credited' && !g.credit) g.credit = row;
+    if (row.status === 'reversed') g.reversed = true;
   }
-  console.log('  ✓ Verified clixwall_postbacks schema with user_payout_usd & publisher_payout_usd columns.');
 
-  // ----------------------------------------------------------------------------
-  // 3. Test Exchange Rate & Calculation logic (70% user payout, fixed rate 1,600 YER/USD)
-  // ----------------------------------------------------------------------------
-  console.log('\n[3/10] Verifying Exchange Rate 1 USD = 1,600 YER & 70/30 split logic...');
-  const testPublisherPayoutUsd = 0.001; // $0.001 total
-  const testUserPayoutUsd = 0.0007;     // 70% to user = $0.0007
-  const expectedYer = testUserPayoutUsd * 1600; // 1.12 YER
-
-  console.log(`  - Total Payout: $${testPublisherPayoutUsd} | User (70%): $${testUserPayoutUsd} -> Expected YER: ${expectedYer} ر.ي`);
-  if (Math.abs(expectedYer - 1.12) > 0.000001) {
-    throw new Error('Exchange rate calculation mismatch.');
+  const netYerByUser = new Map<string, number>();
+  for (const g of txGroups.values()) {
+    if (!g.reversed && g.credit?.user_id) {
+      const uid = String(g.credit.user_id);
+      netYerByUser.set(uid, (netYerByUser.get(uid) || 0) + Number(g.credit.reward_yer || 0));
+    }
   }
-  console.log('  ✓ Calculation verified: 1 USD = 1,600 YER exact conversion.');
+  console.log(`  ✓ [A3] Historical append-only grouping verified across ${txGroups.size} unique transactions (${netYerByUser.size} users with non-zero net).`);
 
-  // ----------------------------------------------------------------------------
-  // 4. Test OfferWall dynamic URL format template (no duplicate query parameters)
-  // ----------------------------------------------------------------------------
-  console.log('\n[4/10] Verifying OfferWall URL format template...');
-  let rawBaseUrl = (process.env.CLIXWALL_OFFERWALL_URL || 'https://clixwall.com/wall').trim();
-  if (rawBaseUrl.includes('?')) rawBaseUrl = rawBaseUrl.split('?')[0];
-  const baseUrl = rawBaseUrl.replace(/\/+$/, '') || 'https://clixwall.com/wall';
-  const generatedUrl = `${baseUrl}?api=${encodeURIComponent(apiKey)}&user=${encodeURIComponent(testUserId)}`;
-
-  console.log(`  - Generated URL: ${generatedUrl}`);
-  if (!generatedUrl.startsWith('https://clixwall.com/wall?api=') || !generatedUrl.includes(`&user=${testUserId}`)) {
-    throw new Error(`Generated URL does not match required format: ${generatedUrl}`);
+  // 4. Verify anon privilege denial on RPC and table
+  if (supabaseUrl && supabaseAnonKey) {
+    const anonClient = createClient(supabaseUrl, supabaseAnonKey);
+    const { error: anonTblErr } = await anonClient.from('clixwall_postbacks').select('id').limit(1);
+    const { error: anonRpcErr } = await anonClient.rpc('process_clixwall_postback', {
+      p_transaction_id: 'READONLY_ANON_PROBE',
+      p_user_id: '00000000-0000-4000-8000-000000000000',
+      p_offer_id: 'PROBE',
+      p_offer_name: 'PROBE',
+      p_user_payout_usd: 0.0007,
+      p_publisher_payout_usd: 0.0003,
+      p_status: 'credited',
+      p_raw_status: '1',
+      p_payload: {},
+    });
+    assert(anonTblErr, 'Anon client should NOT be allowed to read clixwall_postbacks.');
+    assert(anonRpcErr, 'Anon client should NOT be allowed to execute process_clixwall_postback.');
+    console.log('  ✓ [A4] Anon privilege denial verified on both clixwall_postbacks table and RPC.');
   }
-  if (generatedUrl.indexOf('?') !== generatedUrl.lastIndexOf('?')) {
-    throw new Error(`Generated URL contains duplicated query parameters: ${generatedUrl}`);
-  }
-  console.log('  ✓ Verified OfferWall URL format is clean, normalized, and matches required template.');
 
-  // ----------------------------------------------------------------------------
-  // 5. Test Secret Enforcement: Missing or Invalid Secret must return HTTP 403
-  // ----------------------------------------------------------------------------
-  console.log('\n[5/10] Testing Secret Enforcement (HTTP 403 on missing or invalid secret)...');
-  
-  // 5a. Missing secret
-  const noSecretRes = await fetch('http://localhost:3000/api/postbacks/clixwall?transaction_id=TX_NO_SEC&user_id=' + testUserId, {
-    method: 'GET',
+  // 5. Probe live 9-parameter RPC signature without writing any row (UNKNOWN_USER)
+  const { error: probeErr } = await adminClient.rpc('process_clixwall_postback', {
+    p_transaction_id: `READONLY_SIG_PROBE_${Date.now()}`,
+    p_user_id: '00000000-0000-4000-8000-000000000000',
+    p_offer_id: 'PROBE',
+    p_offer_name: 'PROBE',
+    p_user_payout_usd: 0.0007,
+    p_publisher_payout_usd: 0.0003,
+    p_status: 'credited',
+    p_raw_status: '1',
+    p_payload: {},
   });
-  if (noSecretRes.status !== 403) {
-    throw new Error(`Expected 403 for missing secret, got ${noSecretRes.status}`);
-  }
-  const noSecretData = await noSecretRes.json();
-  console.log(`  ✓ Missing secret correctly rejected with 403:`, noSecretData.error);
+  assert(
+    probeErr && probeErr.message.includes('UNKNOWN_USER'),
+    `Expected UNKNOWN_USER for 9-param RPC probe, got: ${probeErr?.message}`
+  );
+  console.log('  ✓ [A5] Live 9-parameter RPC signature matches process_clixwall_postback cleanly (zero rows written).');
+}
 
-  // 5b. Invalid secret
-  const badSecretRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=TX_BAD_SEC&user_id=${testUserId}&secret=WRONG_SECRET_VALUE`, {
-    method: 'GET',
-  });
-  if (badSecretRes.status !== 403) {
-    throw new Error(`Expected 403 for invalid secret, got ${badSecretRes.status}`);
-  }
-  const badSecretData = await badSecretRes.json();
-  console.log(`  ✓ Invalid secret correctly rejected with 403:`, badSecretData.error);
-
-  // ----------------------------------------------------------------------------
-  // 6. Test Missing Status Enforcement: Must NOT default to success (HTTP 400)
-  // ----------------------------------------------------------------------------
-  console.log('\n[6/10] Testing Missing Status Enforcement (HTTP 400 when status is missing)...');
-  const noStatusRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=TX_NO_STATUS&user_id=${testUserId}&secret=${expectedSecret}&user_payout_usd=0.0007`, {
-    method: 'GET',
-  });
-  if (noStatusRes.status !== 400) {
-    throw new Error(`Expected 400 for missing status, got ${noStatusRes.status}`);
-  }
-  const noStatusData = await noStatusRes.json();
-  console.log(`  ✓ Missing status correctly rejected with 400:`, noStatusData.error);
-
-  // 6b. Invalid status value
-  const badStatusRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=TX_BAD_STATUS&user_id=${testUserId}&secret=${expectedSecret}&status=unknown_random_status`, {
-    method: 'GET',
-  });
-  if (badStatusRes.status !== 400) {
-    throw new Error(`Expected 400 for invalid status, got ${badStatusRes.status}`);
-  }
-  const badStatusData = await badStatusRes.json();
-  console.log(`  ✓ Invalid status correctly rejected with 400:`, badStatusData.error);
-
-  // ----------------------------------------------------------------------------
-  // 7. Test Explicit Credit Flow & Double-Entry Accounting
-  // ----------------------------------------------------------------------------
-  console.log('\n[7/10] Testing Explicit Credit Flow (status=1) with 70/30 reward split...');
-  const uniqueTid = `TEST_CLIX_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-
-  // Query test user wallet account balance before credit
-  const { data: walletBefore } = await adminClient
-    .from('financial_accounts')
-    .select('balance_units')
-    .eq('owner_user_id', testUserId)
-    .eq('account_type', 'wallet')
-    .maybeSingle();
-  const balanceBefore = Number(walletBefore?.balance_units || 0);
-
-  const creditRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=${uniqueTid}&user_id=${testUserId}&secret=${expectedSecret}&user_payout_usd=0.0007&publisher_payout_usd=0.001&status=1&offer_id=OFFER_TEST_SUITE&offer_name=Suite_Test_Offer`, {
-    method: 'GET',
-  });
-
-  if (creditRes.status !== 200) {
-    const errBody = await creditRes.text();
-    throw new Error(`Expected 200 for explicit credit, got ${creditRes.status}: ${errBody}`);
+async function runLiveServerValidationChecks(expectedSecret: string) {
+  console.log('\n--- Part B: Live Express Server Validation Checks (Non-Mutating) ---');
+  const healthRes = await fetch('http://localhost:3000/api/health').catch(() => null);
+  if (!healthRes || !healthRes.ok) {
+    console.log('  ! Local server http://localhost:3000 not reachable; skipping Part B live HTTP probes.');
+    return;
   }
 
-  const creditData = await creditRes.json();
-  if (!creditData.success || creditData.status !== 'credited') {
-    throw new Error(`Credit response invalid: ${JSON.stringify(creditData)}`);
-  }
-  console.log(`  ✓ Explicit credit succeeded: TID=${uniqueTid}, status=${creditData.status}, duplicate=${creditData.duplicate}`);
+  const dummyUuid = '00000000-0000-4000-8000-000000000000';
 
-  // Verify wallet balance increased by exactly 1.12 YER (1,120,000 micros)
-  const { data: walletAfterCredit } = await adminClient
-    .from('financial_accounts')
-    .select('balance_units')
-    .eq('owner_user_id', testUserId)
-    .eq('account_type', 'wallet')
-    .single();
-  const balanceAfterCredit = Number(walletAfterCredit.balance_units);
-  const diffCredit = balanceAfterCredit - balanceBefore;
-  console.log(`  ✓ Financial Account balance increased by: ${diffCredit} micros (${diffCredit / 1000000} YER)`);
-  if (diffCredit !== 1120000) {
-    throw new Error(`Expected balance increase of 1,120,000 micros, got ${diffCredit}`);
-  }
+  for (const path of ['/api/postbacks/clixwall', '/api/clixwall/postback']) {
+    const noSec = await fetch(`http://localhost:3000${path}?transaction_id=T1&user_id=${dummyUuid}`);
+    assert(noSec.status === 403, `${path} missing secret should return 403, got ${noSec.status}`);
 
-  // ----------------------------------------------------------------------------
-  // 8. Test Credit Idempotency: Re-sending identical TID must not credit twice
-  // ----------------------------------------------------------------------------
-  console.log('\n[8/10] Testing Credit Idempotency (preventing double-credit on identical TID)...');
-  const duplicateCreditRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=${uniqueTid}&user_id=${testUserId}&secret=${expectedSecret}&user_payout_usd=0.0007&publisher_payout_usd=0.001&status=1&offer_id=OFFER_TEST_SUITE&offer_name=Suite_Test_Offer`, {
-    method: 'GET',
-  });
+    const badSec = await fetch(
+      `http://localhost:3000${path}?transaction_id=T1&user_id=${dummyUuid}&secret=INVALID`
+    );
+    assert(badSec.status === 403, `${path} wrong secret should return 403, got ${badSec.status}`);
 
-  if (duplicateCreditRes.status !== 200) {
-    throw new Error(`Expected 200 for idempotent duplicate, got ${duplicateCreditRes.status}`);
-  }
-  const duplicateCreditData = await duplicateCreditRes.json();
-  if (!duplicateCreditData.duplicate) {
-    throw new Error(`Expected duplicate=true on re-sent TID, got: ${JSON.stringify(duplicateCreditData)}`);
+    const noStatus = await fetch(
+      `http://localhost:3000${path}?transaction_id=T1&user_id=${dummyUuid}&secret=${encodeURIComponent(expectedSecret)}&user_payout_usd=0.0007&publisher_payout_usd=0.0003`
+    );
+    assert(noStatus.status === 400, `${path} missing status should return 400, got ${noStatus.status}`);
+
+    const badRatio = await fetch(
+      `http://localhost:3000${path}?transaction_id=T1&user_id=${dummyUuid}&secret=${encodeURIComponent(expectedSecret)}&status=1&user_payout_usd=0.001&publisher_payout_usd=0.001`
+    );
+    assert(badRatio.status === 400, `${path} invalid 50/50 ratio should return 400, got ${badRatio.status}`);
+
+    for (const ignoreStatus of ['0', 'rejected', 'cancelled', 'failed', 'pending']) {
+      const igRes = await fetch(
+        `http://localhost:3000${path}?transaction_id=T_IG&user_id=${dummyUuid}&secret=${encodeURIComponent(expectedSecret)}&status=${ignoreStatus}`
+      );
+      assert(igRes.status === 200, `${path} status=${ignoreStatus} should return 200, got ${igRes.status}`);
+      const igJson = await igRes.json();
+      assert(
+        igJson.action === 'ignored' && igJson.credited === false && igJson.reversed === false,
+        `${path} status=${ignoreStatus} must ignore without credit or reversal`
+      );
+    }
   }
 
-  // Verify balance remained unchanged
-  const { data: walletAfterDup } = await adminClient
-    .from('financial_accounts')
-    .select('balance_units')
-    .eq('owner_user_id', testUserId)
-    .eq('account_type', 'wallet')
-    .single();
-  if (Number(walletAfterDup.balance_units) !== balanceAfterCredit) {
-    throw new Error('Balance changed on duplicate credit! Idempotency violation.');
-  }
-  console.log(`  ✓ Idempotency confirmed: Server returned duplicate=true, balance remained strictly unchanged.`);
+  const unauthUrl = await fetch('http://localhost:3000/api/clixwall/offerwall-url');
+  assert(unauthUrl.status === 401, `Unauthenticated offerwall-url should return 401, got ${unauthUrl.status}`);
 
-  // ----------------------------------------------------------------------------
-  // 9. Test Explicit Reversal Flow & Double-Entry Reversal
-  // ----------------------------------------------------------------------------
-  console.log('\n[9/10] Testing Explicit Reversal Flow (status=2) & Reversal Idempotency...');
-  const reversalRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=${uniqueTid}&user_id=${testUserId}&secret=${expectedSecret}&user_payout_usd=0.0007&publisher_payout_usd=0.001&status=2&offer_id=OFFER_TEST_SUITE&offer_name=Suite_Test_Offer`, {
-    method: 'GET',
-  });
+  const unauthRewards = await fetch('http://localhost:3000/api/clixwall/rewards');
+  assert(unauthRewards.status === 401, `Unauthenticated rewards should return 401, got ${unauthRewards.status}`);
 
-  if (reversalRes.status !== 200) {
-    const errBody = await reversalRes.text();
-    throw new Error(`Expected 200 for reversal, got ${reversalRes.status}: ${errBody}`);
-  }
-  const reversalData = await reversalRes.json();
-  if (!reversalData.success || reversalData.status !== 'reversed') {
-    throw new Error(`Reversal response invalid: ${JSON.stringify(reversalData)}`);
-  }
-  console.log(`  ✓ Reversal processed successfully: status=${reversalData.status}, duplicate=${reversalData.duplicate}`);
+  console.log('  ✓ [B1-B5] Both live postback routes & auth routes enforce secret, 70/30 ratios, and non-actionable status rules.');
+}
 
-  // Verify balance reverted back to initial
-  const { data: walletAfterReversal } = await adminClient
-    .from('financial_accounts')
-    .select('balance_units')
-    .eq('owner_user_id', testUserId)
-    .eq('account_type', 'wallet')
-    .single();
-  const balanceAfterReversal = Number(walletAfterReversal.balance_units);
-  if (balanceAfterReversal !== balanceBefore) {
-    throw new Error(`Balance after reversal (${balanceAfterReversal}) does not match balance before credit (${balanceBefore})`);
-  }
-  console.log(`  ✓ Financial Account balance restored to exact original: ${balanceAfterReversal} micros.`);
+async function runIsolatedEndToEndSuite(expectedSecret: string, apiKey: string) {
+  console.log('\n--- Part C: Isolated End-to-End Lifecycle & Accounting Suite ---');
+  const testUserId = '11111111-1111-4111-8111-111111111111';
+  const mockDb = createMockSupabaseAdmin(testUserId);
+  const handlers = createClixWallHandlers({ getAdminClient: () => mockDb });
 
-  // 9b. Test Reversal Idempotency: Duplicate reversal call
-  const duplicateReversalRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=${uniqueTid}&user_id=${testUserId}&secret=${expectedSecret}&status=2`, {
-    method: 'GET',
-  });
-  const dupRevData = await duplicateReversalRes.json();
-  if (duplicateReversalRes.status !== 200 || !dupRevData.duplicate) {
-    throw new Error(`Expected duplicate=true on re-sent reversal, got: ${JSON.stringify(dupRevData)}`);
-  }
-  console.log(`  ✓ Reversal idempotency confirmed: Server returned duplicate=true without double-deduction.`);
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
-  // 9c. Test Uncredited Reversal Rejection
-  const uncreditedRevRes = await fetch(`http://localhost:3000/api/postbacks/clixwall?transaction_id=NON_EXISTENT_TX_${Date.now()}&user_id=${testUserId}&secret=${expectedSecret}&status=2`, {
-    method: 'GET',
-  });
-  if (uncreditedRevRes.status !== 400) {
-    throw new Error(`Expected 400 for uncredited reversal, got ${uncreditedRevRes.status}`);
-  }
-  const uncreditedRevData = await uncreditedRevRes.json();
-  console.log(`  ✓ Uncredited reversal correctly rejected with 400:`, uncreditedRevData.error);
+  const mockAuth = (req: any, _res: any, next: any) => {
+    req.user = { id: testUserId };
+    next();
+  };
 
-  // ----------------------------------------------------------------------------
-  // 10. Test Alternative Route /api/clixwall/postback
-  // ----------------------------------------------------------------------------
-  console.log('\n[10/10] Verifying alias route /api/clixwall/postback mounting...');
-  const aliasRes = await fetch('http://localhost:3000/api/clixwall/postback?transaction_id=&user_id=', {
-    method: 'GET',
-  });
-  if (aliasRes.status !== 403) {
-    throw new Error(`Expected 403 for alias route without secret, got ${aliasRes.status}`);
+  app.get('/api/clixwall/offerwall-url', mockAuth, handlers.getOfferWallUrl);
+  app.get('/api/clixwall/rewards', mockAuth, handlers.getRewards);
+  app.all('/api/postbacks/clixwall', handlers.handlePostback);
+  app.all('/api/clixwall/postback', handlers.handlePostback);
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address() as { port: number };
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    // 1. Test Credit with 70/30 split & gross publisher_payout normalization ($0.001 total -> $0.0007 user, $0.0003 publisher, 1.12 YER)
+    const tid1 = 'E2E_TX_001';
+    const res1 = await fetch(
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&user_payout_usd=0.0007&publisher_payout=0.001&status=1&offer_id=O1&offer_name=GrossNormalizedOffer`
+    );
+    assert(res1.status === 200, `Credit 1 failed with ${res1.status}`);
+    const j1 = await res1.json();
+    assert(j1.status === 'credited' && !j1.duplicate, 'Credit 1 should be credited and not duplicate');
+    assert(Math.abs(j1.user_payout_usd - 0.0007) < 1e-6, `Expected 0.0007 user share, got ${j1.user_payout_usd}`);
+    assert(Math.abs(j1.publisher_payout_usd - 0.0003) < 1e-6, `Expected 0.0003 publisher share, got ${j1.publisher_payout_usd}`);
+    assert(Math.abs(j1.reward_yer - 1.12) < 1e-6, `Expected 1.12 YER, got ${j1.reward_yer}`);
+    assert(
+      mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000,
+      'Wallet balance_units should equal 1,120,000 micros (1.12 YER)'
+    );
+    assert(
+      JSON.stringify(mockDb.postbacks[0].payload).includes('[REDACTED_SENSITIVE_DATA]') &&
+        !JSON.stringify(mockDb.postbacks[0].payload).includes(expectedSecret),
+      'Secret must be redacted before persisting payload'
+    );
+    console.log('  ✓ [C1] 70/30 gross normalization ($0.001 -> $0.0007/$0.0003 = 1.12 YER) & payload redaction passed.');
+
+    // 2. Duplicate postback idempotency
+    const resDup = await fetch(
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&user_payout_usd=0.0007&publisher_payout=0.001&status=approved`
+    );
+    const jDup = await resDup.json();
+    assert(resDup.status === 200 && jDup.duplicate === true, 'Duplicate postback must return duplicate=true');
+    assert(mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000, 'Balance must NOT increase on duplicate');
+    console.log('  ✓ [C2] Duplicate credit idempotency passed (no double credit).');
+
+    // 3. POST JSON & form-urlencoded second offer ($1.00 gross -> $0.70 user, $0.30 publisher = 1120 YER)
+    const tid2 = 'E2E_TX_002';
+    const formBody = new URLSearchParams({
+      transaction_id: tid2,
+      user_id: testUserId,
+      secret: expectedSecret,
+      user_payout_usd: '0.7',
+      publisher_payout_usd: '0.3',
+      status: 'completed',
+      offer_id: 'O2',
+      offer_name: 'FormEncodedOffer',
+    });
+    const res2 = await fetch(`${baseUrl}/api/clixwall/postback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody.toString(),
+    });
+    const j2 = await res2.json();
+    assert(res2.status === 200 && j2.status === 'credited' && j2.reward_yer === 1120, 'Form-urlencoded credit failed');
+    console.log('  ✓ [C3] POST form-urlencoded direct 70/30 credit ($0.70/$0.30 -> 1,120 YER) passed.');
+
+    // 4. Rejected / Cancelled / Failed / Pending / 0 must NOT credit new TID and must NOT reverse tid1
+    const balanceBeforeIgnore = mockDb.balances.get(`wallet:${testUserId}`);
+    for (const statusVal of ['0', 'rejected', 'cancelled', 'failed', 'pending']) {
+      const igRes = await fetch(`${baseUrl}/api/postbacks/clixwall`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transaction_id: tid1, // even targeting an existing credited TID!
+          user_id: testUserId,
+          secret: expectedSecret,
+          status: statusVal,
+          user_payout_usd: 0.0007,
+          publisher_payout_usd: 0.0003,
+        }),
+      });
+      const igJson = await igRes.json();
+      assert(
+        igRes.status === 200 && igJson.action === 'ignored' && !igJson.credited && !igJson.reversed,
+        `Status ${statusVal} must be ignored cleanly`
+      );
+    }
+    assert(
+      mockDb.balances.get(`wallet:${testUserId}`) === balanceBeforeIgnore,
+      'Non-actionable statuses must not mutate wallet balance'
+    );
+    console.log('  ✓ [C4] Rejected/cancelled/failed/pending/0 neither credited nor reversed existing reward.');
+
+    // 5. Chargeback / Reversal of tid1
+    const revRes = await fetch(
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&status=chargeback`
+    );
+    const revJson = await revRes.json();
+    assert(revRes.status === 200 && revJson.status === 'reversed' && !revJson.duplicate, 'Chargeback reversal failed');
+    assert(
+      mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000_000, // Only tid2 (1120 YER) remains
+      `Wallet balance after reversing tid1 should equal 1120 YER (1,120,000,000 micros), got ${mockDb.balances.get(`wallet:${testUserId}`)}`
+    );
+
+    // Duplicate reversal must be idempotent
+    const revDupRes = await fetch(
+      `${baseUrl}/api/postbacks/clixwall?transaction_id=${tid1}&user_id=${testUserId}&secret=${encodeURIComponent(expectedSecret)}&status=2`
+    );
+    const revDupJson = await revDupRes.json();
+    assert(revDupRes.status === 200 && revDupJson.duplicate === true, 'Duplicate reversal must return duplicate=true');
+    assert(
+      mockDb.balances.get(`wallet:${testUserId}`) === 1_120_000_000,
+      'Duplicate reversal must not double-deduct wallet balance'
+    );
+    console.log('  ✓ [C5] Chargeback & duplicate reversal idempotency passed.');
+
+    // 6. GET /api/clixwall/rewards excludes reversed transactions and reconciles with financial_accounts
+    const rewardsRes = await fetch(`${baseUrl}/api/clixwall/rewards`);
+    assert(rewardsRes.status === 200, 'GET /api/clixwall/rewards failed');
+    const rewardsJson = await rewardsRes.json();
+    assert(rewardsJson.rewards.length === 2, `Expected 2 unique transactions in history, got ${rewardsJson.rewards.length}`);
+    assert(rewardsJson.summary.offersCount === 1, `Expected 1 net approved offer, got ${rewardsJson.summary.offersCount}`);
+    assert(rewardsJson.summary.reversedCount === 1, `Expected 1 reversed offer, got ${rewardsJson.summary.reversedCount}`);
+    assert(
+      Math.abs(rewardsJson.summary.totalUsdEarned - 0.7) < 1e-6,
+      `Expected net USD $0.70 (tid1 excluded), got ${rewardsJson.summary.totalUsdEarned}`
+    );
+    assert(
+      rewardsJson.summary.totalYerCredited === 1120 && rewardsJson.summary.walletBalanceYer === 1120,
+      `Expected net YER 1120 == walletBalanceYer 1120, got ${JSON.stringify(rewardsJson.summary)}`
+    );
+    console.log('  ✓ [C6] GET /api/clixwall/rewards excluded reversed transaction & matched ledger wallet balance (1,120 YER).');
+
+    // 7. OfferWall URL template & missing/placeholder API key enforcement
+    if (apiKey) {
+      const urlRes = await fetch(`${baseUrl}/api/clixwall/offerwall-url`);
+      const urlJson = await urlRes.json();
+      assert(urlRes.status === 200, `Expected 200 for offerwall-url, got ${urlRes.status}`);
+      assert(
+        urlJson.offerWallUrl === `https://clixwall.com/wall?api=${encodeURIComponent(apiKey)}&user=${encodeURIComponent(testUserId)}`,
+        `Unexpected offerWallUrl format: ${urlJson.offerWallUrl}`
+      );
+    }
+
+    const prevKey = process.env.CLIXWALL_API_KEY;
+    try {
+      process.env.CLIXWALL_API_KEY = 'YOUR_API_KEY';
+      const badKeyRes = await fetch(`${baseUrl}/api/clixwall/offerwall-url`);
+      assert(badKeyRes.status === 503, `Placeholder YOUR_API_KEY must return 503, got ${badKeyRes.status}`);
+      const badKeyText = await badKeyRes.text();
+      assert(!badKeyText.includes('YOUR_API_KEY'), 'Response must never expose placeholder key');
+
+      delete process.env.CLIXWALL_API_KEY;
+      const missingKeyRes = await fetch(`${baseUrl}/api/clixwall/offerwall-url`);
+      assert(missingKeyRes.status === 503, `Missing CLIXWALL_API_KEY must return 503, got ${missingKeyRes.status}`);
+    } finally {
+      if (prevKey !== undefined) process.env.CLIXWALL_API_KEY = prevKey;
+    }
+    console.log('  ✓ [C7] OfferWall URL generation & missing/placeholder API key rejection (503) passed.');
+
+    // Verify sanitizeClixWallPayload redacts nested secrets cleanly
+    const clean = sanitizeClixWallPayload({ secret: 'abc', nested: { api_key: 'xyz', ok: 1 } }) as any;
+    assert(
+      clean.secret === '[REDACTED_SENSITIVE_DATA]' && clean.nested.api_key === '[REDACTED_SENSITIVE_DATA]',
+      'sanitizeClixWallPayload must redact nested secret and api_key fields'
+    );
+    console.log('  ✓ [C8] Payload secret sanitization verified.');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
-  console.log(`  ✓ Alias route /api/clixwall/postback is mounted and enforces secret verification.`);
+}
+
+async function main() {
+  console.log('==================================================================');
+  console.log('       Yemen Task - ClixWall Verification Suite (Zero-Mutation)   ');
+  console.log('==================================================================');
+
+  const expectedSecret = (process.env.CLIXWALL_POSTBACK_SECRET || process.env.CLIXWALL_SECRET || '').trim();
+  const apiKey = (process.env.CLIXWALL_API_KEY || '').trim();
+
+  assert(expectedSecret, 'CLIXWALL_POSTBACK_SECRET must be set in environment.');
+
+  await runReadOnlyLiveSupabaseChecks();
+  await runLiveServerValidationChecks(expectedSecret);
+  await runIsolatedEndToEndSuite(expectedSecret, apiKey);
 
   console.log('\n==================================================================');
-  console.log('ALL CLIXWALL INTEGRATION TESTS COMPLETED SUCCESSFULLY (10/10).');
+  console.log('ALL CLIXWALL VERIFICATION CHECKS PASSED SUCCESSFULLY.');
   console.log('==================================================================');
 }
 
-runClixWallTest().catch((err) => {
-  console.error('\n❌ ClixWall Test Failed:', err);
+main().catch((err) => {
+  console.error('\n❌ ClixWall Verification Failed:', err);
   process.exit(1);
 });

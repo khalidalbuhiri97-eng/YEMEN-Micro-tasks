@@ -19,11 +19,12 @@ import { AdminDashboard } from './components/admin/AdminDashboard.tsx';
 import { AdvertiserPortal } from './components/advertiser/AdvertiserPortal.tsx';
 import { LegalModal } from './components/public/LegalPages.tsx';
 import { AdsterraAd } from './components/ads/AdsterraAd.tsx';
+import { OfferWallView } from './components/dashboard/OfferWallView.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
   const { user, isAdmin } = useAuth();
-  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin'>('home');
+  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin'>('home');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   
@@ -98,6 +99,7 @@ function MainApp() {
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
+              onGoToOfferWall={() => setCurrentTab('offerwall')}
             />
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <AdsterraAd placementId="home_primary" />
@@ -134,6 +136,12 @@ function MainApp() {
               onGoToWithdraw={() => setCurrentTab('dashboard')}
               onGoToTasks={() => setCurrentTab('tasks')}
             />
+          </div>
+        )}
+
+        {currentTab === 'offerwall' && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <OfferWallView />
           </div>
         )}
 
