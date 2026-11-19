@@ -546,15 +546,16 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="space-y-1.5">
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      سعر المهمة (يبدأ من 1 ر.ي)
+                      سعر المهمة (جميع الأرقام والكسور)
                     </label>
                     <input
                       type="number"
-                      min="1"
+                      min="0.000001"
                       step="any"
                       required
                       value={rewardInput}
                       onChange={(e) => setRewardInput(e.target.value)}
+                      placeholder="مثال: 0.5 أو 1 أو 2.5 أو 10..."
                       className="w-full min-h-[44px] px-3.5 py-2.5 text-sm font-mono tabular-nums bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
                     />
                     <div className="flex flex-wrap gap-1.5">

@@ -1140,11 +1140,11 @@ export const AdminDashboard: React.FC = () => {
                   <input
                     type="number"
                     required
-                    min="1"
+                    min="0.000001"
                     step="any"
                     value={newTaskReward}
                     onChange={(e) => setNewTaskReward(e.target.value)}
-                    placeholder="مثال: 1 أو 10 أو 50..."
+                    placeholder="مثال: 0.25 أو 1 أو 10 أو 50..."
                     className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
                   />
                   {/* Quick reward presets */}
