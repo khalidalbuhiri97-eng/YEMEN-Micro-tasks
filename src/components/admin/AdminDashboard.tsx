@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary, CampaignItem } from '../../types/index.ts';
+import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary, CampaignItem, TaskBuilderMeta } from '../../types/index.ts';
 import { DatabaseErrorsView } from './DatabaseErrorsView.tsx';
 import { OwnerOverviewMetrics } from './finance/OwnerOverviewMetrics.tsx';
 import { TreasuryControlView } from './finance/TreasuryControlView.tsx';
@@ -10,7 +10,10 @@ import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
 import { TaxManagementView } from './finance/TaxManagementView.tsx';
 import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
+import { AdPartnersManager } from './AdPartnersManager.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
+import { TaskBuilderFields, TaskCardLivePreview } from '../tasks/TaskBuilderFields.tsx';
+import { getTaskKindLabel, inferTaskKindFromCategory, mapTaskKindToCategory } from '../../../shared/taskMeta.ts';
 import { fetchGeoCountries } from '../../services/geoService.ts';
 import type { CountryItem } from '../../types/index.ts';
 import {
@@ -29,6 +32,9 @@ import {
   Play,
   RotateCcw,
   FileText,
+  Pencil,
+  Crown,
+  Send,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SecureImageView } from '../common/SecureImageView.tsx';
@@ -41,7 +47,7 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -80,6 +86,31 @@ export const AdminDashboard: React.FC = () => {
     targetDivisionIds: [],
     targetDivisions: [],
   });
+  const [newTaskMeta, setNewTaskMeta] = useState<TaskBuilderMeta>({
+    taskKind: 'app_testing',
+    isFeatured: false,
+    fields: {},
+  });
+
+  // Edit Existing Task modal (non-financial metadata only)
+  const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
+  const [editTaskTitle, setEditTaskTitle] = useState('');
+  const [editTaskDesc, setEditTaskDesc] = useState('');
+  const [editTaskCat, setEditTaskCat] = useState('app_testing');
+  const [editTaskTime, setEditTaskTime] = useState('10');
+  const [editTaskStatus, setEditTaskStatus] = useState<TaskItem['status']>('ACTIVE');
+  const [editTaskMeta, setEditTaskMeta] = useState<TaskBuilderMeta>({
+    taskKind: 'app_testing',
+    isFeatured: false,
+    fields: {},
+  });
+  const [isSavingTaskEdit, setIsSavingTaskEdit] = useState(false);
+
+  // Admin Broadcast Notification form
+  const [broadcastTitle, setBroadcastTitle] = useState('');
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+
   const [adminCountries, setAdminCountries] = useState<CountryItem[]>([]);
   const [userCountryFilter, setUserCountryFilter] = useState<string>('');
 
@@ -260,16 +291,23 @@ export const AdminDashboard: React.FC = () => {
     try {
       const daysNum = Math.min(30, Math.max(1, Number(newTaskDurationDays) || 7));
       const deadline = new Date(Date.now() + daysNum * 24 * 60 * 60 * 1000).toISOString();
+      const derivedSteps = (newTaskMeta.fields?.steps || newTaskMeta.fields?.questions || [])
+        .map((s) => s.trim())
+        .filter(Boolean);
 
       await api.createAdminTask({
         title: newTaskTitle,
         description: newTaskDesc,
-        category: newTaskCat,
+        category: mapTaskKindToCategory(newTaskMeta.taskKind, newTaskCat),
+        taskKind: newTaskMeta.taskKind,
+        isFeatured: Boolean(newTaskMeta.isFeatured),
+        taskMeta: newTaskMeta,
+        steps: derivedSteps.length > 0 ? derivedSteps : undefined,
         rewardYer: Number(newTaskReward),
         totalQuantity: Number(newTaskQty),
         timeEstimateMinutes: Number(newTaskTime),
         deadline,
-        proofRequirements: { requireImage: true, requireText: true },
+        proofRequirements: { requireImage: true, requireText: true, _taskMeta: newTaskMeta },
         creationKey,
         countryId: newTaskGeo.countryId || undefined,
         isNationwide: newTaskGeo.isNationwide,
@@ -279,6 +317,7 @@ export const AdminDashboard: React.FC = () => {
       setIsCreatingTask(false);
       setNewTaskTitle('');
       setNewTaskDesc('');
+      setNewTaskMeta({ taskKind: 'app_testing', isFeatured: false, fields: {} });
       setCreationKey(crypto.randomUUID());
       await loadAllAdminData();
     } catch (err: any) {
@@ -286,6 +325,75 @@ export const AdminDashboard: React.FC = () => {
     } finally {
       isCreatingTaskRef.current = false;
       setIsSubmittingTask(false);
+    }
+  };
+
+  const openEditTaskModal = (task: TaskItem) => {
+    setEditingTask(task);
+    setEditTaskTitle(task.title);
+    setEditTaskDesc(task.description);
+    setEditTaskCat(task.category);
+    setEditTaskTime(String(task.timeEstimateMinutes || 10));
+    setEditTaskStatus(task.status);
+    setEditTaskMeta(
+      task.taskMeta || {
+        taskKind: task.taskKind || inferTaskKindFromCategory(task.category),
+        isFeatured: Boolean(task.isFeatured),
+        fields: {
+          steps: task.steps && task.steps.length > 0 ? task.steps : undefined,
+        },
+      }
+    );
+  };
+
+  const handleSaveTaskEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTask) return;
+    setIsSavingTaskEdit(true);
+    try {
+      const derivedSteps = (editTaskMeta.fields?.steps || editTaskMeta.fields?.questions || [])
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await api.updateAdminTask(editingTask.id, {
+        title: editTaskTitle.trim(),
+        description: editTaskDesc.trim(),
+        category: mapTaskKindToCategory(editTaskMeta.taskKind, editTaskCat),
+        taskKind: editTaskMeta.taskKind,
+        isFeatured: Boolean(editTaskMeta.isFeatured),
+        taskMeta: editTaskMeta,
+        timeEstimateMinutes: Math.max(1, Number(editTaskTime) || 10),
+        status: editTaskStatus,
+        ...(derivedSteps.length > 0 ? { steps: derivedSteps } : {}),
+      });
+      showToast('تم حفظ تعديلات المهمة بنجاح.', 'success');
+      setEditingTask(null);
+      await loadAllAdminData();
+    } catch (err: any) {
+      showToast(err.message || 'فشل حفظ تعديلات المهمة.', 'error');
+    } finally {
+      setIsSavingTaskEdit(false);
+    }
+  };
+
+  const handleSendBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastTitle.trim() || !broadcastMessage.trim()) {
+      showToast('يرجى إدخال عنوان ونص الإشعار.', 'error');
+      return;
+    }
+    setIsBroadcasting(true);
+    try {
+      const res = await api.broadcastAdminNotification({
+        title: broadcastTitle.trim(),
+        message: broadcastMessage.trim(),
+      });
+      showToast(`تم إرسال الإشعار إلى ${res.sentCount} مستخدم بنجاح.`, 'success');
+      setBroadcastTitle('');
+      setBroadcastMessage('');
+    } catch (err: any) {
+      showToast(err.message || 'فشل إرسال الإشعار الجماعي.', 'error');
+    } finally {
+      setIsBroadcasting(false);
     }
   };
 
@@ -529,6 +637,7 @@ export const AdminDashboard: React.FC = () => {
           { id: 'reports', label: 'التقارير المالية (8)', count: null },
           { id: 'taxes', label: 'إدارة الضرائب', count: null },
           { id: 'geo', label: 'الدول والتقسيمات', count: adminCountries.length || 22 },
+          { id: 'ad_partners', label: 'إدارة الشركاء والإعلانات', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
@@ -601,6 +710,9 @@ export const AdminDashboard: React.FC = () => {
 
       {/* 5B. ARAB COUNTRIES & DIVISIONS GEOGRAPHY TAB */}
       {activeTab === 'geo' && <GeoManagementView />}
+
+      {/* 5C. ISOLATED AD PARTNERS MANAGER TAB */}
+      {activeTab === 'ad_partners' && <AdPartnersManager />}
 
       {/* DATABASE ERRORS MONITORING TAB */}
       {activeTab === 'db_errors' && <DatabaseErrorsView />}
@@ -1100,7 +1212,14 @@ export const AdminDashboard: React.FC = () => {
                   </label>
                   <select
                     value={newTaskCat}
-                    onChange={(e) => setNewTaskCat(e.target.value)}
+                    onChange={(e) => {
+                      const nextCat = e.target.value;
+                      setNewTaskCat(nextCat);
+                      setNewTaskMeta((prev) => ({
+                        ...prev,
+                        taskKind: inferTaskKindFromCategory(nextCat),
+                      }));
+                    }}
                     className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
                   >
                     <option value="app_testing">تجربة التطبيقات</option>
@@ -1109,6 +1228,7 @@ export const AdminDashboard: React.FC = () => {
                     <option value="data_entry">إدخال البيانات</option>
                     <option value="social_engagement">التفاعل الاجتماعي</option>
                     <option value="content_writing">كتابة المحتوى</option>
+                    <option value="local_services">عروض وخدمات خارجية</option>
                   </select>
                 </div>
               </div>
@@ -1126,6 +1246,17 @@ export const AdminDashboard: React.FC = () => {
                   className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
                 />
               </div>
+
+              <TaskBuilderFields
+                meta={newTaskMeta}
+                onChange={(next) => {
+                  setNewTaskMeta(next);
+                  if (next.taskKind !== newTaskMeta.taskKind) {
+                    setNewTaskCat(mapTaskKindToCategory(next.taskKind));
+                  }
+                }}
+                canFeatureDirectly={true}
+              />
 
               <div className="grid grid-cols-3 gap-4">
                 <div>
@@ -1234,6 +1365,18 @@ export const AdminDashboard: React.FC = () => {
                 onChange={setNewTaskGeo}
               />
 
+              {/* Live Card Preview Before Publish */}
+              <TaskCardLivePreview
+                title={newTaskTitle}
+                description={newTaskDesc}
+                rewardYer={Number(newTaskReward) || 0}
+                slots={Number(newTaskQty) || 0}
+                timeEstimateMinutes={Number(newTaskTime) || 10}
+                category={newTaskCat}
+                meta={newTaskMeta}
+                locationLabel={newTaskGeo.countryId ? 'نطاق جغرافي محدد' : 'جميع الدول العربية'}
+              />
+
               {/* Total Budget Frozen Notice */}
               <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs flex items-center justify-between text-emerald-900 dark:text-emerald-200">
                 <span>إجمالي ميزانية المهمة (ستخصم بالكامل من محفظة المدير وتُعلق في حساب المهام الجارية):</span>
@@ -1270,38 +1413,71 @@ export const AdminDashboard: React.FC = () => {
 
           {/* Tasks Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {tasks.map((t) => (
-              <div
-                key={t.id}
-                className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3"
-              >
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-semibold text-emerald-600">{t.category}</span>
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    t.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'
-                  }`}>
-                    {t.status === 'ACTIVE' ? 'نشطة' : 'مكتملة'}
-                  </span>
+            {tasks.map((t) => {
+              const isFeatured = Boolean(t.isFeatured || t.taskMeta?.isFeatured);
+              const featuredRequested = Boolean(t.taskMeta?.featuredRequested && !isFeatured);
+              return (
+                <div
+                  key={t.id}
+                  className={`p-4 rounded-xl bg-white dark:bg-slate-900 border space-y-3 ${
+                    isFeatured
+                      ? 'border-amber-400 dark:border-amber-500/80 ring-1 ring-amber-400/20'
+                      : 'border-slate-200 dark:border-slate-800'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {isFeatured && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-extrabold">
+                          <Crown className="w-3 h-3" />
+                          <span>مميزة</span>
+                        </span>
+                      )}
+                      {featuredRequested && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-[10px] font-bold">
+                          طلب تمييز
+                        </span>
+                      )}
+                      <span className="font-semibold text-emerald-600">
+                        {getTaskKindLabel(t.taskKind, t.category)}
+                      </span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                      t.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'
+                    }`}>
+                      {t.status === 'ACTIVE' ? 'نشطة' : t.status === 'PAUSED' ? 'موقوفة' : 'مكتملة'}
+                    </span>
+                  </div>
+                  <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">{t.title}</h4>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {t.countryFlag ? `${t.countryFlag} ` : ''}
+                    {t.locationLabel || t.countryNameAr || 'جميع الدول العربية'}
+                  </div>
+                  <div className="flex items-center justify-between font-mono text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <span>المكافأة: {formatYer(t.rewardYer)} ر.ي</span>
+                    <span>المكتمل: {t.completedQuantity} / {t.totalQuantity}</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openEditTaskModal(t)}
+                        className="p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition-colors"
+                        title="تعديل المهمة"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTask(t)}
+                        className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
+                        title="حذف المهمة نهائياً"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">{t.title}</h4>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                  {t.countryFlag ? `${t.countryFlag} ` : ''}
-                  {t.locationLabel || t.countryNameAr || 'جميع الدول العربية'}
-                </div>
-                <div className="flex items-center justify-between font-mono text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <span>المكافأة: {formatYer(t.rewardYer)} ر.ي</span>
-                  <span>المكتمل: {t.completedQuantity} / {t.totalQuantity}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteTask(t)}
-                    className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"
-                    title="حذف المهمة نهائياً"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1437,114 +1613,163 @@ export const AdminDashboard: React.FC = () => {
 
       {/* 7. SETTINGS TAB */}
       {activeTab === 'settings' && settings && (
-        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-6 max-w-2xl">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
-            إعدادات النظام والرسوم والحدود
-          </h2>
+        <div className="space-y-6 max-w-2xl">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-6">
+            <h2 className="text-base font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
+              إعدادات النظام والرسوم والحدود
+            </h2>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                الحد الأدنى للسحب (ر.ي)
-              </label>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  الحد الأدنى للسحب (ر.ي)
+                </label>
+                <input
+                  type="number"
+                  value={settings.minWithdrawal}
+                  onChange={(e) => setSettings({ ...settings, minWithdrawal: Number(e.target.value) })}
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  الحد الأقصى للسحب (ر.ي)
+                </label>
+                <input
+                  type="number"
+                  value={settings.maxWithdrawal}
+                  onChange={(e) => setSettings({ ...settings, maxWithdrawal: Number(e.target.value) })}
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  نسبة رسوم الصرافة الافتراضية (%)
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={settings.defaultFeePercentage}
+                  onChange={(e) => setSettings({ ...settings, defaultFeePercentage: Number(e.target.value) })}
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  مكافأة دعوة الصديق (ر.ي)
+                </label>
+                <input
+                  type="number"
+                  value={settings.referralBonus}
+                  onChange={(e) => setSettings({ ...settings, referralBonus: Number(e.target.value) })}
+                  className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+                  نسبة رسوم المنصة على حملات المعلنين (%)
+                </label>
+                <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
+                  الافتراضي: 20%
+                </span>
+              </div>
               <input
                 type="number"
-                value={settings.minWithdrawal}
-                onChange={(e) => setSettings({ ...settings, minWithdrawal: Number(e.target.value) })}
-                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
+                min="0"
+                max="50"
+                step="0.5"
+                value={settings.advertiserCampaignFeePercentage ?? 20}
+                onChange={(e) =>
+                  setSettings({ ...settings, advertiserCampaignFeePercentage: Number(e.target.value) })
+                }
+                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
               />
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                تُطبق هذه النسبة على الحملات الجديدة عند إنشائها فقط، وتُحفظ تاريخياً داخل كل حملة دون التأثير على الحملات السابقة.
+              </p>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                الحد الأقصى للسحب (ر.ي)
-              </label>
-              <input
-                type="number"
-                value={settings.maxWithdrawal}
-                onChange={(e) => setSettings({ ...settings, maxWithdrawal: Number(e.target.value) })}
-                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
-              />
-            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!user || user.role !== 'admin') {
+                  showToast('ليس لديك صلاحية تعديل إعدادات النظام.', 'error');
+                  return;
+                }
+                openConfirmModal({
+                  title: 'حفظ إعدادات المنصة',
+                  message: 'هل تريد حفظ التعديلات على حدود السحب والرسوم ومكافأة الإحالة؟',
+                  confirmLabel: 'تأكيد الحفظ',
+                  cancelLabel: 'إلغاء',
+                  variant: 'primary',
+                  onConfirm: async () => {
+                    try {
+                      await api.updateAdminSettings(settings);
+                      showToast('تم حفظ الإعدادات بنجاح.', 'success');
+                    } catch (err: any) {
+                      showToast(err.message || 'فشل حفظ الإعدادات', 'error');
+                    }
+                  },
+                });
+              }}
+              className="px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow transition-colors"
+            >
+              حفظ التغييرات
+            </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                نسبة رسوم الصرافة الافتراضية (%)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                value={settings.defaultFeePercentage}
-                onChange={(e) => setSettings({ ...settings, defaultFeePercentage: Number(e.target.value) })}
-                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                مكافأة دعوة الصديق (ر.ي)
-              </label>
-              <input
-                type="number"
-                value={settings.referralBonus}
-                onChange={(e) => setSettings({ ...settings, referralBonus: Number(e.target.value) })}
-                className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl"
-              />
-            </div>
-          </div>
-
-          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200">
-                نسبة رسوم المنصة على حملات المعلنين (%)
-              </label>
-              <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
-                الافتراضي: 20%
-              </span>
-            </div>
-            <input
-              type="number"
-              min="0"
-              max="50"
-              step="0.5"
-              value={settings.advertiserCampaignFeePercentage ?? 20}
-              onChange={(e) =>
-                setSettings({ ...settings, advertiserCampaignFeePercentage: Number(e.target.value) })
-              }
-              className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
-            />
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              تُطبق هذه النسبة على الحملات الجديدة عند إنشائها فقط، وتُحفظ تاريخياً داخل كل حملة دون التأثير على الحملات السابقة.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (!user || user.role !== 'admin') {
-                showToast('ليس لديك صلاحية تعديل إعدادات النظام.', 'error');
-                return;
-              }
-              openConfirmModal({
-                title: 'حفظ إعدادات المنصة',
-                message: 'هل تريد حفظ التعديلات على حدود السحب والرسوم ومكافأة الإحالة؟',
-                confirmLabel: 'تأكيد الحفظ',
-                cancelLabel: 'إلغاء',
-                variant: 'primary',
-                onConfirm: async () => {
-                  try {
-                    await api.updateAdminSettings(settings);
-                    showToast('تم حفظ الإعدادات بنجاح.', 'success');
-                  } catch (err: any) {
-                    showToast(err.message || 'فشل حفظ الإعدادات', 'error');
-                  }
-                },
-              });
-            }}
-            className="px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow transition-colors"
+          {/* Admin Broadcast Notification Card */}
+          <form
+            onSubmit={handleSendBroadcast}
+            className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4"
           >
-            حفظ التغييرات
-          </button>
+            <div className="flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <Send className="w-4 h-4 text-emerald-600" />
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                إرسال إشعار إداري جماعي للمستخدمين (مع Push في الخلفية)
+              </h3>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                عنوان الإشعار
+              </label>
+              <input
+                type="text"
+                required
+                value={broadcastTitle}
+                onChange={(e) => setBroadcastTitle(e.target.value)}
+                placeholder="مثال: مهام جديدة بمكافآت مضاعفة متاحة الآن!"
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                نص الإشعار
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={broadcastMessage}
+                onChange={(e) => setBroadcastMessage(e.target.value)}
+                placeholder="اكتب رسالة التنبيه التي ستصل إلى جرس الإشعارات وإشعارات الجهاز..."
+                className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isBroadcasting}
+              className="px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl inline-flex items-center gap-2"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>{isBroadcasting ? 'جارٍ الإرسال...' : 'إرسال الإشعار للجميع'}</span>
+            </button>
+          </form>
         </div>
       )}
 
@@ -1750,6 +1975,133 @@ export const AdminDashboard: React.FC = () => {
         isAdminView={true}
         onClose={() => setInvoiceAdminCampaign(null)}
       />
+
+      {/* MODAL: Edit Existing Task (Non-Financial Fields Only) */}
+      {editingTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setEditingTask(null)}
+        >
+          <form
+            onSubmit={handleSaveTaskEdit}
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-2xl p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  تعديل بيانات المهمة
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  تعديل العنوان والوصف والنوع وحالة التمييز دون المساس بالميزانية المحجوزة أو المكافأة.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingTask(null)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  عنوان المهمة
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editTaskTitle}
+                  onChange={(e) => setEditTaskTitle(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    الحالة
+                  </label>
+                  <select
+                    value={editTaskStatus}
+                    onChange={(e) => setEditTaskStatus(e.target.value as TaskItem['status'])}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                  >
+                    <option value="ACTIVE">نشطة</option>
+                    <option value="PAUSED">موقوفة مؤقتاً</option>
+                    <option value="COMPLETED">مكتملة</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    الوقت المقدر (د)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={editTaskTime}
+                    onChange={(e) => setEditTaskTime(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                شرح المهمة
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={editTaskDesc}
+                onChange={(e) => setEditTaskDesc(e.target.value)}
+                className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+
+            <TaskBuilderFields
+              meta={editTaskMeta}
+              onChange={(next) => {
+                setEditTaskMeta(next);
+                if (next.taskKind !== editTaskMeta.taskKind) {
+                  setEditTaskCat(mapTaskKindToCategory(next.taskKind));
+                }
+              }}
+              canFeatureDirectly={true}
+            />
+
+            <TaskCardLivePreview
+              title={editTaskTitle}
+              description={editTaskDesc}
+              rewardYer={editingTask.rewardYer}
+              slots={editingTask.totalQuantity}
+              timeEstimateMinutes={Number(editTaskTime) || 10}
+              category={editTaskCat}
+              meta={editTaskMeta}
+              locationLabel={editingTask.locationLabel || editingTask.countryNameAr || 'جميع الدول العربية'}
+            />
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEditingTask(null)}
+                className="px-4 py-2 text-xs text-slate-500 hover:bg-slate-100 rounded-lg"
+              >
+                إلغاء
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingTaskEdit}
+                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-lg"
+              >
+                {isSavingTaskEdit ? 'جارٍ الحفظ...' : 'حفظ التعديلات'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

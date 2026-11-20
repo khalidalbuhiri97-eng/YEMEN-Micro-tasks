@@ -8,11 +8,21 @@
   --color-primary-800: #1e293b;
   --color-brand-emerald: #059669;
   --color-brand-emerald-dark: #047857;
+  --color-brand-gold: #d97706;
 }
 
 :root {
   font-family: 'Cairo', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   font-feature-settings: 'tnum' on, 'cv02' on, 'cv03' on, 'cv04' on;
+}
+
+/* Hide scrollbars cleanly for swipeable mobile carousels */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Custom scrollbars */

@@ -397,7 +397,7 @@ export const CampaignInvoiceModal: React.FC<CampaignInvoiceModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800">
             <div className="space-y-1">
               <div className="text-[11px] text-slate-500 dark:text-slate-400">جهة الإصدار</div>
-              <div className="font-bold text-slate-900 dark:text-white">منصة يمن تاسك (Yemen Micro-tasks)</div>
+              <div className="font-bold text-slate-900 dark:text-white">منصة يمن تاسك (Yemen Task)</div>
               <div className="text-[11px] text-slate-500 dark:text-slate-400">نوع الفاتورة: تمويل حملة معلن خارجي</div>
             </div>
 

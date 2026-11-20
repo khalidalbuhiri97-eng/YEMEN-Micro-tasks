@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { CampaignItem, TaskCategory } from '../../types/index.ts';
+import type { CampaignItem, TaskBuilderMeta, TaskCategory } from '../../types/index.ts';
 import { CampaignServiceFeeDetails } from './CampaignServiceFeeDetails.tsx';
 import { CampaignDetailsModal, CampaignInvoiceModal, getCampaignStatusLabel } from './CampaignModals.tsx';
 import { SecureImageView } from '../common/SecureImageView.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
+import { TaskBuilderFields, TaskCardLivePreview } from '../tasks/TaskBuilderFields.tsx';
+import { inferTaskKindFromCategory, mapTaskKindToCategory } from '../../../shared/taskMeta.ts';
 import { addMoney, calcPercentageYer, formatYer, mulMoney, roundYer6, subMoney } from '../../../shared/money.ts';
 import {
   AlertTriangle,
@@ -92,6 +94,12 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
   const [durationDays, setDurationDays] = useState('7');
   const [requireImage, setRequireImage] = useState(true);
   const [requireText, setRequireText] = useState(true);
+  const [taskMeta, setTaskMeta] = useState<TaskBuilderMeta>({
+    taskKind: 'app_testing',
+    isFeatured: false,
+    featuredRequested: false,
+    fields: {},
+  });
 
   // Phase 4: Advertiser Identity controls
   const [hideAdvertiserName, setHideAdvertiserName] = useState(false);
@@ -273,7 +281,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
         slots: costBreakdown.slots,
         timeEstimateMinutes: Math.max(1, Math.round(Number(timeEstimate) || 10)),
         deadlineAt,
-        proofRequirements: { requireImage, requireText },
+        proofRequirements: { requireImage, requireText, _taskMeta: taskMeta },
         creationKey,
         hideAdvertiserName,
         advertiserDisplayName: hideAdvertiserName
@@ -298,6 +306,12 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
 
       setTitle('');
       setDescription('');
+      setTaskMeta({
+        taskKind: inferTaskKindFromCategory(category),
+        isFeatured: false,
+        featuredRequested: false,
+        fields: {},
+      });
       setCreationKey(crypto.randomUUID());
       await Promise.all([loadData(), refreshWallet()]);
     } catch (err: any) {
@@ -516,7 +530,11 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                     </label>
                     <select
                       value={category}
-                      onChange={(e) => setCategory(e.target.value as TaskCategory)}
+                      onChange={(e) => {
+                        const nextCat = e.target.value as TaskCategory;
+                        setCategory(nextCat);
+                        setTaskMeta((prev) => ({ ...prev, taskKind: inferTaskKindFromCategory(nextCat) }));
+                      }}
                       className="w-full min-h-[44px] px-3.5 py-2.5 text-sm sm:text-xs bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
                     >
                       {CATEGORIES.map((c) => (
@@ -541,6 +559,18 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                     className="w-full px-3.5 py-2.5 text-sm sm:text-xs bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
                   />
                 </div>
+
+                {/* Dynamic Task Type Fields & Featured Request */}
+                <TaskBuilderFields
+                  meta={taskMeta}
+                  onChange={(next) => {
+                    setTaskMeta(next);
+                    if (next.taskKind !== taskMeta.taskKind) {
+                      setCategory(mapTaskKindToCategory(next.taskKind));
+                    }
+                  }}
+                  canFeatureDirectly={false}
+                />
 
                 {/* Pricing, Slots, Time & Duration with quick presets */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -910,6 +940,24 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                     </div>
                   ))}
               </div>
+
+              <TaskCardLivePreview
+                title={title}
+                description={description}
+                rewardYer={costBreakdown.rewardUnits}
+                slots={costBreakdown.slots}
+                timeEstimateMinutes={Number(timeEstimate) || 10}
+                category={category}
+                meta={taskMeta}
+                locationLabel={
+                  geoTarget.countryId
+                    ? geoTarget.isNationwide
+                      ? 'دولة محددة (شاملة)'
+                      : 'نطاق جغرافي مخصص'
+                    : 'جميع الدول العربية'
+                }
+                advertiserLabel={effectivePublicIdentity}
+              />
 
               <button
                 type="submit"

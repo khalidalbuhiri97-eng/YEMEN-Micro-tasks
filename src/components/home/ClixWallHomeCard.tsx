@@ -1,6 +1,7 @@
 import React from 'react';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 import { ExternalLink, Sparkles, DollarSign, CheckCircle2 } from 'lucide-react';
+import { SandboxedAdSlot } from '../ads/SandboxedAdSlot.tsx';
 
 interface ClixWallHomeCardProps {
   onOpenOfferWall: () => void;
@@ -13,34 +14,32 @@ export const ClixWallHomeCard: React.FC<ClixWallHomeCardProps> = ({
 }) => {
   return (
     <div
-      className={`rounded-2xl border border-blue-200/80 dark:border-blue-900/40 bg-gradient-to-br from-blue-50/90 via-indigo-50/70 to-cyan-50/80 dark:from-slate-900 dark:via-blue-950/40 dark:to-slate-900 shadow-md p-5 flex flex-col justify-between transition-all hover:shadow-lg relative overflow-hidden ${className}`}
+      className={`rounded-2xl border border-emerald-200/80 dark:border-emerald-900/50 bg-white dark:bg-slate-900 shadow-sm p-5 flex flex-col justify-between transition-all hover:shadow-md hover:border-emerald-400/70 relative overflow-hidden ${className}`}
     >
-      {/* Decorative background glow */}
-      <div className="absolute -top-12 -left-12 w-32 h-32 bg-blue-500/10 dark:bg-blue-400/10 rounded-full blur-2xl pointer-events-none" />
-
       <div>
         {/* Header with ClixWall Icon */}
         <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-3">
-            <div className="p-1 rounded-xl bg-white dark:bg-slate-800 shadow-sm border border-slate-100 dark:border-slate-700/80">
-              <ClixWallIcon size={32} />
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 shrink-0">
+              <ClixWallIcon size={30} />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-1.5">
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white truncate">
                   عروض ClixWall
                 </h3>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-blue-600 text-white shadow-xs">
-                  Offer Wall
+                <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                  · حائط العروض
                 </span>
               </div>
-              <p className="text-[11px] text-blue-700 dark:text-blue-300 font-medium">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
                 مكافآت يومية إضافية بالدولار
               </p>
             </div>
           </div>
-          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 bg-amber-100/80 dark:bg-amber-950/50 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800">
-            <Sparkles className="w-3 h-3" />
+
+          <span className="inline-flex items-center gap-1 text-xs font-extrabold text-amber-600 dark:text-amber-400 font-mono shrink-0">
+            <Sparkles className="w-3.5 h-3.5" />
             <span>USD</span>
           </span>
         </div>
@@ -50,29 +49,38 @@ export const ClixWallHomeCard: React.FC<ClixWallHomeCardProps> = ({
           اربح مكافآت فورية بالدولار عبر إنجاز استطلاعات الرأي والعروض العالمية، مع إيداع مباشر في محفظتك بالريال اليمني.
         </p>
 
-        {/* Feature Badges */}
-        <div className="grid grid-cols-2 gap-2 mb-4 text-[11px]">
-          <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-medium bg-white/70 dark:bg-slate-800/60 p-2 rounded-xl border border-slate-200/60 dark:border-slate-700/60">
-            <DollarSign className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-            <span>1 USD = 1,600 ر.ي</span>
+        {/* Key metrics */}
+        <div className="grid grid-cols-2 gap-2 mb-3 text-[11px]">
+          <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-semibold bg-amber-50/70 dark:bg-amber-950/30 p-2 rounded-xl border border-amber-200/70 dark:border-amber-800/50">
+            <DollarSign className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="font-mono tabular-nums">1 USD = 1,600 ر.ي</span>
           </div>
-          <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-medium bg-white/70 dark:bg-slate-800/60 p-2 rounded-xl border border-slate-200/60 dark:border-slate-700/60">
-            <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+          <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200 font-semibold bg-emerald-50/70 dark:bg-emerald-950/30 p-2 rounded-xl border border-emerald-200/70 dark:border-emerald-800/50">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
             <span>إيداع تلقائي فوري</span>
           </div>
         </div>
       </div>
 
-      {/* Action Button */}
-      <button
-        type="button"
-        onClick={onOpenOfferWall}
-        className="w-full py-2.5 px-4 bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 hover:from-blue-700 hover:via-indigo-700 hover:to-cyan-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 group cursor-pointer"
-      >
-        <ClixWallIcon size={18} className="brightness-125" />
-        <span>فتح حائط عروض ClixWall الآن</span>
-        <ExternalLink className="w-3.5 h-3.5 transition-transform group-hover:-translate-x-0.5" />
-      </button>
+      <div className="space-y-3">
+        {/* Action Button */}
+        <button
+          type="button"
+          onClick={onOpenOfferWall}
+          className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 group cursor-pointer"
+        >
+          <ClixWallIcon size={18} />
+          <span>فتح حائط عروض ClixWall الآن</span>
+          <ExternalLink className="w-3.5 h-3.5 transition-transform group-hover:-translate-x-0.5" />
+        </button>
+
+        {/* Technically Isolated Advertiser Partner Area embedded cleanly inside card */}
+        <SandboxedAdSlot
+          placementKey="clixwall_card_embed"
+          compact
+          emptyPlaceholderText="مساحة إعلانية معزولة مخصصة لشركاء المنصة"
+        />
+      </div>
     </div>
   );
 };

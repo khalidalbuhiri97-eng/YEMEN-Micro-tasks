@@ -93,7 +93,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
               {mode === 'owner'
                 ? 'بوابة دخول مالك المنصة المعتمد'
                 : mode === 'login'
-                ? 'تسجيل الدخول إلى Yemen Micro-tasks'
+                ? 'تسجيل الدخول إلى Yemen Task'
                 : userType === 'advertiser'
                 ? 'إنشاء حساب معلن جديد'
                 : 'إنشاء حساب مستخدم جديد'}

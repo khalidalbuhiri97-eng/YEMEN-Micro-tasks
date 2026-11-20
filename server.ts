@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
@@ -11,9 +12,16 @@ const PORT = Number(process.env.PORT) || 3000;
 const isProduction = process.env.NODE_ENV === 'production';
 
 async function startServer() {
+  const httpServer = process.env.VERCEL !== '1' ? http.createServer(app) : null;
+  const disableHmr = process.env.DISABLE_HMR === 'true';
+
   if (!isProduction) {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: disableHmr ? false : httpServer ? { server: httpServer } : false,
+        ...(disableHmr ? { ws: false as const } : {}),
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -25,8 +33,8 @@ async function startServer() {
     });
   }
 
-  if (process.env.VERCEL !== '1') {
-    app.listen(PORT, '0.0.0.0', () => {
+  if (httpServer) {
+    httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`[Yemen Micro-tasks] Local Dev Server running on http://localhost:${PORT}`);
     });
   }

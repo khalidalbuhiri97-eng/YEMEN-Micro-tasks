@@ -29,7 +29,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   initialSubTab,
   onNavigateHome,
 }) => {
-  const { user, wallet, openAuthModal } = useAuth();
+  const { user, wallet, openAuthModal, isOnline, isUsingOfflineSession } = useAuth();
   const [subTab, setSubTab] = useState(
     initialSubTab || (user?.role === 'advertiser' ? 'advertiser' : 'overview')
   );
@@ -115,9 +115,15 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
             <div className="mt-3 pt-2.5 border-t border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between text-xs font-mono">
               <span className="text-slate-500">الرصيد:</span>
-              <span className="font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                {formatYer(wallet?.availableBalance ?? 0)} ر.ي
-              </span>
+              {isOnline && !isUsingOfflineSession ? (
+                <span className="font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                  {formatYer(wallet?.availableBalance ?? 0)} ر.ي
+                </span>
+              ) : (
+                <span className="font-bold text-amber-600 dark:text-amber-400 text-[11px]">
+                  يتطلب اتصالاً
+                </span>
+              )}
             </div>
           </div>
 

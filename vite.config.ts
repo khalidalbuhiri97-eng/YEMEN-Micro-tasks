@@ -4,6 +4,8 @@ import path from 'path';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const ICON_CACHE_VERSION = 'v=3';
+
 export default defineConfig(() => {
   return {
     plugins: [
@@ -11,32 +13,44 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        includeAssets: [
+          'favicon.ico',
+          'favicon.png',
+          'apple-touch-icon.png',
+          'brand-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'pwa-maskable-512x512.png',
+          'sw-push.js',
+        ],
         manifest: {
-          id: '/',
+          id: '/?v=3',
           name: 'Yemen Task - كسب اليمن',
-          short_name: 'YemenTask',
+          short_name: 'Yemen Task',
           description: 'منصة رقمية يمنية متكاملة للمهام المصغرة وكسب الريال اليمني وسحب الأرباح',
-          theme_color: '#1e40af',
+          theme_color: '#059669',
           background_color: '#ffffff',
           display: 'standalone',
-          start_url: '/',
+          orientation: 'portrait-primary',
+          dir: 'rtl',
+          lang: 'ar',
+          start_url: '/?source=pwa&v=3',
           scope: '/',
           icons: [
             {
-              src: '/pwa-192x192.png',
+              src: `/pwa-192x192.png?${ICON_CACHE_VERSION}`,
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png',
+              src: `/pwa-512x512.png?${ICON_CACHE_VERSION}`,
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-maskable-512x512.png',
+              src: `/pwa-maskable-512x512.png?${ICON_CACHE_VERSION}`,
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
@@ -44,6 +58,11 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          importScripts: ['/sw-push.js'],
+          cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
+          ignoreURLParametersMatching: [/^v$/, /^source$/],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
@@ -78,6 +97,20 @@ export default defineConfig(() => {
           type: 'module',
         },
       }),
+      {
+        name: 'disable-vite-client-ws-when-hmr-off',
+        apply: 'serve',
+        transform(code, id) {
+          const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+          if (isHmrDisabled && id.replace(/\\/g, '/').endsWith('/vite/dist/client/client.mjs')) {
+            return code.replace(
+              'transport.connect(createHMRHandler(handleMessage));',
+              '/* HMR disabled: WebSocket connect skipped */'
+            );
+          }
+          return null;
+        },
+      },
     ],
     resolve: {
       alias: {
@@ -86,6 +119,7 @@ export default defineConfig(() => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
+      ...(process.env.DISABLE_HMR === 'true' ? { ws: false as const } : {}),
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

@@ -1,16 +1,17 @@
 import React from 'react';
+import { SandboxedAdSlot } from './SandboxedAdSlot.tsx';
 
 interface HomeAdWindowProps {
   className?: string;
 }
 
-export const HomeAdWindow: React.FC<HomeAdWindowProps> = ({ className = '' }) => {
-  // Exact ad code provided by user
+const DefaultHomeAdWindow: React.FC<{ className?: string }> = ({ className = '' }) => {
   const adHtml = `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=300, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: http: data: 'unsafe-inline' 'unsafe-eval'; form-action 'none'; object-src 'none'; base-uri 'none';" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
@@ -41,13 +42,10 @@ export const HomeAdWindow: React.FC<HomeAdWindowProps> = ({ className = '' }) =>
 
   return (
     <div
-      className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 shadow-md p-3 flex flex-col items-center justify-center transition-all ${className}`}
+      className={`rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm p-3 flex flex-col items-center justify-center transition-all ${className}`}
     >
-      <div className="w-full flex items-center justify-between mb-2 px-1 text-[11px] text-slate-400 dark:text-slate-500 font-medium">
-        <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>نافذة إعلانية</span>
-        </span>
+      <div className="w-full flex items-center justify-between mb-2 px-1 text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+        <span className="font-semibold">نافذة إعلانية ممولة</span>
         <span className="font-mono text-[10px]">300×250</span>
       </div>
 
@@ -57,11 +55,22 @@ export const HomeAdWindow: React.FC<HomeAdWindowProps> = ({ className = '' }) =>
           width={300}
           height={250}
           title="نافذة إعلانية 300x250"
-          referrerPolicy="no-referrer-when-downgrade"
+          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+          referrerPolicy="no-referrer"
           className="w-[300px] h-[250px] border-0 block mx-auto bg-transparent"
           scrolling="no"
         />
       </div>
     </div>
+  );
+};
+
+export const HomeAdWindow: React.FC<HomeAdWindowProps> = ({ className = '' }) => {
+  return (
+    <SandboxedAdSlot
+      placementKey="home_clixwall_slot"
+      className={className}
+      fallbackNode={<DefaultHomeAdWindow className={className} />}
+    />
   );
 };

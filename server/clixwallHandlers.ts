@@ -260,9 +260,15 @@ export interface ClixWallPostbackErrorInfo {
 export interface ClixWallHandlersDeps {
   getAdminClient: () => SupabaseClient<any, any, any>;
   onPostbackError?: (info: ClixWallPostbackErrorInfo) => Promise<void> | void;
+  onRewardCredited?: (info: {
+    userId: string;
+    offerName: string;
+    rewardYer: number;
+    transactionId: string;
+  }) => Promise<void> | void;
 }
 
-export function createClixWallHandlers({ getAdminClient, onPostbackError }: ClixWallHandlersDeps) {
+export function createClixWallHandlers({ getAdminClient, onPostbackError, onRewardCredited }: ClixWallHandlersDeps) {
   const getOfferWallUrl = async (req: AuthenticatedClixWallRequest, res: Response) => {
     try {
       const user = req.user;
@@ -569,6 +575,17 @@ export function createClixWallHandlers({ getAdminClient, onPostbackError }: Clix
       }
 
       const isDuplicate = !!(rpcResult && typeof rpcResult === 'object' && (rpcResult as any).duplicate);
+
+      if (!isDuplicate && statusClassification.dbStatus === 'credited' && onRewardCredited) {
+        Promise.resolve(
+          onRewardCredited({
+            userId,
+            offerName: offerName || 'عرض ClixWall',
+            rewardYer: payoutValidation.rewardYer,
+            transactionId,
+          })
+        ).catch(() => {});
+      }
 
       console.log(
         `[CLIXWALL_POSTBACK] Processed TID: ${transactionId} (User: ${userId}, Status: ${statusClassification.dbStatus}, TotalYER: ${payoutValidation.totalYer}, UserYER: ${payoutValidation.rewardYer}, PublisherYER: ${payoutValidation.publisherYer}, Duplicate: ${isDuplicate})`

@@ -12,12 +12,14 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
           {/* Col 1: Platform & Trust */}
           <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-md bg-emerald-600 flex items-center justify-center text-white font-black text-sm">
-                Y
-              </div>
+            <div className="flex items-center gap-2.5">
+              <img
+                src="/brand-icon.png?v=3"
+                alt="Yemen Task"
+                className="w-7 h-7 rounded-lg object-contain bg-emerald-950 border border-emerald-600/20"
+              />
               <span className="text-base font-bold text-slate-900 dark:text-white">
-                منصة Yemen Micro-tasks
+                منصة Yemen Task · كسب اليمن
               </span>
             </div>
             <p className="text-slate-500 text-xs leading-relaxed">
@@ -115,11 +117,11 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         {/* Mandatory Transparency & Legal Notice */}
         <div className="pt-6 border-t border-slate-100 dark:border-slate-800/80 text-[11px] leading-relaxed text-slate-500">
           <p className="mb-2">
-            <strong className="text-slate-700 dark:text-slate-300 font-semibold">إخلاء مسؤولية وشفافية الأرباح:</strong> لا تقدم منصة "Yemen Micro-tasks" أي وعود وهمية أو ضمانات دخل ثابت. جميع المكافآت محددة بوضوح ومستحقة حصراً عند إنجاز المهام المطلوبة والتحقق الفعلي من مطابقتها للشروط. السحب يتم يدوياً وتدقيقه عبر مسؤولي الصرف وفق حدود وأنظمة شركات الصرافة اليمنية.
+            <strong className="text-slate-700 dark:text-slate-300 font-semibold">إخلاء مسؤولية وشفافية الأرباح:</strong> لا تقدم منصة "Yemen Task" أي وعود وهمية أو ضمانات دخل ثابت. جميع المكافآت محددة بوضوح ومستحقة حصراً عند إنجاز المهام المطلوبة والتحقق الفعلي من مطابقتها للشروط. السحب يتم يدوياً وتدقيقه عبر مسؤولي الصرف وفق حدود وأنظمة شركات الصرافة اليمنية.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4">
             <div className="flex items-center gap-4">
-              <span>جميع الحقوق محفوظة لمنصة Yemen Micro-tasks © 2026</span>
+              <span>جميع الحقوق محفوظة لمنصة Yemen Task © 2026</span>
               <span aria-hidden="true">·</span>
               <button onClick={() => onNavigate('privacy')} className="hover:underline">سياسة الخصوصية</button>
               <span aria-hidden="true">·</span>

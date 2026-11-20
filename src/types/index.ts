@@ -619,11 +619,51 @@ export type TaskCategory =
   | 'review_ratings'
   | 'local_services';
 
+export type TaskKind =
+  | 'surveys'
+  | 'ad_watch'
+  | 'app_testing'
+  | 'quick_tasks'
+  | 'external_offers';
+
+export interface TaskTypeSpecificFields {
+  // surveys
+  questions?: string[];
+  optionsText?: string;
+  // ad_watch
+  adUrl?: string;
+  watchDurationSeconds?: number;
+  completionRule?: string;
+  // app_testing
+  appDownloadUrl?: string;
+  testingInstructions?: string;
+  requiredProofNote?: string;
+  // quick_tasks
+  steps?: string[];
+  proofNotes?: string;
+  // external_offers
+  partnerName?: string;
+  offerUrl?: string;
+  offerConditions?: string;
+}
+
+export interface TaskBuilderMeta {
+  taskKind: TaskKind;
+  isFeatured?: boolean;
+  featuredRequested?: boolean;
+  priority?: number;
+  fields?: TaskTypeSpecificFields;
+}
+
 export interface TaskItem {
   id: string;
   title: string;
   description: string;
   category: TaskCategory;
+  taskKind?: TaskKind;
+  isFeatured?: boolean;
+  priority?: number;
+  taskMeta?: TaskBuilderMeta;
   rewardYer: number;
   steps: string[];
   proofRequirements: {
@@ -631,6 +671,7 @@ export interface TaskItem {
     requireText: boolean;
     requireUrl?: boolean;
     instructions?: string;
+    _taskMeta?: TaskBuilderMeta;
   };
   timeEstimateMinutes: number;
   totalQuantity: number;
@@ -729,6 +770,24 @@ export interface AppNotification {
   createdAt: string;
 }
 
+export type AdPartnerCodeType = 'html' | 'javascript' | 'iframe';
+export type AdPartnerRotationMode = 'single' | 'rotate';
+
+export interface AdPartner {
+  id: string;
+  partnerName: string;
+  placementKey: string;
+  codeType: AdPartnerCodeType;
+  code: string;
+  width: number;
+  height: number;
+  rotationMode: AdPartnerRotationMode;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CampaignFeePolicy {
   defaultFeePercentage: number;
   minFeeYer?: number;
@@ -797,7 +856,11 @@ export interface CampaignItem {
     requireText: boolean;
     requireUrl?: boolean;
     instructions?: string;
+    _taskMeta?: TaskBuilderMeta;
   };
+  taskKind?: TaskKind;
+  isFeatured?: boolean;
+  taskMeta?: TaskBuilderMeta;
   deadlineAt?: string | null;
   approvedAt?: string | null;
   approvedBy?: string | null;

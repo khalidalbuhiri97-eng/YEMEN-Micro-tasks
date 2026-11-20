@@ -14,6 +14,7 @@ import {
   Clock,
   ArrowRight,
   Info,
+  WifiOff,
 } from 'lucide-react';
 
 interface WithdrawViewProps {
@@ -21,7 +22,7 @@ interface WithdrawViewProps {
 }
 
 export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
-  const { user, wallet, refreshWallet, showToast, openAuthModal, openConfirmModal } = useAuth();
+  const { user, wallet, refreshWallet, showToast, openAuthModal, openConfirmModal, isOnline, isUsingOfflineSession } = useAuth();
   const [methods, setMethods] = useState<PayoutMethod[]>([]);
   const [selectedMethod, setSelectedMethod] = useState<string>('KURAIMI');
   const [amount, setAmount] = useState<string>('2000');
@@ -52,7 +53,17 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
   };
 
   useEffect(() => {
-    loadMethodsAndHistory();
+    if (isOnline) {
+      loadMethodsAndHistory();
+    } else {
+      setIsLoadingHistory(false);
+    }
+  }, [user, isOnline]);
+
+  useEffect(() => {
+    const onSync = () => loadMethodsAndHistory();
+    window.addEventListener('kasb:sync_online', onSync);
+    return () => window.removeEventListener('kasb:sync_online', onSync);
   }, [user]);
 
   const activeMethod = methods.find((m) => m.code === selectedMethod) || methods[0];
@@ -67,6 +78,11 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (!isOnline || isUsingOfflineSession) {
+      setError('إرسال طلب السحب المالي يتطلب اتصالاً نشطاً بالإنترنت.');
+      return;
+    }
 
     if (!isBalanceSufficient) {
       setError('رصيدك المتاح غير كافٍ لسحب هذا المبلغ.');
@@ -228,6 +244,12 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            {(!isOnline || isUsingOfflineSession) && (
+              <div className="p-3 text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-xl flex items-center gap-2">
+                <WifiOff className="w-4 h-4 shrink-0" />
+                <span>طلب السحب المالي غير متاح أثناء انقطاع الإنترنت لحماية أرصدتك.</span>
+              </div>
+            )}
             {error && (
               <div className="p-3 text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-xl flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
@@ -381,7 +403,7 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
 
             <button
               type="submit"
-              disabled={isSubmitting || !isBalanceSufficient}
+              disabled={!isOnline || isUsingOfflineSession || isSubmitting || !isBalanceSufficient}
               className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isSubmitting ? (

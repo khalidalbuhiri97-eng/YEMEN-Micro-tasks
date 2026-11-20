@@ -2,12 +2,32 @@
  * Kasb Yemen - Frontend API Client (Connected to Real Backend with Session Refresh & Persistence)
  */
 
+import type { AdPartner, AdPartnerCodeType, AdPartnerRotationMode } from '../types/index.ts';
+
 const BASE_URL = '/api';
 
 export class SessionExpiredError extends Error {
+  readonly isAuthTerminal = true;
   constructor(message = 'انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً.') {
     super(message);
     this.name = 'SessionExpiredError';
+  }
+}
+
+export class NetworkOfflineError extends Error {
+  readonly isNetworkError = true;
+  constructor(message = 'تعذر الاتصال بالخادم، يبدو أنك غير متصل بالإنترنت.') {
+    super(message);
+    this.name = 'NetworkOfflineError';
+  }
+}
+
+export class ApiHttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'ApiHttpError';
+    this.status = status;
   }
 }
 
@@ -47,7 +67,12 @@ export function clearAuthToken(): void {
   localStorage.removeItem('kasb_refresh_token');
 }
 
-let activeRefreshPromise: Promise<string | null> | null = null;
+type RefreshOutcome =
+  | { status: 'refreshed'; token: string }
+  | { status: 'terminal_rejected' }
+  | { status: 'transient_error' };
+
+let activeRefreshPromise: Promise<RefreshOutcome> | null = null;
 let authExpiredDispatched = false;
 
 function dispatchSessionExpiredOnce(): void {
@@ -61,9 +86,15 @@ function dispatchSessionExpiredOnce(): void {
   }
 }
 
-async function performTokenRefresh(): Promise<string | null> {
+async function performTokenRefresh(): Promise<RefreshOutcome> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { status: 'transient_error' };
+  }
+
   const refreshToken = getRefreshToken();
-  if (!refreshToken) return null;
+  if (!refreshToken) {
+    return { status: 'terminal_rejected' };
+  }
 
   try {
     const response = await fetch(`${BASE_URL}/auth/refresh`, {
@@ -73,18 +104,21 @@ async function performTokenRefresh(): Promise<string | null> {
     });
 
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) {
+      return { status: 'terminal_rejected' };
+    }
     if (!response.ok || !data.token) {
-      return null;
+      return { status: 'transient_error' };
     }
 
     setAuthTokens(data.token, data.refreshToken || refreshToken);
-    return data.token;
+    return { status: 'refreshed', token: data.token };
   } catch {
-    return null;
+    return { status: 'transient_error' };
   }
 }
 
-async function getOrRefreshAccessToken(): Promise<string | null> {
+async function getOrRefreshAccessToken(): Promise<RefreshOutcome> {
   if (!activeRefreshPromise) {
     activeRefreshPromise = performTokenRefresh().finally(() => {
       activeRefreshPromise = null;
@@ -94,6 +128,10 @@ async function getOrRefreshAccessToken(): Promise<string | null> {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}, retries = 2): Promise<T> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new NetworkOfflineError();
+  }
+
   let token = getAuthToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -112,55 +150,80 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retries =
       });
 
       // Handle 401 unauthorized with single-flight shared token refresh attempt
-      if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/refresh') && !endpoint.includes('/auth/register')) {
-        const newToken = await getOrRefreshAccessToken();
-        if (newToken) {
-          token = newToken;
+      if (
+        response.status === 401 &&
+        !endpoint.includes('/auth/login') &&
+        !endpoint.includes('/auth/refresh') &&
+        !endpoint.includes('/auth/register')
+      ) {
+        const outcome = await getOrRefreshAccessToken();
+        if (outcome.status === 'refreshed') {
+          token = outcome.token;
           const retryResponse = await fetch(`${BASE_URL}${endpoint}`, {
             ...options,
-            headers: { ...headers, Authorization: `Bearer ${newToken}` },
+            headers: { ...headers, Authorization: `Bearer ${outcome.token}` },
           });
           const retryData = await retryResponse.json().catch(() => ({}));
-          if (retryResponse.status === 401) {
+          if (retryResponse.status === 401 || retryResponse.status === 403) {
             dispatchSessionExpiredOnce();
             throw new SessionExpiredError();
           }
           if (!retryResponse.ok) {
-            throw new Error(retryData.error || `خطأ في الخادم (رمز ${retryResponse.status}): تعذر إكمال العملية.`);
+            throw new ApiHttpError(
+              retryResponse.status,
+              retryData.error || `خطأ في الخادم (رمز ${retryResponse.status}): تعذر إكمال العملية.`
+            );
           }
           return retryData as T;
         }
 
-        dispatchSessionExpiredOnce();
-        throw new SessionExpiredError();
+        if (outcome.status === 'terminal_rejected') {
+          dispatchSessionExpiredOnce();
+          throw new SessionExpiredError();
+        }
+
+        // Transient failure during refresh (e.g. brief offline / 5xx) — preserve tokens!
+        throw new NetworkOfflineError('تعذر تجديد الجلسة مؤقتاً بسبب انقطاع الشبكة.');
       }
 
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
         if (response.status === 404) {
-          throw new Error('مسار الخادم المطلوب غير متوفر (404 Not Found). يرجى التأكد من تشغيل خادم الـ API.');
+          throw new ApiHttpError(404, 'مسار الخادم المطلوب غير متوفر (404 Not Found). يرجى التأكد من تشغيل خادم الـ API.');
         }
-        throw new Error(data.error || `خطأ في الخادم (رمز ${response.status}): تعذر إكمال العملية.`);
+        throw new ApiHttpError(
+          response.status,
+          data.error || `خطأ في الخادم (رمز ${response.status}): تعذر إكمال العملية.`
+        );
       }
 
       return data as T;
     } catch (err: any) {
+      if (err instanceof SessionExpiredError) {
+        throw err;
+      }
+
       const isNetworkError =
+        err instanceof NetworkOfflineError ||
         !err.message ||
         err.message === 'Failed to fetch' ||
         err.message.includes('fetch') ||
         err.message.includes('NetworkError');
 
-      if (!isNetworkError || attempt === retries) {
+      if (!isNetworkError) {
         throw err;
+      }
+
+      if (attempt === retries) {
+        throw new NetworkOfflineError();
       }
 
       await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
     }
   }
 
-  throw new Error('تعذر الاتصال بالخادم.');
+  throw new NetworkOfflineError();
 }
 
 export const api = {
@@ -239,9 +302,21 @@ export const api = {
   }) => request<any>('/withdrawals/request', { method: 'POST', body: JSON.stringify(payload) }),
   getMyWithdrawals: () => request<any>('/withdrawals/my'),
 
-  // Notifications
+  // Notifications & Web Push
   getNotifications: () => request<any>('/notifications'),
+  readNotification: (id: string) => request<any>(`/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' }),
   readAllNotifications: () => request<any>('/notifications/read-all', { method: 'POST' }),
+  getPushConfig: () => request<{ configured: boolean; publicKey: string | null; reason?: string }>('/notifications/push-config'),
+  subscribePush: (subscription: PushSubscriptionJSON | any) =>
+    request<{ success: boolean; storageMode?: string }>('/notifications/push-subscribe', {
+      method: 'POST',
+      body: JSON.stringify({ subscription }),
+    }),
+  unsubscribePush: (endpoint?: string) =>
+    request<{ success: boolean }>('/notifications/push-subscribe', {
+      method: 'DELETE',
+      body: JSON.stringify({ endpoint }),
+    }),
 
   // Referrals
   getMyReferrals: () => request<any>('/referrals/my'),
@@ -345,15 +420,17 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (res.status === 401) {
-      const refreshed = await getOrRefreshAccessToken();
-      if (refreshed) {
-        token = refreshed;
+      const outcome = await getOrRefreshAccessToken();
+      if (outcome.status === 'refreshed') {
+        token = outcome.token;
         res = await fetch(`${BASE_URL}/admin/financial-report/export?${q.toString()}`, {
-          headers: { Authorization: `Bearer ${refreshed}` },
+          headers: { Authorization: `Bearer ${outcome.token}` },
         });
-      } else {
+      } else if (outcome.status === 'terminal_rejected') {
         dispatchSessionExpiredOnce();
         throw new SessionExpiredError();
+      } else {
+        throw new NetworkOfflineError('تعذر تصدير التقرير بسبب انقطاع الاتصال مؤقتاً.');
       }
     }
     if (!res.ok) {
@@ -453,6 +530,11 @@ export const api = {
   getFinancialReport: () => request<any>('/admin/financial-report'),
   updateAdminSettings: (payload: any) =>
     request<any>('/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  broadcastAdminNotification: (payload: { title: string; message: string; targetUserId?: string; link?: string }) =>
+    request<{ success: boolean; sentCount: number }>('/admin/notifications/broadcast', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   // Supabase Database Error Monitoring & Connection Testing
   getDatabaseErrors: (params?: {
@@ -598,5 +680,52 @@ export const api = {
         walletBalanceYer?: number;
       };
     }>('/clixwall/rewards'),
+
+  // Isolated Ad Partners Registry (Public active + Owner Admin CRUD)
+  getPublicAdPartners: (placement?: string) =>
+    request<{ partners: AdPartner[] }>(
+      placement ? `/ad-partners/public?placement=${encodeURIComponent(placement)}` : '/ad-partners/public'
+    ),
+  getAdminAdPartners: () =>
+    request<{ partners: AdPartner[]; storageMode?: 'supabase' | 'fallback' }>('/admin/ad-partners'),
+  createAdminAdPartner: (payload: {
+    partnerName: string;
+    placementKey?: string;
+    codeType: AdPartnerCodeType;
+    code: string;
+    width?: number;
+    height?: number;
+    rotationMode?: AdPartnerRotationMode;
+    sortOrder?: number;
+    isActive?: boolean;
+  }) => request<{ success: boolean; partner: AdPartner; storageMode?: string }>('/admin/ad-partners', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updateAdminAdPartner: (
+    id: string,
+    payload: Partial<{
+      partnerName: string;
+      placementKey: string;
+      codeType: AdPartnerCodeType;
+      code: string;
+      width: number;
+      height: number;
+      rotationMode: AdPartnerRotationMode;
+      sortOrder: number;
+      isActive: boolean;
+    }>
+  ) =>
+    request<{ success: boolean; partner: AdPartner; storageMode?: string }>(
+      `/admin/ad-partners/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    ),
+  deleteAdminAdPartner: (id: string) =>
+    request<{ success: boolean; storageMode?: string }>(`/admin/ad-partners/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
 };
 

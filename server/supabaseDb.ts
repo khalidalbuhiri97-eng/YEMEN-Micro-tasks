@@ -12,6 +12,12 @@ import {
   getSupabaseUserClient,
   logSupabaseError,
 } from './app.js';
+import { sendWebPushToUser } from './pushService.js';
+import {
+  inferTaskKindFromCategory,
+  mapTaskKindToCategory,
+  sanitizeTaskBuilderMeta,
+} from '../shared/taskMeta.js';
 import type {
   UserProfile,
   UserRole,
@@ -831,11 +837,17 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskIte
       : 'ACTIVE';
 
   const rawReqs = t.proof_requirements || {};
+  const rawTaskMeta = rawReqs._taskMeta ? sanitizeTaskBuilderMeta(rawReqs._taskMeta, t.category) : undefined;
+  const isFeatured = Boolean(rawTaskMeta?.isFeatured ?? t.is_featured ?? false);
+  const taskKind = rawTaskMeta?.taskKind || inferTaskKindFromCategory(t.category);
+  const priority = Number(rawTaskMeta?.priority ?? t.priority ?? (isFeatured ? 100 : 0));
+
   const proofRequirements = {
     requireImage: rawReqs.requireImage ?? rawReqs.require_image ?? false,
     requireText: rawReqs.requireText ?? rawReqs.require_text ?? true,
     requireUrl: rawReqs.requireUrl ?? rawReqs.require_url ?? false,
     instructions: rawReqs.instructions,
+    ...(rawTaskMeta ? { _taskMeta: rawTaskMeta } : {}),
   };
 
   const identity = resolvePublicTaskAdvertiserIdentity(t, options);
@@ -848,13 +860,23 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskIte
     divisionId: administrativeDivisionId,
   });
 
+  const explicitSteps = Array.isArray(t.steps) && t.steps.length > 0
+    ? t.steps
+    : Array.isArray(rawTaskMeta?.fields?.steps)
+      ? rawTaskMeta!.fields!.steps!
+      : [];
+
   return {
     id: t.id,
     title: t.title || '',
     description: t.description || '',
     category: (t.category || 'app_testing') as TaskItem['category'],
+    taskKind,
+    isFeatured,
+    priority,
+    taskMeta: rawTaskMeta,
     rewardYer,
-    steps: Array.isArray(t.steps) ? t.steps : [],
+    steps: explicitSteps,
     proofRequirements,
     timeEstimateMinutes: Number(t.time_estimate_minutes ?? 10),
     totalQuantity,
@@ -1734,6 +1756,20 @@ export const supabaseDb = {
         });
       }
 
+      mapped.sort((a, b) => {
+        const featDiff = Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
+        if (featDiff !== 0) return featDiff;
+
+        const aAvail = Math.max(0, a.totalQuantity - a.completedQuantity) > 0 ? 1 : 0;
+        const bAvail = Math.max(0, b.totalQuantity - b.completedQuantity) > 0 ? 1 : 0;
+        if (bAvail !== aAvail) return bAvail - aAvail;
+
+        const prioDiff = Number(b.priority || 0) - Number(a.priority || 0);
+        if (prioDiff !== 0) return prioDiff;
+
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+
       return mapped;
     } catch (err: any) {
       console.error('[Supabase GET_TASKS]', err.message);
@@ -1792,6 +1828,12 @@ export const supabaseDb = {
     title: string;
     description: string;
     category?: string;
+    taskKind?: string;
+    isFeatured?: boolean;
+    taskMeta?: Record<string, any>;
+    steps?: string[];
+    proofRequirements?: Record<string, any>;
+    timeEstimateMinutes?: number;
     rewardYer: number;
     totalQuantity: number;
     deadline?: string;
@@ -1852,9 +1894,44 @@ export const supabaseDb = {
       }
 
       const db = getActorOrAdminClient(taskData.authToken);
-      if (taskData.category) {
+      const effectiveCategory = mapTaskKindToCategory(taskData.taskKind, taskData.category);
+      const normalizedMeta = sanitizeTaskBuilderMeta(
+        {
+          ...(taskData.taskMeta || {}),
+          ...(taskData.taskKind ? { taskKind: taskData.taskKind } : {}),
+          ...(taskData.isFeatured !== undefined ? { isFeatured: Boolean(taskData.isFeatured) } : {}),
+        },
+        effectiveCategory
+      );
+
+      const mergedProofReqs = {
+        requireImage: Boolean(taskData.proofRequirements?.requireImage ?? true),
+        requireText: Boolean(taskData.proofRequirements?.requireText ?? true),
+        requireUrl: Boolean(taskData.proofRequirements?.requireUrl ?? false),
+        ...(taskData.proofRequirements?.instructions
+          ? { instructions: String(taskData.proofRequirements.instructions) }
+          : {}),
+        _taskMeta: normalizedMeta,
+      };
+
+      const taskUpdatePayload: Record<string, any> = {
+        category: effectiveCategory,
+        proof_requirements: mergedProofReqs,
+        time_estimate_minutes: Math.max(1, Math.round(Number(taskData.timeEstimateMinutes || 10))),
+      };
+
+      if (Array.isArray(taskData.steps) && taskData.steps.length > 0) {
+        taskUpdatePayload.steps = taskData.steps.map((s) => String(s || '').trim()).filter(Boolean);
+      }
+
+      try {
+        await db.from('tasks').update(taskUpdatePayload).eq('id', String(createdTaskId));
+      } catch {
         try {
-          await db.from('tasks').update({ category: taskData.category }).eq('id', String(createdTaskId));
+          await db
+            .from('tasks')
+            .update({ category: effectiveCategory, proof_requirements: mergedProofReqs })
+            .eq('id', String(createdTaskId));
         } catch {}
       }
 
@@ -3059,18 +3136,13 @@ export const supabaseDb = {
         })
         .eq('id', params.withdrawalId);
 
-      await db
-        .from('notifications')
-        .insert({
-          id: crypto.randomUUID(),
-          user_id: withData.user_id,
-          title: 'تم تحويل مبلغ السحب بنجاح!',
-          message: `تم إرسال ${netAmount.toLocaleString()} ر.ي بنجاح برقم الحوالة: ${params.transferReference.trim()}.`,
-          type: 'WITHDRAWAL_COMPLETED',
-          link: '/dashboard/withdrawals',
-          created_at: now,
-        })
-        .then(() => {}, () => {});
+      await this.createNotification({
+        userId: withData.user_id,
+        title: 'تم تحويل مبلغ السحب بنجاح!',
+        message: `تم إرسال ${netAmount.toLocaleString()} ر.ي بنجاح برقم الحوالة: ${params.transferReference.trim()}.`,
+        type: 'WITHDRAWAL_COMPLETED',
+        link: '/dashboard/withdrawals',
+      });
 
       return { success: true, idempotent: false, withdrawalId: params.withdrawalId, status: 'PAID', transactionId: String(txId) };
     } else {
@@ -3113,18 +3185,13 @@ export const supabaseDb = {
         })
         .eq('id', params.withdrawalId);
 
-      await db
-        .from('notifications')
-        .insert({
-          id: crypto.randomUUID(),
-          user_id: withData.user_id,
-          title: 'تم رفض طلب السحب واستعادة الرصيد',
-          message: `تم استرجاع مبلغ ${totalAmount.toLocaleString()} ر.ي إلى محفظتك. السبب: ${params.reason.trim()}`,
-          type: 'WITHDRAWAL_REJECTED',
-          link: '/dashboard/wallet',
-          created_at: now,
-        })
-        .then(() => {}, () => {});
+      await this.createNotification({
+        userId: withData.user_id,
+        title: 'تم رفض طلب السحب واستعادة الرصيد',
+        message: `تم استرجاع مبلغ ${totalAmount.toLocaleString()} ر.ي إلى محفظتك. السبب: ${params.reason.trim()}`,
+        type: 'WITHDRAWAL_REJECTED',
+        link: '/dashboard/wallet',
+      });
 
       const updatedWallet = await this.getWallet(withData.user_id);
       return {
@@ -4776,6 +4843,55 @@ export const supabaseDb = {
     }
   },
 
+  async markSingleNotificationRead(userId: string, notificationId: string, authToken?: string): Promise<boolean> {
+    try {
+      const db = getActorOrAdminClient(authToken);
+      const { error } = await db
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notificationId)
+        .eq('user_id', userId);
+      return !error;
+    } catch {
+      return false;
+    }
+  },
+
+  async createNotification(params: {
+    userId: string;
+    title: string;
+    message: string;
+    type: string;
+    link?: string;
+  }): Promise<void> {
+    try {
+      if (!params.userId || !params.title || !params.message) return;
+      const cleanTitle = String(params.title).slice(0, 160);
+      const cleanMsg = String(params.message).slice(0, 600);
+      const cleanType = String(params.type || 'SYSTEM').slice(0, 60);
+      const db = getDbClient();
+      await db.from('notifications').insert({
+        id: crypto.randomUUID(),
+        user_id: params.userId,
+        title: cleanTitle,
+        message: cleanMsg,
+        type: cleanType,
+        link: params.link || null,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      });
+
+      sendWebPushToUser(params.userId, {
+        title: cleanTitle,
+        body: cleanMsg,
+        url: params.link || '/dashboard',
+        type: cleanType,
+      }).catch(() => {});
+    } catch {
+      // Non-blocking notification insert
+    }
+  },
+
   /**
    * 10. REFERRAL SYSTEM (Validation, Ledger-Backed Summary & Reward Lookup)
    */
@@ -5128,8 +5244,24 @@ export const supabaseDb = {
         ? params.advertiserDisplayName.trim().slice(0, 100)
         : advertiserProfile.companyName || advertiserProfile.fullName;
     const cleanLogoUrl = sanitizeAdvertiserLogoUrl(params.advertiserLogoUrl);
+    const sanitizedTaskMeta = params.proofRequirements?._taskMeta
+      ? sanitizeTaskBuilderMeta(
+          {
+            ...params.proofRequirements._taskMeta,
+            // Advertisers may request featured status; direct featured activation requires Admin authorization
+            isFeatured: false,
+            featuredRequested: Boolean(
+              params.proofRequirements._taskMeta.isFeatured ||
+                params.proofRequirements._taskMeta.featuredRequested
+            ),
+          },
+          params.category
+        )
+      : undefined;
+
     const mergedProofRequirements = {
       ...(params.proofRequirements || { requireImage: true, requireText: true }),
+      ...(sanitizedTaskMeta ? { _taskMeta: sanitizedTaskMeta } : {}),
       _campaignMeta: {
         isExternalCampaign: true,
         hideAdvertiserName,
@@ -5901,18 +6033,13 @@ export const supabaseDb = {
     if (updErr) throw new Error(updErr.message);
 
     if (camp.advertiser_id) {
-      await adminClient
-        .from('notifications')
-        .insert({
-          id: crypto.randomUUID(),
-          user_id: camp.advertiser_id,
-          title: 'تمت الموافقة على حملتك الإعلانية',
-          message: `وافقت الإدارة على حملتك "${camp.title}". يمكنك الآن بدء تشغيل الحملة لتصل للمستخدمين.`,
-          type: 'CAMPAIGN_APPROVED',
-          link: '/advertiser',
-          created_at: now,
-        })
-        .then(() => {}, () => {});
+      await this.createNotification({
+        userId: camp.advertiser_id,
+        title: 'تمت الموافقة على حملتك الإعلانية',
+        message: `وافقت الإدارة على حملتك "${camp.title}". يمكنك الآن بدء تشغيل الحملة لتصل للمستخدمين.`,
+        type: 'CAMPAIGN_APPROVED',
+        link: '/advertiser',
+      });
     }
 
     await this.writeFinancialAuditLog({
@@ -6011,18 +6138,13 @@ export const supabaseDb = {
     if (updErr) throw new Error(updErr.message);
 
     if (camp.advertiser_id) {
-      await adminClient
-        .from('notifications')
-        .insert({
-          id: crypto.randomUUID(),
-          user_id: camp.advertiser_id,
-          title: 'تم رفض الحملة الإعلانية واسترداد الرصيد',
-          message: `تم رفض حملتك "${camp.title}" للسبب: ${cleanReason}. وقد تم إعادة كامل المبلغ المحجوز (${totalRefund.toLocaleString()} ر.ي) إلى محفظتك المتاحة.`,
-          type: 'CAMPAIGN_REJECTED',
-          link: '/advertiser',
-          created_at: now,
-        })
-        .then(() => {}, () => {});
+      await this.createNotification({
+        userId: camp.advertiser_id,
+        title: 'تم رفض الحملة الإعلانية واسترداد الرصيد',
+        message: `تم رفض حملتك "${camp.title}" للسبب: ${cleanReason}. وقد تم إعادة كامل المبلغ المحجوز (${totalRefund.toLocaleString()} ر.ي) إلى محفظتك المتاحة.`,
+        type: 'CAMPAIGN_REJECTED',
+        link: '/advertiser',
+      });
     }
 
     await this.writeFinancialAuditLog({
@@ -6773,18 +6895,13 @@ export const supabaseDb = {
       .eq('id', dep.id);
 
     if (dep.deposit_purpose === 'advertiser_wallet' && dep.advertiser_id) {
-      await adminClient
-        .from('notifications')
-        .insert({
-          id: crypto.randomUUID(),
-          user_id: dep.advertiser_id,
-          title: 'تم اعتماد إيداعك وشحن محفظتك',
-          message: `تم التحقق من الإيصال رقم (${dep.reference_number}) وشحن مبلغ ${Number(dep.amount_units).toLocaleString()} ر.ي في محفظتك.`,
-          type: 'WALLET_DEPOSIT_APPROVED',
-          link: '/advertiser',
-          created_at: now,
-        })
-        .then(() => {}, () => {});
+      await this.createNotification({
+        userId: dep.advertiser_id,
+        title: 'تم اعتماد إيداعك وشحن محفظتك',
+        message: `تم التحقق من الإيصال رقم (${dep.reference_number}) وشحن مبلغ ${Number(dep.amount_units).toLocaleString()} ر.ي في محفظتك.`,
+        type: 'WALLET_DEPOSIT_APPROVED',
+        link: '/advertiser',
+      });
     }
 
     await this.writeFinancialAuditLog({
@@ -6850,18 +6967,13 @@ export const supabaseDb = {
     if (updErr) throw new Error(updErr.message);
 
     if (dep.advertiser_id) {
-      await adminClient
-        .from('notifications')
-        .insert({
-          id: crypto.randomUUID(),
-          user_id: dep.advertiser_id,
-          title: 'تم رفض إيصال الإيداع',
-          message: `تم رفض الإيصال رقم (${dep.reference_number}) للسبب التالي: ${cleanReason}`,
-          type: 'WALLET_DEPOSIT_REJECTED',
-          link: '/advertiser',
-          created_at: now,
-        })
-        .then(() => {}, () => {});
+      await this.createNotification({
+        userId: dep.advertiser_id,
+        title: 'تم رفض إيصال الإيداع',
+        message: `تم رفض الإيصال رقم (${dep.reference_number}) للسبب التالي: ${cleanReason}`,
+        type: 'WALLET_DEPOSIT_REJECTED',
+        link: '/advertiser',
+      });
     }
 
     await this.writeFinancialAuditLog({
@@ -7143,5 +7255,370 @@ export const supabaseDb = {
       adjustmentTransactionId: txId,
     };
   },
+
+  /**
+   * 11. ISOLATED AD PARTNERS REGISTRY (Migration 033 + safe fallback)
+   * Strictly separated from ClixWall postbacks & financial ledgers.
+   */
+  async getAdPartners(options?: { onlyActive?: boolean; placementKey?: string }) {
+    const isMissingTableError = (err: any) => {
+      const code = String(err?.code || '').toUpperCase();
+      const msg = String(err?.message || '').toLowerCase();
+      return (
+        code === '42P01' ||
+        code === 'PGRST205' ||
+        msg.includes('does not exist') ||
+        msg.includes('could not find the table') ||
+        msg.includes('schema cache')
+      );
+    };
+
+    const mapRow = (row: any) => ({
+      id: String(row.id),
+      partnerName: String(row.partner_name ?? row.partnerName ?? ''),
+      placementKey: String(row.placement_key ?? row.placementKey ?? 'home_clixwall_slot'),
+      codeType: (['html', 'javascript', 'iframe'].includes(String(row.code_type ?? row.codeType))
+        ? String(row.code_type ?? row.codeType)
+        : 'html') as 'html' | 'javascript' | 'iframe',
+      code: String(row.code ?? ''),
+      width: Math.min(1200, Math.max(100, Number(row.width ?? 300))),
+      height: Math.min(800, Math.max(50, Number(row.height ?? 250))),
+      rotationMode: (String(row.rotation_mode ?? row.rotationMode) === 'single' ? 'single' : 'rotate') as 'single' | 'rotate',
+      sortOrder: Number(row.sort_order ?? row.sortOrder ?? 0),
+      isActive: Boolean(row.is_active ?? row.isActive ?? true),
+      createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
+      updatedAt: String(row.updated_at ?? row.updatedAt ?? new Date().toISOString()),
+    });
+
+    try {
+      const db = getDbClient();
+      let query = db
+        .from('ad_partners')
+        .select('*')
+        .order('sort_order', { ascending: true })
+        .order('created_at', { ascending: false });
+
+      if (options?.onlyActive) {
+        query = query.eq('is_active', true);
+      }
+      if (options?.placementKey) {
+        query = query.eq('placement_key', options.placementKey);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        if (isMissingTableError(error)) {
+          const fallbackItems = await readFallbackAdPartners();
+          const filtered = fallbackItems.filter((item) => {
+            if (options?.onlyActive && !item.isActive) return false;
+            if (options?.placementKey && item.placementKey !== options.placementKey) return false;
+            return true;
+          });
+          return { partners: filtered, storageMode: 'fallback' as const };
+        }
+        throw new Error(error.message);
+      }
+      return { partners: (data || []).map(mapRow), storageMode: 'supabase' as const };
+    } catch (err: any) {
+      if (isMissingTableError(err)) {
+        const fallbackItems = await readFallbackAdPartners();
+        const filtered = fallbackItems.filter((item) => {
+          if (options?.onlyActive && !item.isActive) return false;
+          if (options?.placementKey && item.placementKey !== options.placementKey) return false;
+          return true;
+        });
+        return { partners: filtered, storageMode: 'fallback' as const };
+      }
+      throw err;
+    }
+  },
+
+  async createAdPartner(params: {
+    partnerName: string;
+    placementKey?: string;
+    codeType: 'html' | 'javascript' | 'iframe';
+    code: string;
+    width?: number;
+    height?: number;
+    rotationMode?: 'single' | 'rotate';
+    sortOrder?: number;
+    isActive?: boolean;
+    actorId: string;
+    authToken?: string;
+  }) {
+    const clean = validateAdPartnerPayload(params);
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    const db = getActorOrAdminClient(params.authToken);
+
+    const { data, error } = await db
+      .from('ad_partners')
+      .insert({
+        id,
+        partner_name: clean.partnerName,
+        placement_key: clean.placementKey,
+        code_type: clean.codeType,
+        code: clean.code,
+        width: clean.width,
+        height: clean.height,
+        rotation_mode: clean.rotationMode,
+        sort_order: clean.sortOrder,
+        is_active: clean.isActive,
+        created_by: params.actorId,
+        created_at: now,
+        updated_at: now,
+      })
+      .select('*')
+      .single();
+
+    if (error) {
+      const msg = String(error.message || '').toLowerCase();
+      if (error.code === '42P01' || error.code === 'PGRST205' || msg.includes('does not exist') || msg.includes('schema cache')) {
+        const list = await readFallbackAdPartners();
+        const item = {
+          id,
+          ...clean,
+          createdAt: now,
+          updatedAt: now,
+        };
+        list.unshift(item);
+        await writeFallbackAdPartners(list);
+        return { partner: item, storageMode: 'fallback' as const };
+      }
+      throw new Error(error.message);
+    }
+
+    return {
+      partner: {
+        id: String(data.id),
+        partnerName: data.partner_name,
+        placementKey: data.placement_key,
+        codeType: data.code_type,
+        code: data.code,
+        width: Number(data.width),
+        height: Number(data.height),
+        rotationMode: data.rotation_mode,
+        sortOrder: Number(data.sort_order),
+        isActive: Boolean(data.is_active),
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      },
+      storageMode: 'supabase' as const,
+    };
+  },
+
+  async updateAdPartner(
+    id: string,
+    params: Partial<{
+      partnerName: string;
+      placementKey: string;
+      codeType: 'html' | 'javascript' | 'iframe';
+      code: string;
+      width: number;
+      height: number;
+      rotationMode: 'single' | 'rotate';
+      sortOrder: number;
+      isActive: boolean;
+    }>,
+    authToken?: string
+  ) {
+    const db = getActorOrAdminClient(authToken);
+    const now = new Date().toISOString();
+    const updates: Record<string, any> = { updated_at: now };
+
+    if (params.partnerName !== undefined) {
+      const name = String(params.partnerName).trim();
+      if (!name || name.length > 100) throw new Error('اسم الشركة المعلنة غير صالح (الحد الأقصى 100 حرف).');
+      updates.partner_name = name;
+    }
+    if (params.placementKey !== undefined) {
+      updates.placement_key = String(params.placementKey).trim() || 'home_clixwall_slot';
+    }
+    if (params.codeType !== undefined) {
+      if (!['html', 'javascript', 'iframe'].includes(params.codeType)) {
+        throw new Error('نوع الكود الإعلاني غير صالح.');
+      }
+      updates.code_type = params.codeType;
+    }
+    if (params.code !== undefined) {
+      updates.code = validateAdCodeContent(params.code, params.codeType);
+    }
+    if (params.width !== undefined) {
+      const w = Math.round(Number(params.width));
+      if (!Number.isFinite(w) || w < 100 || w > 1200) throw new Error('العرض يجب أن يكون بين 100 و1200 بكسل.');
+      updates.width = w;
+    }
+    if (params.height !== undefined) {
+      const h = Math.round(Number(params.height));
+      if (!Number.isFinite(h) || h < 50 || h > 800) throw new Error('الارتفاع يجب أن يكون بين 50 و800 بكسل.');
+      updates.height = h;
+    }
+    if (params.rotationMode !== undefined) {
+      updates.rotation_mode = params.rotationMode === 'single' ? 'single' : 'rotate';
+    }
+    if (params.sortOrder !== undefined) {
+      updates.sort_order = Math.round(Number(params.sortOrder) || 0);
+    }
+    if (params.isActive !== undefined) {
+      updates.is_active = Boolean(params.isActive);
+    }
+
+    const { data, error } = await db
+      .from('ad_partners')
+      .update(updates)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      const msg = String(error.message || '').toLowerCase();
+      if (error.code === '42P01' || error.code === 'PGRST205' || msg.includes('does not exist') || msg.includes('schema cache')) {
+        const list = await readFallbackAdPartners();
+        const idx = list.findIndex((x) => x.id === id);
+        if (idx === -1) throw new Error('الشريك الإعلاني غير موجود.');
+        const current = list[idx];
+        const next = {
+          ...current,
+          ...(params.partnerName !== undefined ? { partnerName: updates.partner_name } : {}),
+          ...(params.placementKey !== undefined ? { placementKey: updates.placement_key } : {}),
+          ...(params.codeType !== undefined ? { codeType: updates.code_type } : {}),
+          ...(params.code !== undefined ? { code: updates.code } : {}),
+          ...(params.width !== undefined ? { width: updates.width } : {}),
+          ...(params.height !== undefined ? { height: updates.height } : {}),
+          ...(params.rotationMode !== undefined ? { rotationMode: updates.rotation_mode } : {}),
+          ...(params.sortOrder !== undefined ? { sortOrder: updates.sort_order } : {}),
+          ...(params.isActive !== undefined ? { isActive: updates.is_active } : {}),
+          updatedAt: now,
+        };
+        list[idx] = next;
+        await writeFallbackAdPartners(list);
+        return { partner: next, storageMode: 'fallback' as const };
+      }
+      throw new Error(error.message);
+    }
+
+    return {
+      partner: {
+        id: String(data.id),
+        partnerName: data.partner_name,
+        placementKey: data.placement_key,
+        codeType: data.code_type,
+        code: data.code,
+        width: Number(data.width),
+        height: Number(data.height),
+        rotationMode: data.rotation_mode,
+        sortOrder: Number(data.sort_order),
+        isActive: Boolean(data.is_active),
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      },
+      storageMode: 'supabase' as const,
+    };
+  },
+
+  async deleteAdPartner(id: string, authToken?: string) {
+    const db = getActorOrAdminClient(authToken);
+    const { error } = await db.from('ad_partners').delete().eq('id', id);
+
+    if (error) {
+      const msg = String(error.message || '').toLowerCase();
+      if (error.code === '42P01' || error.code === 'PGRST205' || msg.includes('does not exist') || msg.includes('schema cache')) {
+        const list = await readFallbackAdPartners();
+        const filtered = list.filter((x) => x.id !== id);
+        await writeFallbackAdPartners(filtered);
+        return { success: true, storageMode: 'fallback' as const };
+      }
+      throw new Error(error.message);
+    }
+
+    return { success: true, storageMode: 'supabase' as const };
+  },
 };
+
+const FALLBACK_AD_PARTNERS_PATH = '/tmp/yemen_task_ad_partners.json';
+
+function validateAdCodeContent(rawCode: string, codeType?: string): string {
+  const code = String(rawCode || '').trim();
+  if (!code) {
+    throw new Error('الكود الإعلاني مطلوب.');
+  }
+  if (code.length > 32000) {
+    throw new Error('حجم الكود الإعلاني يتجاوز الحد الأقصى (32 كيلوبايت).');
+  }
+  const lower = code.toLowerCase();
+  if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:text/html')) {
+    throw new Error('الكود يحتوي على بروتوكول غير آمن مرفوض.');
+  }
+  if (codeType === 'iframe' && lower.includes('<iframe')) {
+    const srcMatch = code.match(/src\s*=\s*["']([^"']+)["']/i);
+    if (srcMatch?.[1]) {
+      const url = srcMatch[1].trim().toLowerCase();
+      if (!url.startsWith('https://') && !url.startsWith('http://')) {
+        throw new Error('يجب أن يستخدم رابط الـ iframe بروتوكول https:// أو http://.');
+      }
+    }
+  }
+  return code;
+}
+
+function validateAdPartnerPayload(params: {
+  partnerName: string;
+  placementKey?: string;
+  codeType: 'html' | 'javascript' | 'iframe';
+  code: string;
+  width?: number;
+  height?: number;
+  rotationMode?: 'single' | 'rotate';
+  sortOrder?: number;
+  isActive?: boolean;
+}) {
+  const partnerName = String(params.partnerName || '').trim();
+  if (!partnerName || partnerName.length > 100) {
+    throw new Error('اسم الشركة الإعلانية مطلوب (الحد الأقصى 100 حرف).');
+  }
+  const codeType = params.codeType;
+  if (!['html', 'javascript', 'iframe'].includes(codeType)) {
+    throw new Error('نوع الكود الإعلاني غير مدعوم.');
+  }
+  const code = validateAdCodeContent(params.code, codeType);
+  const placementKey = String(params.placementKey || 'home_clixwall_slot').trim() || 'home_clixwall_slot';
+  const width = Math.min(1200, Math.max(100, Math.round(Number(params.width ?? 300)) || 300));
+  const height = Math.min(800, Math.max(50, Math.round(Number(params.height ?? 250)) || 250));
+  const rotationMode: 'single' | 'rotate' = params.rotationMode === 'single' ? 'single' : 'rotate';
+  const sortOrder = Math.round(Number(params.sortOrder ?? 0) || 0);
+  const isActive = params.isActive !== false;
+
+  return {
+    partnerName,
+    placementKey,
+    codeType,
+    code,
+    width,
+    height,
+    rotationMode,
+    sortOrder,
+    isActive,
+  };
+}
+
+async function readFallbackAdPartners(): Promise<any[]> {
+  try {
+    const fs = await import('node:fs/promises');
+    const raw = await fs.readFile(FALLBACK_AD_PARTNERS_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeFallbackAdPartners(items: any[]): Promise<void> {
+  try {
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(FALLBACK_AD_PARTNERS_PATH, JSON.stringify(items, null, 2), 'utf8');
+  } catch {
+    // Ignore FS permission errors on read-only paths
+  }
+}
+
 

@@ -6,6 +6,12 @@ import { supabaseDb, generateWalletAddress, generateReferralCode } from './supab
 import { geoService } from './geoService.js';
 import { createClixWallHandlers } from './clixwallHandlers.js';
 import {
+  getPushPublicStatus,
+  saveUserPushSubscription,
+  removeUserPushSubscription,
+} from './pushService.js';
+import { mapTaskKindToCategory, sanitizeTaskBuilderMeta } from '../shared/taskMeta.js';
+import {
   parseMoneyStrict,
   addMoney,
   calcWalletTransferBreakdown,
@@ -1224,6 +1230,29 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
 
     const updatedSenderWallet = await supabaseDb.getWallet(req.user.id);
 
+    // Non-blocking notification to recipient (does not touch RPC/balances)
+    (async () => {
+      try {
+        const dbClient = getPrivilegedDbClient(req);
+        const { data: recWallet } = await dbClient
+          .from('wallets')
+          .select('user_id')
+          .eq('wallet_address', cleanRecipientAddress)
+          .maybeSingle();
+        if (recWallet?.user_id) {
+          await supabaseDb.createNotification({
+            userId: recWallet.user_id,
+            title: 'حوالة مالية واردة لمحفظتك',
+            message: `تم استلام مبلغ ${formatYer(numAmount)} ر.ي من ${req.user.fullName || 'مستخدم'}${cleanNote ? ` — ${cleanNote}` : ''}.`,
+            type: 'WALLET_TRANSFER_RECEIVED',
+            link: '/wallet',
+          });
+        }
+      } catch {
+        // Non-blocking
+      }
+    })();
+
     return res.json({
       success: true,
       transferId: typeof rpcResult === 'string' ? rpcResult : (rpcResult?.transferId || rpcResult?.id),
@@ -1321,6 +1350,103 @@ app.post('/api/notifications/read-all', authMiddleware, async (req: Authenticate
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل تحديث الإشعارات.' });
+  }
+});
+
+app.post('/api/notifications/:id/read', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    await supabaseDb.markSingleNotificationRead(req.user.id, req.params.id, req.authToken);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل تحديث حالة الإشعار.' });
+  }
+});
+
+// Web Push Configuration & Per-User Subscription Management
+app.get('/api/notifications/push-config', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    res.json(getPushPublicStatus());
+  } catch (err: any) {
+    res.json({ configured: false, publicKey: null, reason: err?.message || 'تعذر التحقق من إعدادات الإشعارات.' });
+  }
+});
+
+app.post('/api/notifications/push-subscribe', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const subscription = req.body?.subscription || req.body;
+    const endpoint = subscription?.endpoint;
+    const p256dh = subscription?.keys?.p256dh;
+    const auth = subscription?.keys?.auth;
+    if (!endpoint || !p256dh || !auth) {
+      return res.status(400).json({ error: 'بيانات اشتراك المتصفح غير مكتملة.' });
+    }
+    const result = await saveUserPushSubscription({
+      userId: req.user.id,
+      endpoint: String(endpoint),
+      p256dh: String(p256dh),
+      auth: String(auth),
+      userAgent: req.headers['user-agent'] ? String(req.headers['user-agent']) : undefined,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'تعذر حفظ اشتراك الإشعارات.' });
+  }
+});
+
+app.delete('/api/notifications/push-subscribe', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const endpoint = req.body?.endpoint ? String(req.body.endpoint) : undefined;
+    await removeUserPushSubscription({ userId: req.user.id, endpoint });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'تعذر إلغاء اشتراك الإشعارات.' });
+  }
+});
+
+app.post('/api/admin/notifications/broadcast', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { title, message, targetUserId, link } = req.body || {};
+    const cleanTitle = String(title || '').trim();
+    const cleanMessage = String(message || '').trim();
+    if (!cleanTitle || !cleanMessage) {
+      return res.status(400).json({ error: 'عنوان الإشعار ونصه مطلوبان.' });
+    }
+
+    const adminClient = getPrivilegedDbClient(req);
+    let recipientIds: string[] = [];
+
+    if (targetUserId && String(targetUserId).trim()) {
+      recipientIds = [String(targetUserId).trim()];
+    } else {
+      const { data: profiles, error } = await adminClient
+        .from('profiles')
+        .select('id, status')
+        .neq('id', req.user.id);
+      if (error) throw new Error(error.message);
+      recipientIds = (profiles || [])
+        .filter((p: any) => !p.status || p.status === 'active')
+        .map((p: any) => String(p.id));
+    }
+
+    const BATCH_SIZE = 25;
+    for (let i = 0; i < recipientIds.length; i += BATCH_SIZE) {
+      const batch = recipientIds.slice(i, i + BATCH_SIZE);
+      await Promise.all(
+        batch.map((uid) =>
+          supabaseDb.createNotification({
+            userId: uid,
+            title: cleanTitle,
+            message: cleanMessage,
+            type: 'ADMIN_ANNOUNCEMENT',
+            link: link ? String(link) : '/dashboard',
+          })
+        )
+      );
+    }
+
+    res.json({ success: true, sentCount: recipientIds.length });
+  } catch (err: any) {
+    res.status(400).json({ error: err?.message || 'فشل إرسال الإشعار الإداري.' });
   }
 });
 
@@ -1615,9 +1741,21 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
     }
 
     if (action === 'REJECT') {
+      const isIdempotent = Boolean(typeof rpcRes === 'object' && rpcRes?.idempotent);
+      if (!isIdempotent && existingSub.user_id) {
+        supabaseDb
+          .createNotification({
+            userId: existingSub.user_id,
+            title: 'تم رفض إثبات المهمة',
+            message: `يرجى مراجعة سبب الرفض: ${String(reason || '').trim()}`,
+            type: 'TASK_REJECTED',
+            link: '/dashboard',
+          })
+          .catch(() => {});
+      }
       return res.json({
         success: true,
-        idempotent: Boolean(typeof rpcRes === 'object' && rpcRes?.idempotent),
+        idempotent: isIdempotent,
         submissionId,
         status: 'REJECTED',
         result: rpcRes,
@@ -1673,9 +1811,29 @@ app.post('/api/admin/submissions/:id/review', adminMiddleware, async (req: Authe
       updatedSub?.reward_transaction_id ||
       null;
 
+    const isIdempotentApproval = Boolean(typeof rpcRes === 'object' && rpcRes?.idempotent);
+    if (!isIdempotentApproval && existingSub.user_id) {
+      adminClient
+        .from('tasks')
+        .select('title, reward_units')
+        .eq('id', existingSub.task_id)
+        .maybeSingle()
+        .then(({ data: tRow }) => {
+          const rewardStr = tRow?.reward_units ? `${formatYer(Number(tRow.reward_units))} ر.ي` : 'المكافأة المعتمدة';
+          return supabaseDb.createNotification({
+            userId: existingSub.user_id,
+            title: 'تم قبول إثبات المهمة وصرف المكافأة!',
+            message: `تمت الموافقة على إثباتك${tRow?.title ? ` لمهمة "${tRow.title}"` : ''} وإيداع ${rewardStr} في محفظتك.`,
+            type: 'TASK_APPROVED',
+            link: '/wallet',
+          });
+        })
+        .then(() => {}, () => {});
+    }
+
     return res.json({
       success: true,
-      idempotent: Boolean(typeof rpcRes === 'object' && rpcRes?.idempotent),
+      idempotent: isIdempotentApproval,
       submissionId,
       transactionId,
       commissionTransactionId: commissionResult.transactionId || null,
@@ -1751,6 +1909,12 @@ app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, 
       title,
       description,
       category,
+      taskKind,
+      isFeatured,
+      taskMeta,
+      steps,
+      proofRequirements,
+      timeEstimateMinutes,
       rewardYer,
       totalQuantity,
       deadline,
@@ -1768,6 +1932,12 @@ app.post('/api/admin/tasks', adminMiddleware, async (req: AuthenticatedRequest, 
       title,
       description,
       category,
+      taskKind,
+      isFeatured: Boolean(isFeatured),
+      taskMeta,
+      steps: Array.isArray(steps) ? steps : undefined,
+      proofRequirements,
+      timeEstimateMinutes,
       rewardYer,
       totalQuantity,
       deadline,
@@ -1901,12 +2071,69 @@ app.get('/api/admin/ledger', adminMiddleware, async (req: AuthenticatedRequest, 
 app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const adminClient = getPrivilegedDbClient(req);
-    const { title, description, status } = req.body || {};
+    const {
+      title,
+      description,
+      status,
+      category,
+      taskKind,
+      isFeatured,
+      taskMeta,
+      timeEstimateMinutes,
+      steps,
+      proofRequirements,
+    } = req.body || {};
+
+    // Preserve existing metadata like _campaignMeta when editing task fields
+    const { data: existingRow, error: fetchErr } = await adminClient
+      .from('tasks')
+      .select('id, category, proof_requirements')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (fetchErr) throw fetchErr;
+    if (!existingRow) {
+      return res.status(404).json({ error: 'المهمة غير موجودة أو لا تملك صلاحية تعديلها.' });
+    }
+
     const updates: Record<string, any> = {};
-    if (title !== undefined) updates.title = title;
-    if (description !== undefined) updates.description = description;
+    if (title !== undefined) updates.title = String(title).trim();
+    if (description !== undefined) updates.description = String(description).trim();
     const normalizedStatus = status !== undefined ? String(status).toUpperCase() : undefined;
     if (normalizedStatus !== undefined) updates.status = normalizedStatus.toLowerCase();
+
+    if (category !== undefined || taskKind !== undefined) {
+      updates.category = mapTaskKindToCategory(taskKind, category || existingRow.category);
+    }
+    if (timeEstimateMinutes !== undefined && Number(timeEstimateMinutes) > 0) {
+      updates.time_estimate_minutes = Math.max(1, Math.round(Number(timeEstimateMinutes)));
+    }
+    if (Array.isArray(steps)) {
+      updates.steps = steps.map((s: any) => String(s || '').trim()).filter(Boolean);
+    }
+
+    if (
+      proofRequirements !== undefined ||
+      taskMeta !== undefined ||
+      taskKind !== undefined ||
+      isFeatured !== undefined
+    ) {
+      const existingReqs = (existingRow as any).proof_requirements || {};
+      const nextMeta = sanitizeTaskBuilderMeta(
+        {
+          ...(existingReqs._taskMeta || {}),
+          ...(taskMeta || {}),
+          ...(taskKind ? { taskKind } : {}),
+          ...(isFeatured !== undefined ? { isFeatured: Boolean(isFeatured) } : {}),
+        },
+        updates.category || existingRow.category
+      );
+      updates.proof_requirements = {
+        ...existingReqs,
+        ...(proofRequirements && typeof proofRequirements === 'object' ? proofRequirements : {}),
+        _taskMeta: nextMeta,
+      };
+    }
 
     const { data, error } = await adminClient
       .from('tasks')
@@ -1929,7 +2156,8 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
       });
     }
 
-    res.json({ success: true, escrowRelease });
+    const updatedTask = await supabaseDb.getTaskById(req.params.id).catch(() => null);
+    res.json({ success: true, escrowRelease, task: updatedTask });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -3460,11 +3688,87 @@ app.post('/api/admin/geo/countries/:countryId/import', adminMiddleware, async (r
 });
 
 // ==============================================================================
+// ISOLATED AD PARTNERS ENDPOINTS (STRICTLY SEPARATE FROM CLIXWALL & LEDGER)
+// ==============================================================================
+
+app.get('/api/ad-partners/public', async (req: Request, res: Response) => {
+  try {
+    const placementKey = req.query.placement ? String(req.query.placement).trim() : undefined;
+    const result = await supabaseDb.getAdPartners({
+      onlyActive: true,
+      placementKey,
+    });
+    res.json({ partners: result.partners });
+  } catch (err: any) {
+    res.json({ partners: [] });
+  }
+});
+
+app.get('/api/admin/ad-partners', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.getAdPartners({ onlyActive: false });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب الشركاء الإعلانيين.' });
+  }
+});
+
+app.post('/api/admin/ad-partners', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { partnerName, placementKey, codeType, code, width, height, rotationMode, sortOrder, isActive } =
+      req.body || {};
+    const result = await supabaseDb.createAdPartner({
+      partnerName,
+      placementKey,
+      codeType,
+      code,
+      width,
+      height,
+      rotationMode,
+      sortOrder,
+      isActive,
+      actorId: req.user.id,
+      authToken: req.authToken,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل إضافة الشريك الإعلاني.' });
+  }
+});
+
+app.put('/api/admin/ad-partners/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.updateAdPartner(req.params.id, req.body || {}, req.authToken);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تحديث بيانات الشريك الإعلاني.' });
+  }
+});
+
+app.delete('/api/admin/ad-partners/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await supabaseDb.deleteAdPartner(req.params.id, req.authToken);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل حذف الشريك الإعلاني.' });
+  }
+});
+
+// ==============================================================================
 // CLIXWALL OFFER WALL & POSTBACK ENDPOINTS
 // ==============================================================================
 
 const clixwallHandlers = createClixWallHandlers({
   getAdminClient: getSupabaseAdminClient,
+  onRewardCredited: async (info) => {
+    await supabaseDb.createNotification({
+      userId: info.userId,
+      title: 'تمت إضافة مكافأة ClixWall إلى محفظتك!',
+      message: `تم قيد مبلغ ${formatYer(info.rewardYer)} ر.ي بنجاح عن إتمام عرض "${info.offerName}".`,
+      type: 'CLIXWALL_REWARD',
+      link: '/wallet',
+    });
+  },
   onPostbackError: async (info) => {
     await logSupabaseError({
       err: new Error(info.reason),

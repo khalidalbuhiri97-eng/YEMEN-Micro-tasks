@@ -29,6 +29,7 @@ import {
   Lock,
   FileText,
   Eye,
+  WifiOff,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CampaignLedgerTxModal } from '../advertiser/CampaignModals.tsx';
@@ -40,7 +41,7 @@ interface WalletViewProps {
 }
 
 export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTasks }) => {
-  const { user, wallet, refreshWallet, openAuthModal, showToast } = useAuth();
+  const { user, wallet, refreshWallet, openAuthModal, showToast, isOnline, isUsingOfflineSession } = useAuth();
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [transfers, setTransfers] = useState<WalletTransfer[]>([]);
   const [filterType, setFilterType] = useState<string>('all');
@@ -84,11 +85,19 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
   };
 
   useEffect(() => {
-    if (user) {
+    if (user && isOnline) {
       loadData();
     } else {
       setIsLoading(false);
     }
+  }, [user, isOnline]);
+
+  useEffect(() => {
+    const handleSyncOnline = () => {
+      if (user) loadData();
+    };
+    window.addEventListener('kasb:sync_online', handleSyncOnline);
+    return () => window.removeEventListener('kasb:sync_online', handleSyncOnline);
   }, [user]);
 
   // Handle Recipient Address Lookup with debounce
@@ -141,6 +150,10 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
 
   const handleExecuteTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isOnline || isUsingOfflineSession) {
+      showToast('إجراء التحويلات المالية يتطلب اتصالاً نشطاً بالإنترنت.', 'error');
+      return;
+    }
     let amountNum: number;
     try {
       amountNum = parseMoneyStrict(transferAmount, {
@@ -350,14 +363,16 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             onClick={() => setIsTransferModalOpen(true)}
-            className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            disabled={!isOnline || isUsingOfflineSession}
+            className="px-4 py-2 text-xs font-bold text-white bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 disabled:opacity-50 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
           >
             <ArrowRightLeft className="w-4 h-4" />
             <span>تحويل رصيد</span>
           </button>
           <button
             onClick={onGoToWithdraw}
-            className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            disabled={!isOnline || isUsingOfflineSession}
+            className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
           >
             <Banknote className="w-4 h-4" />
             <span>طلب سحب أرباح</span>
@@ -370,6 +385,15 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
           </button>
         </div>
       </div>
+
+      {(!isOnline || isUsingOfflineSession) && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2.5">
+          <WifiOff className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>
+            أنت في وضع عدم الاتصال: حمايةً لدقة أرصدتك، التحويلات وطلبات السحب تتطلب اتصالاً نشطاً بالإنترنت وسيتم تحديث الرصيد تلقائياً فور عودة الشبكة.
+          </span>
+        </div>
+      )}
 
       {/* 4 Financial Balance Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

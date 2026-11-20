@@ -21,6 +21,8 @@ import { LegalModal } from './components/public/LegalPages.tsx';
 import { AdsterraAd } from './components/ads/AdsterraAd.tsx';
 import { OfferWallView } from './components/dashboard/OfferWallView.tsx';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
+import { PWAInstallTopBanner } from './components/pwa/PWAInstallButton.tsx';
+import { HomeShortcutsStrip } from './components/home/HomeShortcutsStrip.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
@@ -81,8 +83,9 @@ function MainApp() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors overflow-x-hidden w-full max-w-full">
-      {/* Offline Status Indicator */}
+      {/* Offline Status Indicator & Persistent PWA Install Strip */}
       <OfflineIndicator />
+      <PWAInstallTopBanner />
 
       {/* Top Bar Navigation */}
       <Navbar
@@ -100,6 +103,7 @@ function MainApp() {
       <div className="flex-1 pb-16 md:pb-0">
         {currentTab === 'home' && (
           <main>
+            <HomeShortcutsStrip onNavigate={(tab) => setCurrentTab(tab as any)} />
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
