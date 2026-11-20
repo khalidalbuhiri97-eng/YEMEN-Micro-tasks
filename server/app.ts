@@ -755,6 +755,25 @@ app.get('/api/auth/me', authMiddleware, async (req: AuthenticatedRequest, res: R
   }
 });
 
+// Health & System Status
+app.get('/api', (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    service: 'yemen-task-api',
+    currency: 'YER',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    service: 'yemen-task-api',
+    isSupabaseConfigured: Boolean(SUPABASE_URL && SUPABASE_KEY),
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // Real System Status
 app.get('/api/system/status', async (_req: Request, res: Response) => {
   const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_KEY);
@@ -1317,6 +1336,126 @@ app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, r
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل جلب بيانات الإحالة.' });
+  }
+});
+
+// Support Tickets
+app.get('/api/support/tickets', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const dbClient = req.authToken ? getSupabaseUserClient(req.authToken) : getPrivilegedDbClient(req);
+    const { data: ticketRows, error: ticketsErr } = await dbClient
+      .from('support_tickets')
+      .select('id, user_id, subject, status, priority, created_at, updated_at')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
+
+    if (ticketsErr) {
+      return res.status(500).json({ error: ticketsErr.message || 'فشل جلب تذاكر الدعم.' });
+    }
+
+    const ticketIds = (ticketRows || []).map((t: any) => t.id);
+    let messagesByTicket: Record<string, any[]> = {};
+    if (ticketIds.length > 0) {
+      const { data: msgRows } = await dbClient
+        .from('support_messages')
+        .select('id, ticket_id, sender_id, sender_role, message, created_at')
+        .in('ticket_id', ticketIds)
+        .order('created_at', { ascending: true });
+
+      for (const m of msgRows || []) {
+        if (!messagesByTicket[m.ticket_id]) messagesByTicket[m.ticket_id] = [];
+        messagesByTicket[m.ticket_id].push({
+          id: m.id,
+          senderId: m.sender_id,
+          senderRole: m.sender_role,
+          senderName: m.sender_role === 'admin' ? 'الدعم الفني' : req.user.fullName || 'أنا',
+          message: m.message,
+          createdAt: m.created_at,
+        });
+      }
+    }
+
+    const tickets = (ticketRows || []).map((t: any) => ({
+      id: t.id,
+      userId: t.user_id,
+      subject: t.subject,
+      status: t.status,
+      priority: t.priority,
+      createdAt: t.created_at,
+      updatedAt: t.updated_at,
+      messages: messagesByTicket[t.id] || [],
+    }));
+
+    return res.json({ tickets });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'فشل جلب تذاكر الدعم.' });
+  }
+});
+
+app.post('/api/support/tickets', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : '';
+    const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+    const rawPriority = typeof req.body?.priority === 'string' ? req.body.priority.trim().toUpperCase() : 'MEDIUM';
+    const priority = ['LOW', 'MEDIUM', 'HIGH'].includes(rawPriority) ? rawPriority : 'MEDIUM';
+
+    if (!subject || !message) {
+      return res.status(400).json({ error: 'يرجى إدخال عنوان التذكرة ونص الرسالة.' });
+    }
+
+    const dbClient = req.authToken ? getSupabaseUserClient(req.authToken) : getPrivilegedDbClient(req);
+    const { data: ticketRow, error: ticketErr } = await dbClient
+      .from('support_tickets')
+      .insert({
+        user_id: req.user.id,
+        subject,
+        priority,
+        status: 'OPEN',
+      })
+      .select('id, user_id, subject, status, priority, created_at, updated_at')
+      .single();
+
+    if (ticketErr || !ticketRow) {
+      return res.status(400).json({ error: ticketErr?.message || 'تعذر إنشاء تذكرة الدعم.' });
+    }
+
+    const { data: msgRow } = await dbClient
+      .from('support_messages')
+      .insert({
+        ticket_id: ticketRow.id,
+        sender_id: req.user.id,
+        sender_role: 'user',
+        message,
+      })
+      .select('id, sender_id, sender_role, message, created_at')
+      .single();
+
+    return res.json({
+      success: true,
+      ticket: {
+        id: ticketRow.id,
+        userId: ticketRow.user_id,
+        subject: ticketRow.subject,
+        status: ticketRow.status,
+        priority: ticketRow.priority,
+        createdAt: ticketRow.created_at,
+        updatedAt: ticketRow.updated_at,
+        messages: msgRow
+          ? [
+              {
+                id: msgRow.id,
+                senderId: msgRow.sender_id,
+                senderRole: msgRow.sender_role,
+                senderName: req.user.fullName || 'أنا',
+                message: msgRow.message,
+                createdAt: msgRow.created_at,
+              },
+            ]
+          : [],
+      },
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message || 'تعذر إنشاء تذكرة الدعم.' });
   }
 });
 
@@ -3348,5 +3487,14 @@ app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOffer
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
 app.all('/api/clixwall/postback', clixwallHandlers.handlePostback);
+
+// Structured JSON 404 for unmatched API paths (prevents SPA HTML fallback on /api/*)
+app.use('/api', (req: Request, res: Response) => {
+  return res.status(404).json({
+    error: 'المسار البرمجي المطلوب غير موجود.',
+    path: req.originalUrl || req.url,
+    method: req.method,
+  });
+});
 
 export default app;

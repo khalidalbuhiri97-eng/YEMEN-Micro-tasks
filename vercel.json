@@ -1,10 +1,6 @@
 {
   "version": 2,
   "functions": {
-    "api/[...path].ts": {
-      "memory": 1024,
-      "maxDuration": 10
-    },
     "api/index.ts": {
       "memory": 1024,
       "maxDuration": 10
@@ -39,6 +35,14 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api",
+      "destination": "/api/index"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index?__path=:path*"
+    },
     {
       "source": "/((?!api(?:/|$)).*)",
       "destination": "/index.html"
