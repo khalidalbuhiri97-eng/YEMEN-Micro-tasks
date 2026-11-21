@@ -1568,7 +1568,7 @@ app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, r
     res.json({
       ...stats,
       code,
-      shareUrl: code ? `https://yemen-micro-tasks.vercel.app/?ref=${encodeURIComponent(code)}` : 'https://yemen-micro-tasks.vercel.app/',
+      shareUrl: code ? `https://www.yemen-microtasks.com/?ref=${encodeURIComponent(code)}` : 'https://www.yemen-microtasks.com/',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل جلب بيانات الإحالة.' });
