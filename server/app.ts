@@ -3975,6 +3975,18 @@ app.post('/api/yt-coin/claim', authMiddleware, async (req: AuthenticatedRequest,
   }
 });
 
+app.get('/api/admin/yt-coin/summary', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
+    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('get_yt_coin_admin_summary');
+    if (error) throw error;
+    return res.json({ summary: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_SUMMARY', apiRoute: '/api/admin/yt-coin/summary' });
+    return res.status(400).json({ error: err?.message || 'تعذر تحميل مؤشرات YT Coin.' });
+  }
+});
+
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
