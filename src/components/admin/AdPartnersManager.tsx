@@ -486,7 +486,11 @@ export const AdPartnersManager: React.FC = () => {
                   </label>
                   <select
                     value={form.placementKey}
-                    onChange={(e) => setForm({ ...form, placementKey: e.target.value })}
+                    onChange={(e) => setForm({
+                      ...form,
+                      placementKey: e.target.value,
+                      ...(e.target.value === 'offerwall_hub' ? { codeType: 'iframe' as AdPartnerCodeType, width: '1000', height: '700' } : {}),
+                    })}
                     className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                   >
                     {PLACEMENT_OPTIONS.map((opt) => (
