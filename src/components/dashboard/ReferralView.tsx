@@ -72,7 +72,7 @@ export const ReferralView: React.FC = () => {
   const activeBonus = referrals?.referralBonus ?? fallbackBonus;
   const shareUrl =
     referrals?.shareUrl ||
-    (activeCode ? `https://kasbyemen.com/?ref=${encodeURIComponent(activeCode)}` : 'https://kasbyemen.com/');
+    (activeCode ? `https://yemen-micro-tasks.vercel.app/?ref=${encodeURIComponent(activeCode)}` : 'https://yemen-micro-tasks.vercel.app/');
 
   const handleCopyLink = () => {
     if (!activeCode) {
@@ -83,6 +83,12 @@ export const ReferralView: React.FC = () => {
     setCopied(true);
     showToast('تم نسخ رابط الإحالة الخاص بك بنجاح!', 'success');
     setTimeout(() => setCopied(false), 2500);
+  };
+
+  const handleCopyCode = async () => {
+    if (!activeCode) return;
+    await navigator.clipboard.writeText(activeCode);
+    showToast('تم نسخ كود الإحالة بنجاح!', 'success');
   };
 
   if (!user) {
@@ -153,9 +159,9 @@ export const ReferralView: React.FC = () => {
             <span className="truncate" dir="ltr">
               {shareUrl}
             </span>
-            <span className="text-emerald-300 font-bold mr-2 text-xs shrink-0">
-              كود: {activeCode || '---'}
-            </span>
+            <button type="button" onClick={handleCopyCode} disabled={!activeCode} className="text-emerald-300 hover:text-white font-bold mr-2 text-xs shrink-0 underline disabled:opacity-50">
+              نسخ الكود: {activeCode || '---'}
+            </button>
           </div>
 
           <button
