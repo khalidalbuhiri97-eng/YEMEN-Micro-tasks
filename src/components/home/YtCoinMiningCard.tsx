@@ -11,6 +11,9 @@ type MiningSummary = {
   nextRewardUnits?: number;
   lastClaimDate?: string | null;
   streakDay?: number;
+  eligible?: boolean;
+  eligibilityMessage?: string | null;
+  dailyCapRemainingUnits?: number;
 };
 
 const toCoin = (units?: number) => (Number(units || 0) / 1_000_000).toFixed(2);
@@ -62,6 +65,7 @@ export const YtCoinMiningCard: React.FC = () => {
   }).format(new Date());
   const claimedToday = summary?.lastClaimDate === today;
   const enabled = Boolean(summary?.miningEnabled && summary?.dailyCapConfigured);
+  const eligible = Boolean(summary?.eligible);
 
   return (
     <section dir="rtl" aria-label="تعدين عملة YT Coin" className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-3">
@@ -112,9 +116,9 @@ export const YtCoinMiningCard: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
                   {enabled ? <ShieldCheck className="w-4 h-4 text-emerald-600" /> : <LockKeyhole className="w-4 h-4 text-amber-600" />}
-                  <span>{!enabled ? 'التعدين غير مفعّل حالياً.' : claimedToday ? 'استلمت مكافأة اليوم؛ عد غداً للمطالبة التالية.' : 'المطالبة مرة واحدة يومياً بتوقيت اليمن، بعد اعتماد مهمة واحدة على الأقل.'}</span>
+                  <span>{!enabled ? 'التعدين غير مفعّل حالياً.' : !eligible ? (summary?.eligibilityMessage || 'يلزم حساب نشط ومهمة واحدة معتمدة على الأقل.') : claimedToday ? 'استلمت مكافأة اليوم؛ عد غداً للمطالبة التالية.' : 'أنت مؤهل؛ المطالبة مرة واحدة يومياً بتوقيت اليمن.'}</span>
                 </div>
-                <button type="button" onClick={claim} disabled={!enabled || claimedToday || claiming || loading} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 px-5 py-3 text-xs font-extrabold text-white shadow-sm transition-colors">
+                <button type="button" onClick={claim} disabled={!enabled || !eligible || claimedToday || claiming || loading} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 px-5 py-3 text-xs font-extrabold text-white shadow-sm transition-colors">
                   <Pickaxe className="w-4 h-4" />{claiming ? 'جارٍ تسجيل المطالبة...' : claimedToday ? 'تم التعدين اليوم' : 'استلام مكافأة التعدين'}
                 </button>
               </div>
