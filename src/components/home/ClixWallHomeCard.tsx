@@ -26,14 +26,14 @@ export const ClixWallHomeCard: React.FC<ClixWallHomeCardProps> = ({
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
                 <h3 className="text-base font-extrabold text-slate-900 dark:text-white truncate">
-                  عروض ClixWall
+                  بوابة حوائط العروض
                 </h3>
                 <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
                   · حائط العروض
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                مكافآت يومية إضافية بالدولار
+                ClixWall وشركاء عروض إضافيون
               </p>
             </div>
           </div>
@@ -46,7 +46,7 @@ export const ClixWallHomeCard: React.FC<ClixWallHomeCardProps> = ({
 
         {/* Description */}
         <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-3">
-          اربح مكافآت فورية بالدولار عبر إنجاز استطلاعات الرأي والعروض العالمية، مع إيداع مباشر في محفظتك بالريال اليمني.
+          اختر ClixWall أو حائط عروض آخر من صفحة واحدة. يمكن للإدارة إضافة شركاء جدد دون تغيير حائط ClixWall الحالي.
         </p>
 
         {/* Key metrics */}
@@ -70,7 +70,7 @@ export const ClixWallHomeCard: React.FC<ClixWallHomeCardProps> = ({
           className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 group cursor-pointer"
         >
           <ClixWallIcon size={18} />
-          <span>فتح حائط عروض ClixWall الآن</span>
+          <span>استكشاف حوائط العروض</span>
           <ExternalLink className="w-3.5 h-3.5 transition-transform group-hover:-translate-x-0.5" />
         </button>
 
