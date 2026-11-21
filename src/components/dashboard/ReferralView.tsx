@@ -227,6 +227,13 @@ export const ReferralView: React.FC = () => {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/70 dark:bg-emerald-950/30 p-5 space-y-2">
+        <h3 className="text-sm font-extrabold text-emerald-900 dark:text-emerald-200">مكافأة النشاط المستمرة</h3>
+        <p className="text-xs leading-6 text-emerald-800 dark:text-emerald-300">
+          تحصل أيضاً على 5% من صافي ربح المنصة المتحقق من نشاط المهام المعتمدة لأصدقائك المدعوين. تُحتسب المكافأة فقط عندما يكون صافي الربح موجباً، وتُصرف من صندوق مكافآت الإحالة المخصص؛ وليست خصماً من مكافأة صديقك.
+        </p>
+      </div>
+
       {/* Table of referred friends */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 shadow-sm">
         <h3 className="text-sm font-bold text-slate-900 dark:text-white">قائمة الأصدقاء المسجلين وحالة الاستحقاق</h3>

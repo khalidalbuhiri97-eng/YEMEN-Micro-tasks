@@ -1560,6 +1560,40 @@ app.post('/api/admin/notifications/broadcast', adminMiddleware, async (req: Auth
   }
 });
 
+// Independent YT Coin API — isolated from YER wallet and financial ledger.
+app.get('/api/yt-coin/me', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const db = getSupabaseUserClient(req.authToken!);
+    const { data, error } = await db.rpc('get_my_yt_coin_summary');
+    if (error) throw error;
+    return res.json(data || {});
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'تعذر تحميل محفظة YT Coin.' });
+  }
+});
+
+app.post('/api/yt-coin/claim', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const db = getSupabaseUserClient(req.authToken!);
+    const { data, error } = await db.rpc('claim_my_yt_coin_daily');
+    if (error) throw error;
+    return res.json(data || { success: false, status: 'unknown' });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر تنفيذ مطالبة التعدين.' });
+  }
+});
+
+app.get('/api/admin/yt-coin', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const db = getSupabaseUserClient(req.authToken!);
+    const { data, error } = await db.rpc('get_yt_coin_admin_summary');
+    if (error) throw error;
+    return res.json(data || {});
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'تعذر تحميل لوحة YT Coin الإدارية.' });
+  }
+});
+
 // Referrals (Real DB & Ledger-Backed — Zero Fake 300 Multiplier or Hardcoded Completion)
 app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
