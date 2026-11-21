@@ -1585,7 +1585,7 @@ app.post('/api/yt-coin/claim', authMiddleware, async (req: AuthenticatedRequest,
 
 app.get('/api/admin/yt-coin', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const db = getPrivilegedDbClient(req);
+    const db = getSupabaseUserClient(req.authToken!);
     const { data, error } = await db.rpc('get_yt_coin_admin_summary');
     if (error) throw error;
     return res.json(data || {});
