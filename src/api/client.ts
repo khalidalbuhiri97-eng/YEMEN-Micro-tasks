@@ -713,6 +713,8 @@ export const api = {
   getMyYtCoinSummary: () => request<{ summary: any }>('/yt-coin/summary'),
   claimDailyYtCoin: () => request<{ result: any }>('/yt-coin/claim', { method: 'POST' }),
 
+  getAdminYtCoinSummary: () => request<{ summary: any }>('/admin/yt-coin/summary'),
+
   // ClixWall Offer Wall & Rewards
   getClixWallOfferWallUrl: () => request<{ offerWallUrl: string; userId: string }>('/clixwall/offerwall-url'),
   getClixWallRewards: () =>
