@@ -709,6 +709,10 @@ export const api = {
   importAdminGeoCountry: (countryId: string) =>
     request<any>(`/admin/geo/countries/${encodeURIComponent(countryId)}/import`, { method: 'POST' }),
 
+  // Independent YT Coin mining (never touches the YER wallet or financial ledger)
+  getMyYtCoinSummary: () => request<{ summary: any }>('/yt-coin/summary'),
+  claimDailyYtCoin: () => request<{ result: any }>('/yt-coin/claim', { method: 'POST' }),
+
   // ClixWall Offer Wall & Rewards
   getClixWallOfferWallUrl: () => request<{ offerWallUrl: string; userId: string }>('/clixwall/offerwall-url'),
   getClixWallRewards: () =>
