@@ -120,8 +120,8 @@ function MainApp() {
                 placementId="home_leaderboard"
                 adKey="e0ca07a5ceb53edcf6467e9176896b3f"
                 scriptSrc="https://bicea.org/22/e0ca07a5ceb53edcf6467e9176896b3f"
-                width={728}
-                height={90}
+                width={300}
+                height={160}
               />
             </div>
             <YemenPayoutsSection />
