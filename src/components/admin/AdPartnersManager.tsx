@@ -303,7 +303,7 @@ export const AdPartnersManager: React.FC = () => {
                 : 'text-slate-600 dark:text-slate-400'
             }`}
           >
-            {opt.key === 'home_clixwall_slot' ? 'نافذة الرئيسية 300×250' : 'داخل بطاقة ClixWall'}
+            {opt.key === 'home_clixwall_slot' ? 'نافذة الرئيسية 300×250' : opt.key === 'clixwall_card_embed' ? 'داخل بطاقة ClixWall' : 'بوابة حوائط العروض'}
           </button>
         ))}
       </div>
@@ -547,7 +547,7 @@ export const AdPartnersManager: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  كود الإعلان الكامل (يتم تشغيله داخل Sandbox معزول)
+                  {form.placementKey === 'offerwall_hub' ? 'رابط حائط العروض (HTTPS فقط)' : 'كود الإعلان الكامل (يتم تشغيله داخل Sandbox معزول)'}
                 </label>
                 <textarea
                   rows={5}
@@ -555,9 +555,14 @@ export const AdPartnersManager: React.FC = () => {
                   required
                   value={form.code}
                   onChange={(e) => setForm({ ...form, code: e.target.value })}
-                  placeholder="<script>...</script> أو https://partner.example/widget"
+                  placeholder={form.placementKey === 'offerwall_hub' ? "https://partner.example/offerwall" : "<script>...</script> أو https://partner.example/widget"}
                   className="w-full p-3 text-xs font-mono bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100"
                 />
+                {form.placementKey === 'offerwall_hub' && (
+                  <p className="mt-1 text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
+                    اختر نوع الكود iframe، وأدخل رابط HTTPS المباشر لحائط العروض. يفضّل ضبط العرض والارتفاع على 1000×700. سيظهر الشريك كبطاقة مستقلة داخل بوابة حوائط العروض.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
