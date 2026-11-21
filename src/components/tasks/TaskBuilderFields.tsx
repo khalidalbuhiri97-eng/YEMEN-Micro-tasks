@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ClipboardList,
   PlaySquare,
@@ -6,24 +6,40 @@ import {
   Zap,
   Globe,
   Crown,
-  Clock,
-  MapPin,
-  ArrowLeft,
-  Building2,
+  Link2,
   Eye,
+  Image as ImageIcon,
+  Palette,
+  Upload,
+  RefreshCw,
 } from 'lucide-react';
-import type { TaskBuilderMeta, TaskKind } from '../../types/index.ts';
-import { TASK_KIND_OPTIONS, getTaskKindLabel } from '../../../shared/taskMeta.ts';
-import { formatYer } from '../../../shared/money.ts';
+import type {
+  SurveyItem,
+  TaskAssetItem,
+  TaskBuilderMeta,
+  TaskItem,
+  TaskKind,
+} from '../../types/index.ts';
+import {
+  TASK_CARD_THEMES,
+  TASK_KIND_OPTIONS,
+  getDefaultTaskImageUrl,
+  mapTaskKindToCategory,
+} from '../../../shared/taskMeta.ts';
+import { api } from '../../api/client.ts';
+import { TaskVisualCard } from './TaskVisualCard.tsx';
 
 interface TaskBuilderFieldsProps {
   meta: TaskBuilderMeta;
   onChange: (next: TaskBuilderMeta) => void;
   canFeatureDirectly: boolean;
+  assets?: TaskAssetItem[];
+  surveys?: SurveyItem[];
 }
 
 const KIND_ICONS: Record<TaskKind, React.ReactNode> = {
   surveys: <ClipboardList className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />,
+  smart_links: <Link2 className="w-4 h-4 text-teal-600 dark:text-teal-400" />,
   ad_watch: <PlaySquare className="w-4 h-4 text-rose-600 dark:text-rose-400" />,
   app_testing: <Smartphone className="w-4 h-4 text-blue-600 dark:text-blue-400" />,
   quick_tasks: <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400" />,
@@ -34,8 +50,36 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
   meta,
   onChange,
   canFeatureDirectly,
+  assets: propAssets,
+  surveys: propSurveys,
 }) => {
   const fields = meta.fields || {};
+  const [galleryAssets, setGalleryAssets] = useState<TaskAssetItem[]>(propAssets || []);
+  const [availableSurveys, setAvailableSurveys] = useState<SurveyItem[]>(propSurveys || []);
+  const [isUploadingAsset, setIsUploadingAsset] = useState(false);
+  const [uploadErr, setUploadErr] = useState('');
+
+  useEffect(() => {
+    if (propAssets) {
+      setGalleryAssets(propAssets);
+    } else {
+      api
+        .getTaskAssets()
+        .then((res) => setGalleryAssets(res.assets || []))
+        .catch(() => {});
+    }
+  }, [propAssets]);
+
+  useEffect(() => {
+    if (propSurveys) {
+      setAvailableSurveys(propSurveys);
+    } else if (canFeatureDirectly && meta.taskKind === 'surveys') {
+      api
+        .getAdminSurveys()
+        .then((res) => setAvailableSurveys(res.surveys || []))
+        .catch(() => {});
+    }
+  }, [propSurveys, canFeatureDirectly, meta.taskKind]);
 
   const updateFields = (patch: Partial<NonNullable<TaskBuilderMeta['fields']>>) => {
     onChange({
@@ -47,21 +91,66 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
     });
   };
 
+  const handleUploadCustomImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      setUploadErr('الحد الأقصى لحجم الصورة 4 ميجابايت.');
+      return;
+    }
+    setIsUploadingAsset(true);
+    setUploadErr('');
+    try {
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('تعذر قراءة الملف.'));
+        reader.readAsDataURL(file);
+      });
+      const res = await api.uploadAdminTaskAsset({
+        title: file.name.replace(/\.[^.]+$/, ''),
+        assetKind: 'task_illustration',
+        taskKind: meta.taskKind,
+        fileName: file.name,
+        contentType: file.type || 'image/jpeg',
+        base64Data,
+      });
+      if (res.asset) {
+        setGalleryAssets((prev) => [res.asset, ...prev]);
+        onChange({ ...meta, imageUrl: res.asset.publicUrl });
+      }
+    } catch (err: any) {
+      setUploadErr(err?.message || 'تعذر رفع الصورة.');
+    } finally {
+      setIsUploadingAsset(false);
+      e.target.value = '';
+    }
+  };
+
+  const illustrationAssets = galleryAssets.filter((a) => a.assetKind !== 'category_icon');
+
   return (
     <div className="space-y-4">
       {/* Task Type Visual Selector */}
       <div>
         <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
-          نوع المهمة (تتغير الحقول تلقائياً حسب النوع)
+          نوع المهمة (تتغير الحقول والتصميم تلقائياً حسب النوع)
         </label>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           {TASK_KIND_OPTIONS.map((opt) => {
             const active = meta.taskKind === opt.kind;
             return (
               <button
                 key={opt.kind}
                 type="button"
-                onClick={() => onChange({ ...meta, taskKind: opt.kind })}
+                onClick={() =>
+                  onChange({
+                    ...meta,
+                    taskKind: opt.kind,
+                    cardTheme: opt.defaultTheme,
+                    badgeLabel: meta.badgeLabel || opt.defaultBadgeLabel,
+                  })
+                }
                 className={`p-2.5 rounded-xl border text-right transition-all flex flex-col gap-1 min-h-[68px] ${
                   active
                     ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 ring-1 ring-emerald-500/30'
@@ -87,10 +176,35 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
       {/* Dynamic Type-Specific Fields */}
       <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-3">
         {meta.taskKind === 'surveys' && (
-          <>
+          <div className="space-y-3">
+            {canFeatureDirectly && availableSurveys.length > 0 && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  ربط باستبيان تفاعلي متسلسل (اختياري)
+                </label>
+                <select
+                  value={meta.linkedSurveyId || fields.linkedSurveyId || ''}
+                  onChange={(e) =>
+                    onChange({
+                      ...meta,
+                      linkedSurveyId: e.target.value || undefined,
+                      fields: { ...fields, linkedSurveyId: e.target.value || undefined },
+                    })
+                  }
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                >
+                  <option value="">بدون ربط (مهمة استبيان تقليدية)</option>
+                  {availableSurveys.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.title} ({s.questions.length} أسئلة · {s.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                أسئلة الاستبيان (اكتب كل سؤال في سطر مستقل)
+                ملخص أسئلة الاستبيان (اكتب كل سؤال في سطر مستقل)
               </label>
               <textarea
                 rows={3}
@@ -116,7 +230,74 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
                 className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
               />
             </div>
-          </>
+          </div>
+        )}
+
+        {meta.taskKind === 'smart_links' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                اسم المزوّد / الشريك (Smart Link Provider)
+              </label>
+              <input
+                type="text"
+                value={fields.providerName || ''}
+                onChange={(e) => updateFields({ providerName: e.target.value })}
+                placeholder="مثال: TimeWall أو CPX Research"
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                رابط شعار المزوّد (اختياري)
+              </label>
+              <input
+                type="url"
+                value={fields.providerLogoUrl || ''}
+                onChange={(e) => updateFields({ providerLogoUrl: e.target.value })}
+                placeholder="https://..."
+                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                رابط التتبع الذكي (يدعم {'{click_id}'} و {'{user_id}'})
+              </label>
+              <input
+                type="url"
+                value={fields.trackingUrl || ''}
+                onChange={(e) => updateFields({ trackingUrl: e.target.value })}
+                placeholder="https://provider.example/offer?subid={click_id}&uid={user_id}"
+                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+            {canFeatureDirectly && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  مفتاح التحقق السري للـ Postback (Secret)
+                </label>
+                <input
+                  type="text"
+                  value={fields.postbackSecret || ''}
+                  onChange={(e) => updateFields({ postbackSecret: e.target.value })}
+                  placeholder="أدخل مفتاح التحقق السري المعتمد مع المزوّد"
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                />
+              </div>
+            )}
+            <div className={canFeatureDirectly ? '' : 'sm:col-span-2'}>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                تعليمات وشروط التحقق
+              </label>
+              <input
+                type="text"
+                value={fields.smartLinkInstructions || ''}
+                onChange={(e) => updateFields({ smartLinkInstructions: e.target.value })}
+                placeholder="مثال: أكمل العرض بالكامل وتُضاف المكافأة آلياً بعد تأكيد المزوّد"
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+          </div>
         )}
 
         {meta.taskKind === 'ad_watch' && (
@@ -278,6 +459,120 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
           </div>
         )}
 
+        {/* Visual Card Design & Custom Artwork Selection */}
+        <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700/80 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <Palette className="w-4 h-4 text-emerald-600" />
+              <span>تخصيص صورة البطاقة والألوان والترتيب</span>
+            </span>
+            {canFeatureDirectly && (
+              <label className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer inline-flex items-center gap-1.5">
+                {isUploadingAsset ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Upload className="w-3.5 h-3.5" />
+                )}
+                <span>رفع صورة مخصصة</span>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleUploadCustomImage}
+                  className="hidden"
+                />
+              </label>
+            )}
+          </div>
+
+          {uploadErr && <div className="text-[11px] text-rose-600 font-semibold">{uploadErr}</div>}
+
+          {/* Saved Gallery Picker */}
+          {illustrationAssets.length > 0 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+              <button
+                type="button"
+                onClick={() => onChange({ ...meta, imageUrl: undefined })}
+                className={`shrink-0 px-2.5 py-2 rounded-xl border text-[10px] font-bold flex items-center gap-1 ${
+                  !meta.imageUrl
+                    ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                <ImageIcon className="w-3.5 h-3.5" />
+                <span>الافتراضي للنوع</span>
+              </button>
+              {illustrationAssets.map((asset) => {
+                const selected = meta.imageUrl === asset.publicUrl;
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => onChange({ ...meta, imageUrl: asset.publicUrl })}
+                    title={asset.title}
+                    className={`relative shrink-0 w-16 h-12 rounded-xl overflow-hidden border-2 transition-all ${
+                      selected
+                        ? 'border-emerald-600 ring-2 ring-emerald-500/30 scale-105'
+                        : 'border-slate-200 dark:border-slate-700 opacity-85 hover:opacity-100'
+                    }`}
+                  >
+                    <img src={asset.publicUrl} alt={asset.title} className="w-full h-full object-cover" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                سمة لون البطاقة
+              </label>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {TASK_CARD_THEMES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    title={t.labelAr}
+                    onClick={() => onChange({ ...meta, cardTheme: t.id })}
+                    className={`w-7 h-7 rounded-full ${t.swatchClass} transition-transform ${
+                      (meta.cardTheme || 'emerald') === t.id
+                        ? 'ring-2 ring-offset-2 ring-slate-900 dark:ring-white scale-110'
+                        : 'opacity-75 hover:opacity-100'
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                نص الشارة العلوية (اختياري)
+              </label>
+              <input
+                type="text"
+                value={meta.badgeLabel || ''}
+                onChange={(e) => onChange({ ...meta, badgeLabel: e.target.value })}
+                placeholder="مثال: مهمة سريعة / عرض خاص"
+                className="w-full px-3 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              />
+            </div>
+
+            {canFeatureDirectly && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                  ترتيب الظهور (الأصغر أولاً)
+                </label>
+                <input
+                  type="number"
+                  value={meta.sortOrder ?? 0}
+                  onChange={(e) => onChange({ ...meta, sortOrder: Number(e.target.value) || 0 })}
+                  className="w-full px-3 py-1.5 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Featured Toggle (Permission-Aware) */}
         <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between gap-3">
           <label className="flex items-center gap-2.5 cursor-pointer text-xs">
@@ -294,7 +589,7 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
             <Crown className="w-4 h-4 text-amber-500 shrink-0" />
             <span className="font-bold text-slate-800 dark:text-slate-200">
               {canFeatureDirectly
-                ? 'تمييز المهمة (شارة ذهبية وأولوية في الظهور)'
+                ? 'تمييز المهمة (شارة مهمة مميزة وأولوية في الظهور)'
                 : 'طلب تمييز المهمة (يُفعّل باعتماد الإدارة)'}
             </span>
           </label>
@@ -324,11 +619,40 @@ export const TaskCardLivePreview: React.FC<TaskCardLivePreviewProps> = ({
   timeEstimateMinutes,
   category,
   meta,
-  locationLabel = 'جميع الدول العربية',
-  advertiserLabel = 'مهمة مباشرة من المنصة',
+  locationLabel = 'عن بُعد / جميع الدول',
+  advertiserLabel = 'مصدّق من المعلن',
 }) => {
-  const showGoldFeatured = Boolean(meta.isFeatured || meta.featuredRequested);
-  const typeLabel = getTaskKindLabel(meta.taskKind, category);
+  const isFeatured = Boolean(meta.isFeatured || meta.featuredRequested);
+  const previewTask: TaskItem = {
+    id: 'preview-task',
+    title: title.trim() || 'عنوان المهمة سيظهر هنا للمستخدمين...',
+    description: description.trim() || 'وصف المهمة المختصر وتعليماتها سيظهر هنا للمنفذين...',
+    category: mapTaskKindToCategory(meta.taskKind, category),
+    taskKind: meta.taskKind,
+    isFeatured,
+    sortOrder: meta.sortOrder ?? 0,
+    imageUrl: meta.imageUrl || getDefaultTaskImageUrl(meta.taskKind, isFeatured, category),
+    cardTheme: meta.cardTheme || 'emerald',
+    badgeLabel: meta.badgeLabel,
+    badgeColor: meta.badgeColor,
+    isVerifiedAdvertiser: advertiserLabel === 'مصدّق من المعلن' || advertiserLabel === 'مهمة مباشرة من المنصة',
+    providerName: meta.fields?.providerName,
+    providerLogoUrl: meta.fields?.providerLogoUrl,
+    taskMeta: meta,
+    rewardYer: Number(rewardYer) || 0,
+    steps: meta.fields?.steps || [],
+    proofRequirements: { requireImage: true, requireText: true },
+    timeEstimateMinutes: Math.max(1, Number(timeEstimateMinutes) || 10),
+    totalQuantity: Math.max(1, Number(slots) || 50),
+    completedQuantity: 0,
+    maxPerUser: 1,
+    budgetYer: 0,
+    budgetSpentYer: 0,
+    status: 'ACTIVE',
+    advertiserDisplayName: advertiserLabel,
+    locationLabel,
+    createdAt: new Date().toISOString(),
+  };
 
   return (
     <div className="space-y-2">
@@ -342,77 +666,12 @@ export const TaskCardLivePreview: React.FC<TaskCardLivePreviewProps> = ({
         )}
       </div>
 
-      <article
-        className={`rounded-2xl bg-white dark:bg-slate-900 border overflow-hidden shadow-sm transition-all ${
-          showGoldFeatured
-            ? 'border-amber-400 dark:border-amber-500/80 ring-1 ring-amber-400/25'
-            : 'border-slate-200 dark:border-slate-800'
-        }`}
-      >
-        <div
-          className={`px-4 py-2.5 flex items-center justify-between gap-2 text-xs ${
-            showGoldFeatured
-              ? 'bg-gradient-to-l from-amber-50 via-emerald-50/60 to-white dark:from-amber-950/40 dark:via-emerald-950/30 dark:to-slate-900 border-b border-amber-200/70 dark:border-amber-800/50'
-              : 'bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800'
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {showGoldFeatured && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-extrabold shadow-sm">
-                <Crown className="w-3 h-3" />
-                <span>مهمة مميزة</span>
-              </span>
-            )}
-            <span className="font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-              {KIND_ICONS[meta.taskKind]}
-              <span>{typeLabel}</span>
-            </span>
-          </div>
-          <span className="text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300 flex items-center gap-1">
-            <Clock className="w-3.5 h-3.5 text-emerald-600" />
-            <span>{Math.max(1, Number(timeEstimateMinutes) || 10)} د</span>
-          </span>
-        </div>
-
-        <div className="p-4 space-y-3">
-          <div>
-            <h4 className="text-sm font-extrabold text-slate-900 dark:text-white line-clamp-1">
-              {title.trim() || 'عنوان المهمة سيظهر هنا...'}
-            </h4>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-              <span className="inline-flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-300">
-                <Building2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{advertiserLabel}</span>
-              </span>
-              <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1">
-                <MapPin className="w-3 h-3 text-emerald-600" />
-                <span>{locationLabel}</span>
-              </span>
-            </div>
-            <p className="mt-2 text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
-              {description.trim() || 'وصف المهمة المختصر وتعليماتها سيظهر هنا للمنفذين...'}
-            </p>
-          </div>
-
-          <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
-            <div>
-              <span className="text-[10px] text-slate-400 block">
-                المتبقي: <strong className="font-mono text-slate-700 dark:text-slate-200">{slots || 0}</strong> من{' '}
-                <span className="font-mono">{slots || 0}</span>
-              </span>
-              <span className="text-sm font-extrabold font-mono tabular-nums text-amber-600 dark:text-amber-400">
-                {formatYer(Number(rewardYer) || 0)}{' '}
-                <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">ر.ي</span>
-              </span>
-            </div>
-            <span className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold inline-flex items-center gap-1">
-              <span>بدء المهمة الآن</span>
-              <ArrowLeft className="w-3.5 h-3.5" />
-            </span>
-          </div>
-        </div>
-      </article>
+      <TaskVisualCard
+        task={previewTask}
+        isPreview={true}
+        onStart={() => {}}
+        onInfo={() => {}}
+      />
     </div>
   );
 };

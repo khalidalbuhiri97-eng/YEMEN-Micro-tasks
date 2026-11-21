@@ -11,9 +11,10 @@ import { TaxManagementView } from './finance/TaxManagementView.tsx';
 import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
 import { AdPartnersManager } from './AdPartnersManager.tsx';
+import { AdminSurveysAndAssetsView } from './AdminSurveysAndAssetsView.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
 import { TaskBuilderFields, TaskCardLivePreview } from '../tasks/TaskBuilderFields.tsx';
-import { getTaskKindLabel, inferTaskKindFromCategory, mapTaskKindToCategory } from '../../../shared/taskMeta.ts';
+import { getDefaultTaskImageUrl, getTaskKindLabel, inferTaskKindFromCategory, mapTaskKindToCategory } from '../../../shared/taskMeta.ts';
 import { fetchGeoCountries } from '../../services/geoService.ts';
 import type { CountryItem } from '../../types/index.ts';
 import {
@@ -47,7 +48,7 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -641,6 +642,7 @@ export const AdminDashboard: React.FC = () => {
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
+          { id: 'surveys_assets', label: 'الاستبيانات والصور والتصنيفات', count: null },
           { id: 'campaigns', label: 'حملات المعلنين', count: campaigns.filter((c) => c.status === 'pending_start' || c.status === 'active').length },
           { id: 'users', label: 'المستخدمين والمعلنين', count: usersList.filter((u) => u.status === 'pending').length || usersList.length },
           { id: 'db_errors', label: 'أخطاء قاعدة البيانات', count: null },
@@ -713,6 +715,9 @@ export const AdminDashboard: React.FC = () => {
 
       {/* 5C. ISOLATED AD PARTNERS MANAGER TAB */}
       {activeTab === 'ad_partners' && <AdPartnersManager />}
+
+      {/* 5D. INTERACTIVE SURVEYS, ASSETS & CATEGORY ICONS TAB */}
+      {activeTab === 'surveys_assets' && <AdminSurveysAndAssetsView />}
 
       {/* DATABASE ERRORS MONITORING TAB */}
       {activeTab === 'db_errors' && <DatabaseErrorsView />}
@@ -1224,6 +1229,7 @@ export const AdminDashboard: React.FC = () => {
                   >
                     <option value="app_testing">تجربة التطبيقات</option>
                     <option value="surveys">الاستبيانات</option>
+                    <option value="smart_links">الروابط الذكية</option>
                     <option value="review_ratings">تقييمات خرائط وجوجل</option>
                     <option value="data_entry">إدخال البيانات</option>
                     <option value="social_engagement">التفاعل الاجتماعي</option>
@@ -1448,10 +1454,19 @@ export const AdminDashboard: React.FC = () => {
                       {t.status === 'ACTIVE' ? 'نشطة' : t.status === 'PAUSED' ? 'موقوفة' : 'مكتملة'}
                     </span>
                   </div>
-                  <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">{t.title}</h4>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                    {t.countryFlag ? `${t.countryFlag} ` : ''}
-                    {t.locationLabel || t.countryNameAr || 'جميع الدول العربية'}
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={t.imageUrl || getDefaultTaskImageUrl(t.taskKind, isFeatured, t.category)}
+                      alt={t.title}
+                      className="w-12 h-12 rounded-xl object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-1">{t.title}</h4>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        {t.countryFlag ? `${t.countryFlag} ` : ''}
+                        {t.locationLabel || t.countryNameAr || 'جميع الدول العربية'}
+                      </div>
+                    </div>
                   </div>
                   <div className="flex items-center justify-between font-mono text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800">
                     <span>المكافأة: {formatYer(t.rewardYer)} ر.ي</span>

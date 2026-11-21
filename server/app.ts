@@ -11,6 +11,7 @@ import {
   removeUserPushSubscription,
 } from './pushService.js';
 import { mapTaskKindToCategory, sanitizeTaskBuilderMeta } from '../shared/taskMeta.js';
+import { taskSystemService } from './taskSystemService.js';
 import {
   parseMoneyStrict,
   addMoney,
@@ -930,15 +931,49 @@ app.get('/api/geo/divisions/:id/path', async (req: Request, res: Response) => {
   }
 });
 
+async function resolveOptionalUserId(req: Request): Promise<string | undefined> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return undefined;
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (!token) return undefined;
+  try {
+    const { data } = await supabaseServer.auth.getUser(token);
+    return data?.user?.id || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Task Categories & Visual Assets
+app.get('/api/task-categories', async (_req: Request, res: Response) => {
+  try {
+    const categories = await taskSystemService.getTaskCategories();
+    res.json({ categories });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب تصنيفات المهام.' });
+  }
+});
+
+app.get('/api/task-assets', async (_req: Request, res: Response) => {
+  try {
+    const assets = await taskSystemService.getTaskAssets();
+    res.json({ assets });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب مكتبة صور المهام.' });
+  }
+});
+
 // Tasks (Public / User)
 app.get('/api/tasks', async (req: Request, res: Response) => {
   try {
     const { category, search, countryId, divisionId } = req.query;
+    const userId = await resolveOptionalUserId(req);
     const tasks = await supabaseDb.getTasks({
       category: category ? String(category) : undefined,
       search: search ? String(search) : undefined,
       countryId: countryId ? String(countryId) : undefined,
       divisionId: divisionId ? String(divisionId) : undefined,
+      userId,
     });
     res.json({ tasks });
   } catch (err: any) {
@@ -946,9 +981,28 @@ app.get('/api/tasks', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/tasks/favorites', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const favoriteIds = await taskSystemService.getUserFavoriteTaskIds(req.user.id);
+    res.json({ favoriteIds });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'تعذر جلب المهام المفضلة.' });
+  }
+});
+
+app.post('/api/tasks/:id/favorite', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await taskSystemService.toggleUserFavoriteTask(req.user.id, req.params.id);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر تحديث المفضلة.' });
+  }
+});
+
 app.get('/api/tasks/:id', async (req: Request, res: Response) => {
   try {
-    const task = await supabaseDb.getTaskById(req.params.id);
+    const userId = await resolveOptionalUserId(req);
+    const task = await supabaseDb.getTaskById(req.params.id, { userId, maskSecrets: true });
     if (!task) {
       return res.status(404).json({ error: 'المهمة المطلوبة غير موجودة.' });
     }
@@ -2102,8 +2156,13 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
     const normalizedStatus = status !== undefined ? String(status).toUpperCase() : undefined;
     if (normalizedStatus !== undefined) updates.status = normalizedStatus.toLowerCase();
 
+    const effectiveCategory =
+      category !== undefined || taskKind !== undefined
+        ? mapTaskKindToCategory(taskKind, category || existingRow.category)
+        : existingRow.category;
+
     if (category !== undefined || taskKind !== undefined) {
-      updates.category = mapTaskKindToCategory(taskKind, category || existingRow.category);
+      updates.category = effectiveCategory;
     }
     if (timeEstimateMinutes !== undefined && Number(timeEstimateMinutes) > 0) {
       updates.time_estimate_minutes = Math.max(1, Math.round(Number(timeEstimateMinutes)));
@@ -2112,6 +2171,7 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
       updates.steps = steps.map((s: any) => String(s || '').trim()).filter(Boolean);
     }
 
+    let resolvedNextMeta: any = undefined;
     if (
       proofRequirements !== undefined ||
       taskMeta !== undefined ||
@@ -2119,31 +2179,55 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
       isFeatured !== undefined
     ) {
       const existingReqs = (existingRow as any).proof_requirements || {};
-      const nextMeta = sanitizeTaskBuilderMeta(
+      resolvedNextMeta = sanitizeTaskBuilderMeta(
         {
           ...(existingReqs._taskMeta || {}),
           ...(taskMeta || {}),
           ...(taskKind ? { taskKind } : {}),
           ...(isFeatured !== undefined ? { isFeatured: Boolean(isFeatured) } : {}),
         },
-        updates.category || existingRow.category
+        effectiveCategory
       );
       updates.proof_requirements = {
         ...existingReqs,
         ...(proofRequirements && typeof proofRequirements === 'object' ? proofRequirements : {}),
-        _taskMeta: nextMeta,
+        _taskMeta: resolvedNextMeta,
       };
     }
 
-    const { data, error } = await adminClient
+    let { data, error } = await adminClient
       .from('tasks')
       .update(updates)
       .eq('id', req.params.id)
       .select('id');
 
+    if (error && (error.code === '23514' || String(error.message || '').includes('tasks_category_check'))) {
+      const safeUpdates = { ...updates, category: effectiveCategory === 'smart_links' ? 'local_services' : existingRow.category };
+      const retry = await adminClient.from('tasks').update(safeUpdates).eq('id', req.params.id).select('id');
+      data = retry.data;
+      error = retry.error;
+    }
+
     if (error) throw error;
     if (!data || data.length === 0) {
       return res.status(404).json({ error: 'المهمة غير موجودة أو لا تملك صلاحية تعديلها.' });
+    }
+
+    if (resolvedNextMeta) {
+      await taskSystemService.saveTaskExtendedMeta(
+        req.params.id,
+        {
+          taskMeta: resolvedNextMeta,
+          category: effectiveCategory,
+          steps: Array.isArray(steps) ? steps.map((s: any) => String(s || '').trim()).filter(Boolean) : undefined,
+          timeEstimateMinutes:
+            timeEstimateMinutes !== undefined && Number(timeEstimateMinutes) > 0
+              ? Math.max(1, Math.round(Number(timeEstimateMinutes)))
+              : undefined,
+          proofRequirements: updates.proof_requirements,
+        },
+        req.user.id
+      );
     }
 
     let escrowRelease: any = null;
@@ -2156,7 +2240,7 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
       });
     }
 
-    const updatedTask = await supabaseDb.getTaskById(req.params.id).catch(() => null);
+    const updatedTask = await supabaseDb.getTaskById(req.params.id, { maskSecrets: false }).catch(() => null);
     res.json({ success: true, escrowRelease, task: updatedTask });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -2254,6 +2338,7 @@ app.delete('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReq
       });
     }
 
+    await taskSystemService.deleteTaskExtendedMeta(taskId);
     res.json({ success: true, deletedId: deletedRows[0].id, escrowRelease });
   } catch (err: any) {
     console.error('Task deletion error:', err);
@@ -3791,6 +3876,182 @@ app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOffer
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
 app.all('/api/clixwall/postback', clixwallHandlers.handlePostback);
+
+// ==============================================================================
+// SMART LINKS (VERIFIED POSTBACK-ONLY REWARDS) & SEQUENTIAL SURVEYS & ASSETS
+// ==============================================================================
+
+app.post('/api/smart-links/:id/start', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const task = await supabaseDb.getTaskById(req.params.id, { userId: req.user.id, maskSecrets: false });
+    if (!task) {
+      return res.status(404).json({ error: 'الرابط الذكي غير موجود.' });
+    }
+    const result = await taskSystemService.startSmartLinkAttempt({
+      task,
+      userId: req.user.id,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر بدء جلسة الرابط الذكي.' });
+  }
+});
+
+app.all('/api/smart-links/postback', async (req: Request, res: Response) => {
+  const payload = { ...(req.query || {}), ...(req.body && typeof req.body === 'object' ? req.body : {}) };
+  try {
+    const result = await taskSystemService.handleSmartLinkPostback({
+      secret: payload.secret || payload.sig || payload.token,
+      clickToken: payload.click_token || payload.click_id || payload.subid || payload.sub_id,
+      externalTxId: payload.tx_id || payload.transaction_id || payload.txn_id || payload.txid,
+      userId: payload.user_id || payload.uid,
+      taskId: payload.task_id,
+      rewardYer: payload.reward_yer ?? payload.payout ?? payload.amount,
+      status: payload.status,
+      rawPayload: payload,
+    });
+    res.json(result);
+  } catch (err: any) {
+    const msg = String(err?.message || 'Postback rejected');
+    const code = msg.startsWith('FORBIDDEN') ? 403 : 400;
+    res.status(code).json({ ok: false, error: msg });
+  }
+});
+
+// Surveys (User Flow)
+app.get('/api/surveys', async (req: Request, res: Response) => {
+  try {
+    const userId = await resolveOptionalUserId(req);
+    const surveys = await taskSystemService.listSurveys({ userId, includeDrafts: false });
+    res.json({ surveys });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب الاستبيانات.' });
+  }
+});
+
+app.get('/api/surveys/:id', async (req: Request, res: Response) => {
+  try {
+    const userId = await resolveOptionalUserId(req);
+    const survey = await taskSystemService.getSurveyById(req.params.id, userId);
+    if (!survey) return res.status(404).json({ error: 'الاستبيان غير موجود.' });
+    res.json({ survey });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب تفاصيل الاستبيان.' });
+  }
+});
+
+app.post('/api/surveys/:id/start', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await taskSystemService.startOrResumeSurveyAttempt(req.params.id, req.user.id);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر بدء الاستبيان.' });
+  }
+});
+
+app.put('/api/surveys/attempts/:attemptId/progress', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { currentQuestionIndex, answers } = req.body || {};
+    const attempt = await taskSystemService.saveSurveyAttemptProgress(req.params.attemptId, req.user.id, {
+      currentQuestionIndex: Number(currentQuestionIndex || 0),
+      answers: answers && typeof answers === 'object' ? answers : {},
+    });
+    res.json({ success: true, attempt });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر حفظ التقدم.' });
+  }
+});
+
+app.post('/api/surveys/attempts/:attemptId/submit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await taskSystemService.submitSurveyAttempt(req.params.attemptId, req.user.id);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر إرسال الاستبيان.' });
+  }
+});
+
+// Admin Survey Builder & Assets / Category Icons Management
+app.get('/api/admin/surveys', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const surveys = await taskSystemService.listSurveys({ includeDrafts: true });
+    res.json({ surveys });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب الاستبيانات للإدارة.' });
+  }
+});
+
+app.post('/api/admin/surveys', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const survey = await taskSystemService.adminSaveSurvey(req.body || {}, req.user.id);
+    res.json({ success: true, survey });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل إنشاء الاستبيان.' });
+  }
+});
+
+app.put('/api/admin/surveys/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const survey = await taskSystemService.adminSaveSurvey({ ...(req.body || {}), id: req.params.id }, req.user.id);
+    res.json({ success: true, survey });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تحديث الاستبيان.' });
+  }
+});
+
+app.delete('/api/admin/surveys/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    await taskSystemService.adminDeleteSurvey(req.params.id, req.user.id);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل حذف الاستبيان.' });
+  }
+});
+
+app.get('/api/admin/assets', adminMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const assets = await taskSystemService.getTaskAssets();
+    res.json({ assets });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'فشل جلب مكتبة الصور.' });
+  }
+});
+
+app.post('/api/admin/assets/upload', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { title, assetKind, taskKind, fileName, contentType, base64Data } = req.body || {};
+    const asset = await taskSystemService.uploadTaskAsset({
+      title,
+      assetKind,
+      taskKind,
+      fileName,
+      contentType,
+      base64Data,
+      actorId: req.user.id,
+    });
+    res.json({ success: true, asset });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل رفع الصورة إلى التخزين.' });
+  }
+});
+
+app.delete('/api/admin/assets/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    await taskSystemService.deleteTaskAsset(req.params.id, req.user.id);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل حذف الصورة.' });
+  }
+});
+
+app.put('/api/admin/task-categories/:slug', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const category = await taskSystemService.upsertTaskCategory(req.params.slug, req.body || {}, req.user.id);
+    res.json({ success: true, category });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل تحديث التصنيف.' });
+  }
+});
 
 // Structured JSON 404 for unmatched API paths (prevents SPA HTML fallback on /api/*)
 app.use('/api', (req: Request, res: Response) => {

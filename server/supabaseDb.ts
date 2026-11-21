@@ -18,6 +18,7 @@ import {
   mapTaskKindToCategory,
   sanitizeTaskBuilderMeta,
 } from '../shared/taskMeta.js';
+import { taskSystemService } from './taskSystemService.js';
 import type {
   UserProfile,
   UserRole,
@@ -824,7 +825,7 @@ export function resolvePublicTaskAdvertiserIdentity(t: any, options?: { maskHidd
   };
 }
 
-function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskItem {
+function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean; maskSecrets?: boolean }): TaskItem {
   const rewardYer = Number(t.reward_units ?? t.reward_yer ?? 0);
   const totalQuantity = Number(t.slots ?? t.total_quantity ?? 0);
   const completedQuantity = Number(t.approved_count ?? t.completed_quantity ?? 0);
@@ -837,9 +838,15 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskIte
       : 'ACTIVE';
 
   const rawReqs = t.proof_requirements || {};
-  const rawTaskMeta = rawReqs._taskMeta ? sanitizeTaskBuilderMeta(rawReqs._taskMeta, t.category) : undefined;
+  const rawTaskMeta = sanitizeTaskBuilderMeta(
+    {
+      ...(t.task_meta && typeof t.task_meta === 'object' ? t.task_meta : {}),
+      ...(rawReqs._taskMeta && typeof rawReqs._taskMeta === 'object' ? rawReqs._taskMeta : {}),
+    },
+    t.category
+  );
   const isFeatured = Boolean(rawTaskMeta?.isFeatured ?? t.is_featured ?? false);
-  const taskKind = rawTaskMeta?.taskKind || inferTaskKindFromCategory(t.category);
+  const taskKind = t.task_kind || rawTaskMeta?.taskKind || inferTaskKindFromCategory(t.category);
   const priority = Number(rawTaskMeta?.priority ?? t.priority ?? (isFeatured ? 100 : 0));
 
   const proofRequirements = {
@@ -874,6 +881,15 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean }): TaskIte
     taskKind,
     isFeatured,
     priority,
+    sortOrder: Number(t.sort_order ?? rawTaskMeta?.sortOrder ?? 0),
+    imageUrl: t.image_url || rawTaskMeta?.imageUrl,
+    cardTheme: t.card_theme || rawTaskMeta?.cardTheme,
+    badgeLabel: t.badge_label || rawTaskMeta?.badgeLabel,
+    badgeColor: t.badge_color || rawTaskMeta?.badgeColor,
+    providerName: t.provider_name || rawTaskMeta?.fields?.providerName,
+    providerLogoUrl: t.provider_logo_url || rawTaskMeta?.fields?.providerLogoUrl,
+    trackingUrl: options?.maskSecrets === false ? (t.tracking_url || rawTaskMeta?.fields?.trackingUrl) : undefined,
+    linkedSurveyId: rawTaskMeta?.linkedSurveyId || rawTaskMeta?.fields?.linkedSurveyId,
     taskMeta: rawTaskMeta,
     rewardYer,
     steps: explicitSteps,
@@ -1662,7 +1678,7 @@ export const supabaseDb = {
   /**
    * 3. TASKS (Escrow-Backed Creation via create_funded_task)
    */
-  async getTasks(params?: { category?: string; search?: string; countryId?: string; divisionId?: string }): Promise<TaskItem[]> {
+  async getTasks(params?: { category?: string; search?: string; countryId?: string; divisionId?: string; userId?: string }): Promise<TaskItem[]> {
     const startTime = Date.now();
     const db = getDbClient();
 
@@ -1672,7 +1688,7 @@ export const supabaseDb = {
         .select('*')
         .in('status', ['active', 'ACTIVE']);
 
-      if (applyCategoryFilter && params?.category && params.category !== 'all') {
+      if (applyCategoryFilter && params?.category && params.category !== 'all' && params.category !== 'smart_links') {
         query = query.eq('category', params.category);
       }
       if (params?.search) {
@@ -1682,7 +1698,9 @@ export const supabaseDb = {
     };
 
     try {
-      const shouldFilterCategoryInSql = Boolean(params?.category && params.category !== 'all');
+      const shouldFilterCategoryInSql = Boolean(
+        params?.category && params.category !== 'all' && params.category !== 'smart_links'
+      );
       let { data, error } = await buildQuery(shouldFilterCategoryInSql);
 
       if (
@@ -1708,8 +1726,14 @@ export const supabaseDb = {
       }
 
       let mapped = await hydrateTaskListGeo((data || []).map((t) => mapTaskRow(t)), db);
+      mapped = await taskSystemService.enrichTasks(mapped, { userId: params?.userId, maskSecrets: true });
       if (params?.category && params.category !== 'all') {
-        mapped = mapped.filter((t) => t.category === params.category);
+        mapped = mapped.filter((t) => {
+          if (params.category === 'smart_links') {
+            return t.category === 'smart_links' || t.taskKind === 'smart_links';
+          }
+          return t.category === params.category;
+        });
       }
 
       if (params?.countryId || params?.divisionId) {
@@ -1760,6 +1784,10 @@ export const supabaseDb = {
         const featDiff = Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured));
         if (featDiff !== 0) return featDiff;
 
+        const sortA = Number(a.sortOrder ?? 0);
+        const sortB = Number(b.sortOrder ?? 0);
+        if (sortA !== sortB) return sortA - sortB;
+
         const aAvail = Math.max(0, a.totalQuantity - a.completedQuantity) > 0 ? 1 : 0;
         const bAvail = Math.max(0, b.totalQuantity - b.completedQuantity) > 0 ? 1 : 0;
         if (bAvail !== aAvail) return bAvail - aAvail;
@@ -1796,16 +1824,17 @@ export const supabaseDb = {
         throw error;
       }
 
-      return hydrateTaskListGeo(
-        (data || []).map((row) => mapTaskRow(row, { maskHiddenIdentity: false })),
+      const geoHydrated = await hydrateTaskListGeo(
+        (data || []).map((row) => mapTaskRow(row, { maskHiddenIdentity: false, maskSecrets: false })),
         db
       );
+      return taskSystemService.enrichTasks(geoHydrated, { maskSecrets: false });
     } catch (err: any) {
       throw new Error(`فشل جلب مهام المدير من Supabase: ${err.message}`);
     }
   },
 
-  async getTaskById(id: string): Promise<TaskItem | null> {
+  async getTaskById(id: string, options?: { userId?: string; maskSecrets?: boolean }): Promise<TaskItem | null> {
     const db = getDbClient();
     try {
       const { data, error } = await db
@@ -1817,8 +1846,15 @@ export const supabaseDb = {
       if (error) throw error;
       if (!data) return null;
 
-      const [hydrated] = await hydrateTaskListGeo([mapTaskRow(data)], db);
-      return hydrated;
+      const [geoHydrated] = await hydrateTaskListGeo(
+        [mapTaskRow(data, { maskSecrets: options?.maskSecrets ?? true })],
+        db
+      );
+      const [enriched] = await taskSystemService.enrichTasks([geoHydrated], {
+        userId: options?.userId,
+        maskSecrets: options?.maskSecrets ?? true,
+      });
+      return enriched;
     } catch (err: any) {
       throw new Error(`فشل جلب تفاصيل المهمة من Supabase: ${err.message}`);
     }
@@ -1925,15 +1961,31 @@ export const supabaseDb = {
       }
 
       try {
-        await db.from('tasks').update(taskUpdatePayload).eq('id', String(createdTaskId));
-      } catch {
-        try {
+        const { error: updErr } = await db.from('tasks').update(taskUpdatePayload).eq('id', String(createdTaskId));
+        if (updErr) {
+          const safeSqlCat = effectiveCategory === 'smart_links' ? 'local_services' : effectiveCategory;
           await db
             .from('tasks')
-            .update({ category: effectiveCategory, proof_requirements: mergedProofReqs })
+            .update({ category: safeSqlCat, proof_requirements: mergedProofReqs })
+            .eq('id', String(createdTaskId));
+        }
+      } catch {
+        try {
+          const safeSqlCat = effectiveCategory === 'smart_links' ? 'local_services' : effectiveCategory;
+          await db
+            .from('tasks')
+            .update({ category: safeSqlCat, proof_requirements: mergedProofReqs })
             .eq('id', String(createdTaskId));
         } catch {}
       }
+
+      await taskSystemService.saveTaskExtendedMeta(String(createdTaskId), {
+        taskMeta: normalizedMeta,
+        category: effectiveCategory,
+        steps: Array.isArray(taskData.steps) ? taskData.steps.map((s) => String(s || '').trim()).filter(Boolean) : undefined,
+        timeEstimateMinutes: Math.max(1, Math.round(Number(taskData.timeEstimateMinutes || 10))),
+        proofRequirements: mergedProofReqs,
+      });
 
       if (geoValidated?.country) {
         const isNationwide =
@@ -1965,7 +2017,7 @@ export const supabaseDb = {
         }
       }
 
-      const task = await this.getTaskById(String(createdTaskId));
+      const task = await this.getTaskById(String(createdTaskId), { maskSecrets: false });
       if (!task) {
         throw new Error('تم إنشاء المهمة لكن تعذر قراءة بياناتها.');
       }

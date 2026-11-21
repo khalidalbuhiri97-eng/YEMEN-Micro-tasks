@@ -62,6 +62,7 @@ export default defineConfig(() => {
           cleanupOutdatedCaches: true,
           skipWaiting: true,
           clientsClaim: true,
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           ignoreURLParametersMatching: [/^v$/, /^source$/],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           navigateFallbackDenylist: [/^\/api\//],
@@ -93,7 +94,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
+          enabled: process.env.DISABLE_HMR !== 'true',
           type: 'module',
         },
       }),
@@ -103,10 +104,15 @@ export default defineConfig(() => {
         transform(code, id) {
           const isHmrDisabled = process.env.DISABLE_HMR === 'true';
           if (isHmrDisabled && id.replace(/\\/g, '/').endsWith('/vite/dist/client/client.mjs')) {
-            return code.replace(
-              'transport.connect(createHMRHandler(handleMessage));',
-              '/* HMR disabled: WebSocket connect skipped */'
-            );
+            return code
+              .replace(
+                'transport.connect(createHMRHandler(handleMessage));',
+                '/* HMR disabled: WebSocket connect skipped */'
+              )
+              .replace(
+                'throw new Error("send was called before connect");',
+                'return; /* HMR disabled: ignore send before connect */'
+              );
           }
           return null;
         },

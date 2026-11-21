@@ -2,7 +2,16 @@
  * Kasb Yemen - Frontend API Client (Connected to Real Backend with Session Refresh & Persistence)
  */
 
-import type { AdPartner, AdPartnerCodeType, AdPartnerRotationMode } from '../types/index.ts';
+import type {
+  AdPartner,
+  AdPartnerCodeType,
+  AdPartnerRotationMode,
+  SmartLinkAttempt,
+  SurveyAttempt,
+  SurveyItem,
+  TaskAssetItem,
+  TaskCategoryItem,
+} from '../types/index.ts';
 
 const BASE_URL = '/api';
 
@@ -727,5 +736,93 @@ export const api = {
     request<{ success: boolean; storageMode?: string }>(`/admin/ad-partners/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
+
+  // Task Visual Categories, Assets & Favorites
+  getTaskCategories: () =>
+    request<{ categories: TaskCategoryItem[] }>('/task-categories'),
+  getTaskAssets: () =>
+    request<{ assets: TaskAssetItem[] }>('/task-assets'),
+  getFavoriteTaskIds: () =>
+    request<{ favoriteIds: string[] }>('/tasks/favorites'),
+  toggleFavoriteTask: (taskId: string) =>
+    request<{ success: boolean; isFavorited: boolean; favoriteIds: string[] }>(
+      `/tasks/${encodeURIComponent(taskId)}/favorite`,
+      { method: 'POST' }
+    ),
+
+  // Smart Links (Postback-only reward flow)
+  startSmartLink: (taskId: string) =>
+    request<{ success: boolean; attempt: SmartLinkAttempt; launchUrl: string; userAttemptsCount: number }>(
+      `/smart-links/${encodeURIComponent(taskId)}/start`,
+      { method: 'POST' }
+    ),
+
+  // Sequential Surveys
+  getSurveys: () =>
+    request<{ surveys: SurveyItem[] }>('/surveys'),
+  getSurveyById: (id: string) =>
+    request<{ survey: SurveyItem }>(`/surveys/${encodeURIComponent(id)}`),
+  startSurvey: (id: string) =>
+    request<{ success: boolean; survey: SurveyItem; attempt: SurveyAttempt }>(
+      `/surveys/${encodeURIComponent(id)}/start`,
+      { method: 'POST' }
+    ),
+  saveSurveyProgress: (attemptId: string, payload: { currentQuestionIndex: number; answers: Record<string, any> }) =>
+    request<{ success: boolean; attempt: SurveyAttempt }>(
+      `/surveys/attempts/${encodeURIComponent(attemptId)}/progress`,
+      { method: 'PUT', body: JSON.stringify(payload) }
+    ),
+  submitSurvey: (attemptId: string) =>
+    request<{ success: boolean; ok: boolean; duplicate?: boolean; rewardYer: number; transactionId?: string }>(
+      `/surveys/attempts/${encodeURIComponent(attemptId)}/submit`,
+      { method: 'POST' }
+    ),
+
+  // Admin Survey Builder & Assets / Category Icons Management
+  getAdminSurveys: () =>
+    request<{ surveys: SurveyItem[] }>('/admin/surveys'),
+  createAdminSurvey: (payload: any) =>
+    request<{ success: boolean; survey: SurveyItem }>('/admin/surveys', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateAdminSurvey: (id: string, payload: any) =>
+    request<{ success: boolean; survey: SurveyItem }>(`/admin/surveys/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deleteAdminSurvey: (id: string) =>
+    request<{ success: boolean }>(`/admin/surveys/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  getAdminAssets: () =>
+    request<{ assets: TaskAssetItem[] }>('/admin/assets'),
+  uploadAdminTaskAsset: (payload: {
+    title: string;
+    assetKind?: 'task_illustration' | 'category_icon' | 'provider_logo';
+    taskKind?: string | null;
+    fileName: string;
+    contentType: string;
+    base64Data: string;
+  }) =>
+    request<{ success: boolean; asset: TaskAssetItem }>('/admin/assets/upload', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteAdminTaskAsset: (id: string) =>
+    request<{ success: boolean }>(`/admin/assets/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  upsertAdminTaskCategory: (
+    slug: string,
+    payload: { labelAr?: string; iconUrl?: string | null; badgeColor?: string; sortOrder?: number; isActive?: boolean }
+  ) =>
+    request<{ success: boolean; category: TaskCategoryItem }>(
+      `/admin/task-categories/${encodeURIComponent(slug)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    ),
 };
 

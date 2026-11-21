@@ -617,19 +617,25 @@ export type TaskCategory =
   | 'content_writing'
   | 'data_entry'
   | 'review_ratings'
-  | 'local_services';
+  | 'local_services'
+  | 'smart_links'
+  | 'general';
 
 export type TaskKind =
   | 'surveys'
   | 'ad_watch'
   | 'app_testing'
   | 'quick_tasks'
-  | 'external_offers';
+  | 'external_offers'
+  | 'smart_links';
+
+export type TaskCardTheme = 'emerald' | 'indigo' | 'amber' | 'teal' | 'rose' | 'slate';
 
 export interface TaskTypeSpecificFields {
   // surveys
   questions?: string[];
   optionsText?: string;
+  linkedSurveyId?: string;
   // ad_watch
   adUrl?: string;
   watchDurationSeconds?: number;
@@ -645,6 +651,12 @@ export interface TaskTypeSpecificFields {
   partnerName?: string;
   offerUrl?: string;
   offerConditions?: string;
+  // smart_links
+  providerName?: string;
+  providerLogoUrl?: string;
+  trackingUrl?: string;
+  postbackSecret?: string;
+  smartLinkInstructions?: string;
 }
 
 export interface TaskBuilderMeta {
@@ -652,6 +664,12 @@ export interface TaskBuilderMeta {
   isFeatured?: boolean;
   featuredRequested?: boolean;
   priority?: number;
+  sortOrder?: number;
+  imageUrl?: string;
+  cardTheme?: TaskCardTheme;
+  badgeLabel?: string;
+  badgeColor?: string;
+  linkedSurveyId?: string;
   fields?: TaskTypeSpecificFields;
 }
 
@@ -663,6 +681,18 @@ export interface TaskItem {
   taskKind?: TaskKind;
   isFeatured?: boolean;
   priority?: number;
+  sortOrder?: number;
+  imageUrl?: string;
+  cardTheme?: TaskCardTheme;
+  badgeLabel?: string;
+  badgeColor?: string;
+  isVerifiedAdvertiser?: boolean;
+  isFavorited?: boolean;
+  providerName?: string;
+  providerLogoUrl?: string;
+  trackingUrl?: string;
+  userAttemptsCount?: number;
+  linkedSurveyId?: string;
   taskMeta?: TaskBuilderMeta;
   rewardYer: number;
   steps: string[];
@@ -697,6 +727,110 @@ export interface TaskItem {
   targetDivisions?: GeoTargetSummary[];
   locationLabel?: string | null;
   createdAt: string;
+}
+
+export interface TaskAssetItem {
+  id: string;
+  title: string;
+  assetKind: 'task_illustration' | 'category_icon' | 'provider_logo';
+  taskKind?: string | null;
+  storagePath: string;
+  publicUrl: string;
+  createdAt: string;
+}
+
+export interface TaskCategoryItem {
+  id: string;
+  slug: string;
+  labelAr: string;
+  iconUrl?: string | null;
+  badgeColor: string;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export type SurveyQuestionType =
+  | 'single_choice'
+  | 'multiple_choice'
+  | 'yes_no'
+  | 'short_text'
+  | 'long_text'
+  | 'rating_1_5';
+
+export interface SurveyBranchRule {
+  optionId?: string;
+  optionText?: string;
+  answerValue?: string;
+  nextQuestionId?: string | null; // null or 'END' jumps to final review
+  action?: 'jump' | 'end';
+}
+
+export interface SurveyOption {
+  id: string;
+  questionId: string;
+  orderIndex: number;
+  optionText: string;
+  nextQuestionId?: string | null;
+}
+
+export interface SurveyQuestion {
+  id: string;
+  surveyId: string;
+  orderIndex: number;
+  questionText: string;
+  questionType: SurveyQuestionType;
+  isRequired: boolean;
+  options: SurveyOption[];
+  branchRules?: SurveyBranchRule[];
+}
+
+export interface SurveyAttempt {
+  id: string;
+  surveyId: string;
+  userId: string;
+  attemptNumber: number;
+  status: 'in_progress' | 'submitted' | 'rewarded' | 'rejected';
+  currentQuestionIndex: number;
+  answers: Record<string, any>;
+  rewardTransactionId?: string | null;
+  startedAt: string;
+  submittedAt?: string | null;
+}
+
+export interface SurveyItem {
+  id: string;
+  linkedTaskId?: string | null;
+  title: string;
+  description: string;
+  imageUrl?: string | null;
+  rewardYer: number;
+  estimatedMinutes: number;
+  maxParticipants: number;
+  completedParticipants: number;
+  maxAttemptsPerUser: number;
+  status: 'draft' | 'active' | 'paused' | 'completed';
+  isFeatured: boolean;
+  sortOrder: number;
+  questions: SurveyQuestion[];
+  userAttemptsCount?: number;
+  userCompleted?: boolean;
+  activeAttempt?: SurveyAttempt | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SmartLinkAttempt {
+  id: string;
+  taskId: string;
+  userId: string;
+  providerName: string;
+  clickToken: string;
+  status: 'started' | 'completed' | 'rejected' | 'reversed';
+  externalTxId?: string | null;
+  rewardYer: number;
+  rewardTransactionId?: string | null;
+  startedAt: string;
+  completedAt?: string | null;
 }
 
 export type SubmissionStatus = 'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED';
