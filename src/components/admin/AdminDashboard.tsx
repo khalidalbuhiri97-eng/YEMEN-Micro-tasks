@@ -8,7 +8,6 @@ import { TreasuryControlView } from './finance/TreasuryControlView.tsx';
 import { LedgerAuditView } from './finance/LedgerAuditView.tsx';
 import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
 import { TaxManagementView } from './finance/TaxManagementView.tsx';
-import { YTCoinAdminView } from '../ytcoin/YTCoinAdminView.tsx';
 import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
 import { AdPartnersManager } from './AdPartnersManager.tsx';
@@ -49,7 +48,7 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings' | 'yt_coin'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -662,7 +661,6 @@ export const AdminDashboard: React.FC = () => {
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
           { id: 'treasury', label: 'إدارة الخزينة', count: null },
-          { id: 'yt_coin', label: 'YT Coin والتعدين', count: null },
           { id: 'external_accounts', label: 'الحسابات الخارجية والتحصيل', count: treasury?.pendingExternalDepositsCount ?? null },
           { id: 'ledger', label: 'دفتر الأستاذ والمراجعة', count: null },
           { id: 'reports', label: 'التقارير المالية (8)', count: null },
@@ -714,8 +712,6 @@ export const AdminDashboard: React.FC = () => {
           onNavigateTab={setActiveTab}
         />
       )}
-
-      {activeTab === 'yt_coin' && <YTCoinAdminView />}
 
       {/* 2. TREASURY CONTROL TAB */}
       {activeTab === 'treasury' && (

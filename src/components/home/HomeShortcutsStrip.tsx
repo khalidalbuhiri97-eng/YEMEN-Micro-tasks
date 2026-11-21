@@ -11,7 +11,6 @@ import {
   Gift,
   CircleDollarSign,
   Clock3,
-  Coins,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { formatYer } from '../../../shared/money.ts';
@@ -24,14 +23,6 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
   const { user, wallet, isAdmin } = useAuth();
 
   const shortcuts = [
-    {
-      id: 'yt_coin',
-      label: 'YT Coin',
-      targetTab: 'yt_coin',
-      icon: Coins,
-      accent: 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/60',
-      featured: true,
-    },
     {
       id: 'tasks',
       label: 'المهام',
@@ -152,11 +143,7 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
           </button>
         </div>
 
-        <div
-          aria-label="خدمات Yemen Task"
-          className="flex gap-3 overflow-x-auto pb-3 snap-x snap-mandatory scroll-smooth"
-          style={{ scrollbarWidth: 'thin', WebkitOverflowScrolling: 'touch' }}
-        >
+        <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
           {shortcuts.map((item) => {
             const Icon = item.icon;
             const disabled = Boolean((item as any).comingSoon);
@@ -167,15 +154,15 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
                 disabled={disabled}
                 onClick={() => item.targetTab && onNavigate(item.targetTab)}
                 aria-label={disabled ? item.label + ' - قريباً' : item.label}
-                className={`group snap-start shrink-0 basis-[calc((100%-0.75rem)/2)] sm:basis-40 min-h-[184px] aspect-[3/4] flex flex-col items-center justify-center gap-4 rounded-2xl border ${item.id === 'yt_coin' ? 'border-emerald-300 dark:border-emerald-700 bg-gradient-to-br from-emerald-50 to-teal-100 dark:from-emerald-950/70 dark:to-teal-950/60 shadow-sm' : 'border-slate-200/80 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/50'} px-3 py-4 transition-all ${disabled ? 'opacity-75 cursor-default' : 'hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/30 cursor-pointer'}`}
+                className={`group min-w-0 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/50 px-1.5 py-2.5 transition-all ${disabled ? 'opacity-75 cursor-default' : 'hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/30 cursor-pointer'}`}
               >
-                <span className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm ${item.accent}`}>
-                  <Icon className="w-7 h-7" />
+                <span className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${item.accent}`}>
+                  <Icon className="w-5 h-5" />
                 </span>
-                <span className="text-xs sm:text-sm font-extrabold text-slate-700 dark:text-slate-200 text-center leading-relaxed line-clamp-2">
+                <span className="text-[10px] sm:text-[11px] font-bold text-slate-700 dark:text-slate-200 text-center leading-tight line-clamp-2">
                   {item.label}
                 </span>
-                {disabled && <span className="text-[10px] text-slate-400">قريباً</span>}
+                {disabled && <span className="text-[9px] text-slate-400">قريباً</span>}
               </button>
             );
           })}

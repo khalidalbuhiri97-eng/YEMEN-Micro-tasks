@@ -17,8 +17,8 @@ export interface AdsterraAdProps {
 
 const DEFAULT_ADSTERRA_KEY = '4644701e0fd0cb6323d081bb79bf0e59';
 const DEFAULT_ADSTERRA_SCRIPT_SRC = 'https://bicea.org/22/4644701e0fd0cb6323d081bb79bf0e59';
-const DEFAULT_ADSTERRA_WIDTH = 300;
-const DEFAULT_ADSTERRA_HEIGHT = 160;
+const DEFAULT_ADSTERRA_WIDTH = 320;
+const DEFAULT_ADSTERRA_HEIGHT = 50;
 
 interface AdsterraOptions {
   key: string;

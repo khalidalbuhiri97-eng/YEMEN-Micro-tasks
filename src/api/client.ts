@@ -375,11 +375,6 @@ export const api = {
   // Referrals
   getMyReferrals: () => request<any>('/referrals/my'),
 
-  // Independent YT Coin ledger and mining
-  getMyYtCoin: () => request<any>('/yt-coin/me'),
-  claimYtCoinDaily: () => request<any>('/yt-coin/claim', { method: 'POST', body: JSON.stringify({}) }),
-  getYtCoinAdminSummary: () => request<any>('/admin/yt-coin'),
-
   // Support
   getSupportTickets: () => request<any>('/support/tickets'),
   createSupportTicket: (payload: { subject: string; message: string; priority?: string }) =>

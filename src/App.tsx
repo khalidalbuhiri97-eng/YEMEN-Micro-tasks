@@ -23,12 +23,11 @@ import { OfferWallView } from './components/dashboard/OfferWallView.tsx';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
 import { PWAInstallTopBanner } from './components/pwa/PWAInstallButton.tsx';
 import { HomeShortcutsStrip } from './components/home/HomeShortcutsStrip.tsx';
-import { Home, CheckSquare, Wallet, User, Shield, Megaphone, Coins } from 'lucide-react';
-import { YTCoinView } from './components/ytcoin/YTCoinView.tsx';
+import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
   const { user, isAdmin } = useAuth();
-  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'yt_coin'>('home');
+  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin'>('home');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   
@@ -120,8 +119,8 @@ function MainApp() {
                 placementId="home_leaderboard"
                 adKey="e0ca07a5ceb53edcf6467e9176896b3f"
                 scriptSrc="https://bicea.org/22/e0ca07a5ceb53edcf6467e9176896b3f"
-                width={300}
-                height={160}
+                width={728}
+                height={90}
               />
             </div>
             <YemenPayoutsSection />
@@ -145,12 +144,6 @@ function MainApp() {
               onGoToWithdraw={() => setCurrentTab('dashboard')}
               onGoToTasks={() => setCurrentTab('tasks')}
             />
-          </div>
-        )}
-
-        {currentTab === 'yt_coin' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <YTCoinView />
           </div>
         )}
 
@@ -226,14 +219,6 @@ function MainApp() {
         >
           <Wallet className="w-4 h-4" />
           <span>المحفظة</span>
-        </button>
-
-        <button
-          onClick={() => setCurrentTab('yt_coin')}
-          className={`flex flex-col items-center gap-1 transition-colors ${currentTab === 'yt_coin' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}
-        >
-          <Coins className="w-4 h-4" />
-          <span>YT Coin</span>
         </button>
 
         <button

@@ -9,7 +9,6 @@ import {
 import { api } from '../../api/client.ts';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 import { HomeAdWindow } from '../ads/HomeAdWindow.tsx';
-import { SandboxedAdSlot } from '../ads/SandboxedAdSlot.tsx';
 import { ClixWallHomeCard } from '../home/ClixWallHomeCard.tsx';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
 
@@ -147,14 +146,6 @@ export const Hero: React.FC<HeroProps> = ({
                     <p className="text-xs text-slate-300 leading-relaxed">
                       استمر بإنجاز المهام المباشرة وشبكة ClixWall يومياً بينما نضيف المزيد من شركاء العروض المعتمدين.
                     </p>
-                    <div className="mt-4">
-                      <SandboxedAdSlot
-                        placementKey="home_upcoming_offers"
-                        compact
-                        emptyPlaceholderText="مساحة إعلانية متاحة للإدارة"
-                        className="!bg-slate-800 !border-slate-700"
-                      />
-                    </div>
                   </div>
                   <div className="space-y-2.5 pt-4 border-t border-slate-800">
                     <div className="flex items-center gap-2 text-[11px] text-emerald-400 font-semibold">
