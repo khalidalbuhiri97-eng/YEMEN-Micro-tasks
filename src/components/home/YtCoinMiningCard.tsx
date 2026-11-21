@@ -70,7 +70,7 @@ export const YtCoinMiningCard: React.FC = () => {
   const capRemainingUnits = Number(summary?.dailyCapRemainingUnits ?? 0);
   const nextRewardUnits = Number(summary?.nextRewardUnits ?? 0);
   const capReached = capRemainingUnits < nextRewardUnits;
-  const recentHistory = (summary?.history || []).slice(0, 5);
+  const recentHistory = (summary?.history || []).filter((item) => item.eventType === 'mining_reward').slice(0, 5);
 
   return (
     <section dir="rtl" aria-label="تعدين عملة YT Coin" className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-3">
