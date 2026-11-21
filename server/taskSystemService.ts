@@ -25,8 +25,10 @@ import {
   TASK_KIND_OPTIONS,
   getDefaultTaskImageUrl,
   inferTaskKindFromCategory,
+  normalizeProofRequirements,
   sanitizeSafeImageUrl,
   sanitizeTaskBuilderMeta,
+  toCanonicalTaskKind,
 } from '../shared/taskMeta.js';
 import { evaluateSurveyPath } from '../shared/surveyLogic.js';
 import type {
@@ -55,6 +57,7 @@ const VALID_QUESTION_TYPES: SurveyQuestionType[] = [
   'yes_no',
   'short_text',
   'long_text',
+  'number',
   'rating_1_5',
 ];
 
@@ -126,22 +129,31 @@ const DEFAULT_TASK_CATEGORIES: TaskCategoryItem[] = [
   { id: 'cat-popular', slug: 'popular', labelAr: 'الأكثر شعبية', iconUrl: SUPABASE_TASK_ASSET_URLS.cat_popular, badgeColor: '#D97706', sortOrder: 1, isActive: true },
   { id: 'cat-quick', slug: 'quick', labelAr: 'المهام السريعة', iconUrl: SUPABASE_TASK_ASSET_URLS.cat_quick, badgeColor: '#4F46E5', sortOrder: 2, isActive: true },
   { id: 'cat-featured', slug: 'featured', labelAr: 'مميزة', iconUrl: SUPABASE_TASK_ASSET_URLS.cat_featured, badgeColor: '#0EA5E9', sortOrder: 3, isActive: true },
-  { id: 'cat-smart-links', slug: 'smart_links', labelAr: 'الروابط الذكية', iconUrl: SUPABASE_TASK_ASSET_URLS.smart_links, badgeColor: '#0D9488', sortOrder: 4, isActive: true },
-  { id: 'cat-surveys', slug: 'surveys', labelAr: 'الاستبيانات', iconUrl: SUPABASE_TASK_ASSET_URLS.surveys, badgeColor: '#059669', sortOrder: 5, isActive: true },
-  { id: 'cat-app-testing', slug: 'app_testing', labelAr: 'تطبيقات وألعاب', iconUrl: SUPABASE_TASK_ASSET_URLS.app_testing, badgeColor: '#2563EB', sortOrder: 6, isActive: true },
-  { id: 'cat-social', slug: 'social_engagement', labelAr: 'التفاعل والإعلانات', iconUrl: SUPABASE_TASK_ASSET_URLS.ad_watch, badgeColor: '#E11D48', sortOrder: 7, isActive: true },
-  { id: 'cat-data-entry', slug: 'data_entry', labelAr: 'إدخال البيانات', iconUrl: SUPABASE_TASK_ASSET_URLS.quick_tasks, badgeColor: '#6366F1', sortOrder: 8, isActive: true },
-  { id: 'cat-reviews', slug: 'review_ratings', labelAr: 'التقييمات والخرائط', iconUrl: SUPABASE_TASK_ASSET_URLS.external_offers, badgeColor: '#059669', sortOrder: 9, isActive: true },
-  { id: 'cat-local', slug: 'local_services', labelAr: 'عروض الشركاء', iconUrl: SUPABASE_TASK_ASSET_URLS.external_offers, badgeColor: '#10B981', sortOrder: 10, isActive: true },
+  { id: 'cat-surveys', slug: 'surveys', labelAr: 'الاستبيانات', iconUrl: SUPABASE_TASK_ASSET_URLS.surveys, badgeColor: '#059669', sortOrder: 4, isActive: true },
+  { id: 'cat-video-watch', slug: 'video_watch', labelAr: 'مشاهدة الفيديوهات', iconUrl: SUPABASE_TASK_ASSET_URLS.video_watch, badgeColor: '#0D9488', sortOrder: 5, isActive: true },
+  { id: 'cat-website-visit', slug: 'website_visit', labelAr: 'زيارة المواقع والروابط', iconUrl: SUPABASE_TASK_ASSET_URLS.website_visit, badgeColor: '#4F46E5', sortOrder: 6, isActive: true },
+  { id: 'cat-social-follow', slug: 'social_follow', labelAr: 'متابعة الحسابات', iconUrl: SUPABASE_TASK_ASSET_URLS.social_follow, badgeColor: '#2563EB', sortOrder: 7, isActive: true },
+  { id: 'cat-social-engagement', slug: 'social_engagement', labelAr: 'الإعجاب والتفاعل', iconUrl: SUPABASE_TASK_ASSET_URLS.social_engagement, badgeColor: '#E11D48', sortOrder: 8, isActive: true },
+  { id: 'cat-app-testing', slug: 'app_testing', labelAr: 'تطبيقات وألعاب', iconUrl: SUPABASE_TASK_ASSET_URLS.app_testing, badgeColor: '#D97706', sortOrder: 9, isActive: true },
+  { id: 'cat-account-signup', slug: 'account_signup', labelAr: 'التسجيل والحسابات', iconUrl: SUPABASE_TASK_ASSET_URLS.account_signup, badgeColor: '#10B981', sortOrder: 10, isActive: true },
+  { id: 'cat-custom-proof', slug: 'custom_proof', labelAr: 'إثباتات مخصصة', iconUrl: SUPABASE_TASK_ASSET_URLS.custom_proof, badgeColor: '#334155', sortOrder: 11, isActive: true },
+  { id: 'cat-smart-links', slug: 'smart_links', labelAr: 'الروابط الذكية', iconUrl: SUPABASE_TASK_ASSET_URLS.smart_links, badgeColor: '#0D9488', sortOrder: 12, isActive: true },
+  { id: 'cat-data-entry', slug: 'data_entry', labelAr: 'إدخال البيانات', iconUrl: SUPABASE_TASK_ASSET_URLS.quick_tasks, badgeColor: '#6366F1', sortOrder: 13, isActive: true },
+  { id: 'cat-reviews', slug: 'review_ratings', labelAr: 'التقييمات والخرائط', iconUrl: SUPABASE_TASK_ASSET_URLS.external_offers, badgeColor: '#059669', sortOrder: 14, isActive: true },
+  { id: 'cat-local', slug: 'local_services', labelAr: 'عروض الشركاء', iconUrl: SUPABASE_TASK_ASSET_URLS.external_offers, badgeColor: '#10B981', sortOrder: 15, isActive: true },
 ];
 
 const DEFAULT_TASK_ASSETS: TaskAssetItem[] = [
-  { id: 'def-featured', title: 'بطاقة مهمة مميزة', assetKind: 'task_illustration', taskKind: 'ad_watch', storagePath: 'defaults/task_featured_emerald.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.featured, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'def-surveys', title: 'بطاقة استبيان', assetKind: 'task_illustration', taskKind: 'surveys', storagePath: 'defaults/task_survey_art.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.surveys, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'def-smartlinks', title: 'بطاقة رابط ذكي', assetKind: 'task_illustration', taskKind: 'smart_links', storagePath: 'defaults/task_smartlink_art.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.smart_links, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'def-quick', title: 'بطاقة مهمة سريعة', assetKind: 'task_illustration', taskKind: 'quick_tasks', storagePath: 'defaults/task_quick_violet.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.quick_tasks, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'def-apps', title: 'بطاقة تجربة تطبيقات', assetKind: 'task_illustration', taskKind: 'app_testing', storagePath: 'defaults/task_app_testing.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.app_testing, createdAt: '2026-01-01T00:00:00.000Z' },
-  { id: 'def-offers', title: 'بطاقة عروض خارجية', assetKind: 'task_illustration', taskKind: 'external_offers', storagePath: 'defaults/task_external_offers.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.external_offers, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-featured', title: 'بطاقة مهمة مميزة', assetKind: 'task_illustration', taskKind: 'custom_proof', storagePath: 'defaults/task_featured_emerald.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.featured, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-surveys', title: 'بطاقة استبيان تفاعلي', assetKind: 'task_illustration', taskKind: 'surveys', storagePath: 'defaults/task_survey_art.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.surveys, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-video', title: 'بطاقة مشاهدة فيديو', assetKind: 'task_illustration', taskKind: 'video_watch', storagePath: 'defaults/task_video_watch.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.video_watch, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-smartlinks', title: 'بطاقة زيارة مواقع وروابط', assetKind: 'task_illustration', taskKind: 'website_visit', storagePath: 'defaults/task_smartlink_art.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.website_visit, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-social-follow', title: 'بطاقة متابعة حسابات', assetKind: 'task_illustration', taskKind: 'social_follow', storagePath: 'defaults/task_social_follow.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.social_follow, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-social-engage', title: 'بطاقة إعجاب وتفاعل', assetKind: 'task_illustration', taskKind: 'social_engagement', storagePath: 'defaults/task_social_engagement.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.social_engagement, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-apps', title: 'بطاقة تحميل وتجربة تطبيقات', assetKind: 'task_illustration', taskKind: 'app_testing', storagePath: 'defaults/task_app_testing.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.app_testing, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-signup', title: 'بطاقة تسجيل وإنشاء حسابات', assetKind: 'task_illustration', taskKind: 'account_signup', storagePath: 'defaults/task_account_signup.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.account_signup, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-quick', title: 'بطاقة إثبات مخصص', assetKind: 'task_illustration', taskKind: 'custom_proof', storagePath: 'defaults/task_quick_violet.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.custom_proof, createdAt: '2026-01-01T00:00:00.000Z' },
+  { id: 'def-offers', title: 'بطاقة عروض الشركاء', assetKind: 'task_illustration', taskKind: 'external_offers', storagePath: 'defaults/task_external_offers.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.external_offers, createdAt: '2026-01-01T00:00:00.000Z' },
   { id: 'def-cat-all', title: 'أيقونة جميع المهام', assetKind: 'category_icon', taskKind: null, storagePath: 'defaults/cat_icon_all.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.cat_all, createdAt: '2026-01-01T00:00:00.000Z' },
   { id: 'def-cat-pop', title: 'أيقونة الأكثر شعبية', assetKind: 'category_icon', taskKind: null, storagePath: 'defaults/cat_icon_popular.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.cat_popular, createdAt: '2026-01-01T00:00:00.000Z' },
   { id: 'def-cat-quick', title: 'أيقونة المهام السريعة', assetKind: 'category_icon', taskKind: null, storagePath: 'defaults/cat_icon_quick.jpg', publicUrl: SUPABASE_TASK_ASSET_URLS.cat_quick, createdAt: '2026-01-01T00:00:00.000Z' },
@@ -652,13 +664,14 @@ export const taskSystemService = {
       }
 
       const taskKind = rawMergedMeta.taskKind || t.taskKind || inferTaskKindFromCategory(t.category);
+      const canonicalKind = toCanonicalTaskKind(taskKind, t.category);
       const isFeatured = Boolean(rawMergedMeta.isFeatured ?? t.isFeatured);
       const effectiveCategory = (
         mirrored?.virtualCategory ||
-        (taskKind === 'smart_links' ? 'smart_links' : t.category)
+        (taskKind === 'smart_links' || canonicalKind === 'website_visit' ? 'smart_links' : t.category)
       ) as TaskCategory;
 
-      const defaultOpt = TASK_KIND_OPTIONS.find((o) => o.kind === taskKind);
+      const defaultOpt = TASK_KIND_OPTIONS.find((o) => o.kind === canonicalKind);
       const imageUrl =
         sanitizeSafeImageUrl(t.imageUrl) ||
         rawMergedMeta.imageUrl ||
@@ -675,10 +688,22 @@ export const taskSystemService = {
             ? mirrored.steps
             : rawMergedMeta.fields?.steps || [];
 
+      const mergedProofReqs = normalizeProofRequirements(
+        {
+          ...(t.proofRequirements || {}),
+          ...(mirrored?.proofRequirements && typeof mirrored.proofRequirements === 'object'
+            ? mirrored.proofRequirements
+            : {}),
+        },
+        rawMergedMeta,
+        taskKind
+      );
+
       return {
         ...t,
         category: effectiveCategory,
         taskKind,
+        difficulty: rawMergedMeta.difficulty || t.difficulty || 'easy',
         isFeatured,
         sortOrder: Number(t.sortOrder ?? rawMergedMeta.sortOrder ?? 0),
         imageUrl,
@@ -693,6 +718,7 @@ export const taskSystemService = {
         linkedSurveyId: t.linkedSurveyId || rawMergedMeta.linkedSurveyId || rawMergedMeta.fields?.linkedSurveyId,
         userAttemptsCount: attemptsByTask.get(t.id) || 0,
         steps: mergedSteps,
+        proofRequirements: mergedProofReqs,
         timeEstimateMinutes: Number(mirrored?.timeEstimateMinutes ?? t.timeEstimateMinutes ?? 10),
         maxPerUser: Number(mirrored?.maxPerUser ?? t.maxPerUser ?? 1),
         taskMeta: rawMergedMeta,
@@ -1165,6 +1191,7 @@ export const taskSystemService = {
               questionText: qr.question_text,
               questionType: qr.question_type,
               isRequired: qr.is_required !== false,
+              imageUrl: sanitizeSafeImageUrl(qr.image_url) || null,
               options: optionsByQ.get(qr.id) || [],
               branchRules: Array.isArray(qr.branch_rules) ? qr.branch_rules : [],
             });
@@ -1310,6 +1337,7 @@ export const taskSystemService = {
         questionText: string;
         questionType: SurveyQuestionType;
         isRequired?: boolean;
+        imageUrl?: string | null;
         options?: Array<{ id?: string; optionText: string; nextQuestionId?: string | null }>;
         branchRules?: any[];
       }>;
@@ -1362,6 +1390,7 @@ export const taskSystemService = {
         questionText: String(q.questionText || '').trim(),
         questionType: qType,
         isRequired: q.isRequired !== false,
+        imageUrl: sanitizeSafeImageUrl(q.imageUrl) || null,
         options: opts,
         branchRules: Array.isArray(q.branchRules) ? q.branchRules : [],
       };
@@ -1833,5 +1862,177 @@ export const taskSystemService = {
       });
     } catch {}
     sendWebPushToUser(params.userId, { title, body: message, url: '/wallet' }).catch(() => {});
+  },
+
+  // ============================================================================
+  // 6. VERIFIED EXECUTION SESSIONS (VIDEO WATCH & WEBSITE VISIT ANTI-CHEAT)
+  // ============================================================================
+
+  async startExecutionSession(params: {
+    task: TaskItem;
+    userId: string;
+    mode: 'video_watch' | 'website_visit';
+  }): Promise<{
+    id: string;
+    taskId: string;
+    userId: string;
+    mode: 'video_watch' | 'website_visit';
+    requiredSeconds: number;
+    verifiedSeconds: number;
+    completed: boolean;
+    startedAt: string;
+  }> {
+    const { task, userId, mode } = params;
+    const canonical = toCanonicalTaskKind(task.taskKind, task.category);
+    const rawRequired =
+      mode === 'video_watch'
+        ? Number(task.taskMeta?.fields?.watchDurationSeconds || 15)
+        : Number(task.taskMeta?.fields?.minVisitSeconds || (canonical === 'website_visit' ? 10 : 0));
+    const requiredSeconds = Math.max(3, Math.min(3600, Math.round(rawRequired || 10)));
+    const key = `exec_sess_${userId}_${task.id}`;
+    const existing = await readSetting<any>(key, null);
+    const nowIso = new Date().toISOString();
+
+    if (
+      existing &&
+      existing.taskId === task.id &&
+      existing.userId === userId &&
+      existing.mode === mode &&
+      !existing.consumed
+    ) {
+      return {
+        id: String(existing.id),
+        taskId: existing.taskId,
+        userId: existing.userId,
+        mode: existing.mode,
+        requiredSeconds,
+        verifiedSeconds: Number(existing.verifiedSeconds || 0),
+        completed: Boolean(existing.completed || Number(existing.verifiedSeconds || 0) >= requiredSeconds),
+        startedAt: existing.startedAt || nowIso,
+      };
+    }
+
+    const session = {
+      id: `EX-${crypto.randomUUID()}`,
+      taskId: task.id,
+      userId,
+      mode,
+      requiredSeconds,
+      verifiedSeconds: 0,
+      completed: false,
+      consumed: false,
+      startedAt: nowIso,
+      lastPingMs: Date.now(),
+    };
+    await writeSetting(key, session, `Task execution session for ${task.id}`, userId);
+    return {
+      id: session.id,
+      taskId: session.taskId,
+      userId: session.userId,
+      mode: session.mode,
+      requiredSeconds: session.requiredSeconds,
+      verifiedSeconds: 0,
+      completed: false,
+      startedAt: session.startedAt,
+    };
+  },
+
+  async pingExecutionSession(params: {
+    taskId: string;
+    sessionId: string;
+    userId: string;
+    deltaSeconds?: number;
+    playerActive?: boolean;
+    returnedFromVisit?: boolean;
+  }): Promise<{
+    id: string;
+    requiredSeconds: number;
+    verifiedSeconds: number;
+    completed: boolean;
+  }> {
+    const key = `exec_sess_${params.userId}_${params.taskId}`;
+    const session = await readSetting<any>(key, null);
+    if (!session || session.id !== params.sessionId || session.userId !== params.userId) {
+      throw new Error('جلسة تنفيذ المهمة غير صالحة أو منتهية. يرجى إعادة فتح المهمة.');
+    }
+
+    const nowMs = Date.now();
+    const lastPingMs = Number(session.lastPingMs || nowMs);
+    const wallClockElapsedSec = Math.max(0, (nowMs - lastPingMs) / 1000);
+    const requestedDelta = Math.max(0, Math.min(30, Number(params.deltaSeconds || 0)));
+
+    // Anti-cheat: strictly cap credited gain to actual wall-clock elapsed time (+1.5s network jitter tolerance)
+    let gain = 0;
+    if (session.mode === 'video_watch') {
+      if (params.playerActive !== false) {
+        gain = Math.min(requestedDelta || wallClockElapsedSec, wallClockElapsedSec + 1.5, 15);
+      }
+    } else {
+      // website_visit: allow time elapsed since session start/lastPing when returning from visit or actively timing
+      gain = params.returnedFromVisit
+        ? Math.min(wallClockElapsedSec + 1, Number(session.requiredSeconds || 60))
+        : Math.min(requestedDelta || wallClockElapsedSec, wallClockElapsedSec + 1.5, 15);
+    }
+
+    const requiredSeconds = Math.max(1, Number(session.requiredSeconds || 10));
+    const nextVerified = Math.min(
+      requiredSeconds,
+      Math.round((Number(session.verifiedSeconds || 0) + Math.max(0, gain)) * 10) / 10
+    );
+    const completed = nextVerified >= requiredSeconds;
+
+    const updated = {
+      ...session,
+      verifiedSeconds: nextVerified,
+      completed,
+      lastPingMs: nowMs,
+      completedAt: completed && !session.completedAt ? new Date().toISOString() : session.completedAt,
+    };
+    await writeSetting(key, updated, `Task execution session for ${params.taskId}`, params.userId);
+    return {
+      id: updated.id,
+      requiredSeconds,
+      verifiedSeconds: Math.floor(updated.verifiedSeconds),
+      completed,
+    };
+  },
+
+  async verifyExecutionSession(params: {
+    taskId: string;
+    userId: string;
+    sessionId?: string;
+    requiredSeconds: number;
+  }): Promise<{ verified: boolean; verifiedSeconds: number; sessionId?: string }> {
+    const key = `exec_sess_${params.userId}_${params.taskId}`;
+    const session = await readSetting<any>(key, null);
+    if (!session) {
+      return { verified: false, verifiedSeconds: 0 };
+    }
+    if (params.sessionId && session.id !== params.sessionId) {
+      return { verified: false, verifiedSeconds: 0 };
+    }
+    if (session.consumed) {
+      return { verified: false, verifiedSeconds: Number(session.verifiedSeconds || 0) };
+    }
+    const verifiedSeconds = Math.floor(Number(session.verifiedSeconds || 0));
+    const verified = Boolean(session.completed || verifiedSeconds >= params.requiredSeconds);
+    return {
+      verified,
+      verifiedSeconds,
+      sessionId: session.id,
+    };
+  },
+
+  async markExecutionSessionConsumed(taskId: string, userId: string): Promise<void> {
+    const key = `exec_sess_${userId}_${taskId}`;
+    const session = await readSetting<any>(key, null);
+    if (session && !session.consumed) {
+      await writeSetting(
+        key,
+        { ...session, consumed: true, consumedAt: new Date().toISOString() },
+        `Task execution session consumed for ${taskId}`,
+        userId
+      );
+    }
   },
 };

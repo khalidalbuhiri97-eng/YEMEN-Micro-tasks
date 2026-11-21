@@ -473,9 +473,11 @@ export const SurveyRunnerModal: React.FC<SurveyRunnerModalProps> = ({
                         ? 'نعم أو لا'
                         : currentQuestion.questionType === 'rating_1_5'
                           ? 'تقييم بالنجوم (1-5)'
-                          : currentQuestion.questionType === 'long_text'
-                            ? 'نص طويل'
-                            : 'نص قصير'}
+                          : currentQuestion.questionType === 'number'
+                            ? 'رقم / قيمة عددية'
+                            : currentQuestion.questionType === 'long_text'
+                              ? 'نص طويل'
+                              : 'نص قصير'}
                 </span>
               </div>
 
@@ -483,10 +485,20 @@ export const SurveyRunnerModal: React.FC<SurveyRunnerModalProps> = ({
                 {currentQuestion.questionText}
               </h3>
 
+              {currentQuestion.imageUrl && (
+                <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40">
+                  <img
+                    src={currentQuestion.imageUrl}
+                    alt={currentQuestion.questionText}
+                    className="w-full max-h-52 object-contain mx-auto"
+                  />
+                </div>
+              )}
+
               {/* Question Input UI */}
               <div className="space-y-2.5 pt-1">
                 {(currentQuestion.questionType === 'single_choice' || currentQuestion.questionType === 'yes_no') && (
-                  <div className="grid grid-cols-1 gap-2.5">
+                  <div className="grid grid-cols-1 gap-2.5 max-h-[340px] overflow-y-auto pl-1">
                     {(currentQuestion.options.length > 0
                       ? currentQuestion.options
                       : currentQuestion.questionType === 'yes_no'
@@ -525,7 +537,7 @@ export const SurveyRunnerModal: React.FC<SurveyRunnerModalProps> = ({
                 )}
 
                 {currentQuestion.questionType === 'multiple_choice' && (
-                  <div className="grid grid-cols-1 gap-2.5">
+                  <div className="grid grid-cols-1 gap-2.5 max-h-[340px] overflow-y-auto pl-1">
                     {currentQuestion.options.map((opt) => {
                       const currentArr: string[] = Array.isArray(answers[currentQuestion.id])
                         ? answers[currentQuestion.id]
@@ -561,6 +573,18 @@ export const SurveyRunnerModal: React.FC<SurveyRunnerModalProps> = ({
                       );
                     })}
                   </div>
+                )}
+
+                {currentQuestion.questionType === 'number' && (
+                  <input
+                    type="number"
+                    step="any"
+                    dir="ltr"
+                    value={answers[currentQuestion.id] ?? ''}
+                    onChange={(e) => setQuestionAnswer(currentQuestion.id, e.target.value)}
+                    placeholder="أدخل القيمة الرقمية المطلوبة..."
+                    className="w-full px-4 py-3 text-sm font-mono bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 rounded-2xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-white"
+                  />
                 )}
 
                 {currentQuestion.questionType === 'short_text' && (

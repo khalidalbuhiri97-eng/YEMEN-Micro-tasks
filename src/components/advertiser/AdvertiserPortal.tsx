@@ -7,7 +7,7 @@ import { CampaignDetailsModal, CampaignInvoiceModal, getCampaignStatusLabel } fr
 import { SecureImageView } from '../common/SecureImageView.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
 import { TaskBuilderFields, TaskCardLivePreview } from '../tasks/TaskBuilderFields.tsx';
-import { inferTaskKindFromCategory, mapTaskKindToCategory } from '../../../shared/taskMeta.ts';
+import { assertNoSensitiveSignupFields, inferTaskKindFromCategory, mapTaskKindToCategory, normalizeProofRequirements } from '../../../shared/taskMeta.ts';
 import { addMoney, calcPercentageYer, formatYer, mulMoney, roundYer6, subMoney } from '../../../shared/money.ts';
 import {
   AlertTriangle,
@@ -92,8 +92,6 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
   const [slotsInput, setSlotsInput] = useState('100');
   const [timeEstimate, setTimeEstimate] = useState('10');
   const [durationDays, setDurationDays] = useState('7');
-  const [requireImage, setRequireImage] = useState(true);
-  const [requireText, setRequireText] = useState(true);
   const [taskMeta, setTaskMeta] = useState<TaskBuilderMeta>({
     taskKind: 'app_testing',
     isFeatured: false,
@@ -270,8 +268,19 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
     isSubmittingRef.current = true;
     setIsSubmitting(true);
     try {
+      assertNoSensitiveSignupFields(taskMeta.taskKind, [
+        title,
+        description,
+        taskMeta.fields?.signupRequirements,
+        taskMeta.fields?.offerConditions,
+        taskMeta.fields?.proofNotes,
+        taskMeta.proofConfig?.proofPromptText,
+        taskMeta.acceptanceCriteria,
+      ]);
+
       const daysNum = Math.min(30, Math.max(1, Number(durationDays) || 7));
       const deadlineAt = new Date(Date.now() + daysNum * 24 * 60 * 60 * 1000).toISOString();
+      const normalizedProof = normalizeProofRequirements(taskMeta.proofConfig, taskMeta, taskMeta.taskKind);
 
       const res = await api.createAdvertiserCampaign({
         title: title.trim(),
@@ -281,7 +290,7 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
         slots: costBreakdown.slots,
         timeEstimateMinutes: Math.max(1, Math.round(Number(timeEstimate) || 10)),
         deadlineAt,
-        proofRequirements: { requireImage, requireText, _taskMeta: taskMeta },
+        proofRequirements: normalizedProof,
         creationKey,
         hideAdvertiserName,
         advertiserDisplayName: hideAdvertiserName
@@ -685,26 +694,9 @@ export const AdvertiserPortal: React.FC<AdvertiserPortalProps> = ({ onNavigateWa
                   </div>
                 </div>
 
-                {/* Proof requirements */}
-                <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-slate-600 dark:text-slate-300">
-                  <label className="min-h-[44px] inline-flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={requireImage}
-                      onChange={(e) => setRequireImage(e.target.checked)}
-                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <span>إلزام المنفذ بإرفاق لقطة شاشة</span>
-                  </label>
-                  <label className="min-h-[44px] inline-flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={requireText}
-                      onChange={(e) => setRequireText(e.target.checked)}
-                      className="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <span>إلزام المنفذ بكتابة ملاحظة إثبات</span>
-                  </label>
+                {/* Proof configured dynamically via TaskBuilderFields above */}
+                <div className="p-2.5 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/25 border border-emerald-200/60 dark:border-emerald-800/50 text-[11px] text-emerald-800 dark:text-emerald-300">
+                  يتم تحديد طرق الإثبات المطلوبة (نص، رمز، اختيار، رابط، صورة، أسئلة متتابعة أو تحقق آلي) من قسم <strong>نظام الإثبات المطلوب</strong> أعلاه.
                 </div>
               </div>
 

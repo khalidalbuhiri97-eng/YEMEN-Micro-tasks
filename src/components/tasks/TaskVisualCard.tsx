@@ -16,13 +16,22 @@ import {
   Globe,
   Link2,
   Building2,
+  UserPlus,
+  Heart,
+  UserCheck,
+  FileCheck2,
+  Sparkles,
 } from 'lucide-react';
 import type { TaskCardTheme, TaskItem, TaskKind } from '../../types/index.ts';
 import { formatYer } from '../../../shared/money.ts';
 import {
+  TASK_KIND_OPTIONS,
   getDefaultTaskImageUrl,
+  getDifficultyMeta,
   getTaskKindLabel,
   inferTaskKindFromCategory,
+  isNewTaskWithin48Hours,
+  toCanonicalTaskKind,
 } from '../../../shared/taskMeta.ts';
 import { SecureImageView } from '../common/SecureImageView.tsx';
 
@@ -40,7 +49,7 @@ const THEME_STYLES: Record<
   emerald: {
     border: 'border-emerald-200/90 dark:border-emerald-800/70 hover:border-emerald-400',
     glow: 'from-emerald-50/70 via-white to-white dark:from-emerald-950/30 dark:via-slate-900 dark:to-slate-900',
-    pill: 'bg-blue-600 text-white',
+    pill: 'bg-emerald-600 text-white',
     accentBar: 'border-emerald-500',
     badge: 'bg-gradient-to-l from-emerald-600 to-emerald-500 text-white',
     cta: 'bg-gradient-to-l from-emerald-700 via-emerald-600 to-emerald-500 hover:from-emerald-800 hover:to-emerald-600 text-white shadow-emerald-600/20',
@@ -87,20 +96,51 @@ const THEME_STYLES: Record<
   },
 };
 
-function getKindIcon(kind: TaskKind) {
-  switch (kind) {
+function getKindIcon(kind: TaskKind, category?: string) {
+  if (kind === 'smart_links') return <Link2 className="w-3.5 h-3.5" />;
+  const canonical = toCanonicalTaskKind(kind, category);
+  switch (canonical) {
     case 'surveys':
       return <ClipboardList className="w-3.5 h-3.5" />;
-    case 'smart_links':
-      return <Link2 className="w-3.5 h-3.5" />;
+    case 'video_watch':
+      return <PlaySquare className="w-3.5 h-3.5" />;
+    case 'website_visit':
+      return <Globe className="w-3.5 h-3.5" />;
+    case 'social_follow':
+      return <UserCheck className="w-3.5 h-3.5" />;
+    case 'social_engagement':
+      return <Heart className="w-3.5 h-3.5" />;
     case 'app_testing':
       return <Smartphone className="w-3.5 h-3.5" />;
-    case 'ad_watch':
-      return <PlaySquare className="w-3.5 h-3.5" />;
-    case 'external_offers':
-      return <Globe className="w-3.5 h-3.5" />;
+    case 'account_signup':
+      return <UserPlus className="w-3.5 h-3.5" />;
+    case 'custom_proof':
+      return <FileCheck2 className="w-3.5 h-3.5" />;
     default:
       return <Zap className="w-3.5 h-3.5" />;
+  }
+}
+
+function getStartButtonLabel(kind: TaskKind, category?: string): string {
+  if (kind === 'smart_links') return 'ابدأ العرض الآن';
+  const canonical = toCanonicalTaskKind(kind, category);
+  switch (canonical) {
+    case 'surveys':
+      return 'بدء الاستبيان';
+    case 'video_watch':
+      return 'مشاهدة الفيديو';
+    case 'website_visit':
+      return 'زيارة الرابط الآن';
+    case 'social_follow':
+      return 'متابعة الحساب';
+    case 'social_engagement':
+      return 'تنفيذ التفاعل';
+    case 'app_testing':
+      return 'تحميل وتجربة';
+    case 'account_signup':
+      return 'التسجيل وتنفيذ المهمة';
+    default:
+      return 'بدء المهمة الآن';
   }
 }
 
@@ -123,11 +163,17 @@ export const TaskVisualCard: React.FC<TaskVisualCardProps> = ({
 }) => {
   const taskKind: TaskKind =
     task.taskKind || task.taskMeta?.taskKind || inferTaskKindFromCategory(task.category);
+  const canonicalKind = toCanonicalTaskKind(taskKind, task.category);
+  const defaultKindOpt = TASK_KIND_OPTIONS.find((o) => o.kind === canonicalKind);
   const themeKey: TaskCardTheme =
-    task.cardTheme || task.taskMeta?.cardTheme || (task.isFeatured ? 'emerald' : 'indigo');
+    task.cardTheme ||
+    task.taskMeta?.cardTheme ||
+    (task.isFeatured ? 'emerald' : defaultKindOpt?.defaultTheme || 'indigo');
   const style = THEME_STYLES[themeKey] || THEME_STYLES.emerald;
 
   const isFeatured = Boolean(task.isFeatured || task.taskMeta?.isFeatured);
+  const isNew = isNewTaskWithin48Hours(task.createdAt);
+  const difficultyMeta = getDifficultyMeta(task.difficulty || task.taskMeta?.difficulty);
   const remaining = Math.max(0, Number(task.totalQuantity || 0) - Number(task.completedQuantity || 0));
   const isAvailable = task.status === 'ACTIVE' && remaining > 0;
   const typeLabel = getTaskKindLabel(taskKind, task.category);
@@ -140,9 +186,9 @@ export const TaskVisualCard: React.FC<TaskVisualCardProps> = ({
   const badgeText =
     task.badgeLabel ||
     task.taskMeta?.badgeLabel ||
-    (isFeatured ? 'مهمة مميزة' : taskKind === 'smart_links' ? 'رابط ذكي' : typeLabel);
+    (isFeatured ? 'مهمة مميزة' : taskKind === 'smart_links' ? 'رابط ذكي' : defaultKindOpt?.defaultBadgeLabel || typeLabel);
 
-  const isSmartLink = taskKind === 'smart_links';
+  const isSmartLink = taskKind === 'smart_links' || Boolean(task.taskMeta?.fields?.useSmartLinkPostback);
   const providerLogo = task.providerLogoUrl || task.taskMeta?.fields?.providerLogoUrl;
   const userAttempts = Number(task.userAttemptsCount || 0);
   const maxPerUser = Math.max(1, Number(task.maxPerUser || 1));
@@ -172,27 +218,40 @@ export const TaskVisualCard: React.FC<TaskVisualCardProps> = ({
     >
       {/* Top Content Area: Text on Right (RTL), Illustration on Left (RTL) */}
       <div className="flex flex-col-reverse sm:flex-row items-stretch justify-between gap-4">
-        {/* Right Column (Metadata Pills, Title, Description, 3-Tile Stats) */}
+        {/* Right Column (Metadata Badges, Title, Description, 3-Tile Stats) */}
         <div className="flex-1 min-w-0 flex flex-col justify-between gap-3">
-          {/* Top Metadata Pills */}
+          {/* Top Metadata Badges */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/80 dark:border-emerald-800/70 text-[11px] font-bold text-emerald-800 dark:text-emerald-300 max-w-[145px] truncate">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/80 dark:border-emerald-800/70 text-[11px] font-bold text-emerald-800 dark:text-emerald-300 max-w-[140px] truncate">
               <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
               <span className="truncate">{locationText}</span>
             </span>
 
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50/80 dark:bg-slate-800 border border-emerald-200/60 dark:border-slate-700 text-[11px] font-bold text-slate-700 dark:text-slate-200 font-mono">
               <Clock className="w-3 h-3 text-emerald-600 shrink-0" />
-              <span>{Math.max(1, Number(task.timeEstimateMinutes || 10))} دقائق</span>
+              <span>{Math.max(1, Number(task.timeEstimateMinutes || 10))} د</span>
             </span>
 
             <span
               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold shadow-sm ${style.pill}`}
               style={task.badgeColor ? { backgroundColor: task.badgeColor } : undefined}
             >
-              {getKindIcon(taskKind)}
+              {getKindIcon(taskKind, task.category)}
               <span>{typeLabel}</span>
             </span>
+
+            <span
+              className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-extrabold ${difficultyMeta.badgeClass}`}
+            >
+              {difficultyMeta.labelAr}
+            </span>
+
+            {isNew && (
+              <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200 dark:border-sky-800 text-[10px] font-extrabold">
+                <Sparkles className="w-2.5 h-2.5" />
+                <span>جديدة</span>
+              </span>
+            )}
           </div>
 
           {/* Title & Vertical Bar Description */}
@@ -279,7 +338,7 @@ export const TaskVisualCard: React.FC<TaskVisualCardProps> = ({
                 : style.badge
             }`}
           >
-            {isFeatured ? <Crown className="w-3 h-3 text-amber-300" /> : getKindIcon(taskKind)}
+            {isFeatured ? <Crown className="w-3 h-3 text-amber-300" /> : getKindIcon(taskKind, task.category)}
             <span>{badgeText}</span>
           </div>
 
@@ -305,11 +364,7 @@ export const TaskVisualCard: React.FC<TaskVisualCardProps> = ({
           className={`flex-1 min-h-[44px] px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-extrabold shadow-md transition-all inline-flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${style.cta}`}
         >
           <span>
-            {!isAvailable && !isPreview
-              ? 'مكتملة حالياً'
-              : isSmartLink
-                ? 'ابدأ العرض الآن'
-                : 'بدء المهمة الآن'}
+            {!isAvailable && !isPreview ? 'مكتملة حالياً' : getStartButtonLabel(taskKind, task.category)}
           </span>
           <ChevronsLeft className="w-4 h-4" />
         </button>
@@ -342,3 +397,4 @@ export const TaskVisualCard: React.FC<TaskVisualCardProps> = ({
     </article>
   );
 };
+

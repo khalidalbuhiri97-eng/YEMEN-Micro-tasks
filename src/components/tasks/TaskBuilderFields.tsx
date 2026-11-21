@@ -3,7 +3,7 @@ import {
   ClipboardList,
   PlaySquare,
   Smartphone,
-  Zap,
+  Sparkles,
   Globe,
   Crown,
   Link2,
@@ -12,19 +12,40 @@ import {
   Palette,
   Upload,
   RefreshCw,
+  UserPlus,
+  Heart,
+  ShieldCheck,
+  AlertTriangle,
+  Plus,
+  Trash2,
+  SlidersHorizontal,
+  CheckSquare,
 } from 'lucide-react';
 import type {
+  CanonicalTaskKind,
   SurveyItem,
+  SurveyQuestion,
+  SurveyQuestionType,
   TaskAssetItem,
   TaskBuilderMeta,
+  TaskDifficulty,
   TaskItem,
   TaskKind,
+  TaskProofMode,
+  TaskProofRequirements,
 } from '../../types/index.ts';
 import {
+  SOCIAL_ENGAGEMENT_ACTION_OPTIONS,
+  SOCIAL_PLATFORM_OPTIONS,
   TASK_CARD_THEMES,
+  TASK_DIFFICULTY_OPTIONS,
   TASK_KIND_OPTIONS,
+  TASK_PROOF_MODE_OPTIONS,
+  assertNoSensitiveSignupFields,
   getDefaultTaskImageUrl,
   mapTaskKindToCategory,
+  normalizeProofRequirements,
+  toCanonicalTaskKind,
 } from '../../../shared/taskMeta.ts';
 import { api } from '../../api/client.ts';
 import { TaskVisualCard } from './TaskVisualCard.tsx';
@@ -37,14 +58,26 @@ interface TaskBuilderFieldsProps {
   surveys?: SurveyItem[];
 }
 
-const KIND_ICONS: Record<TaskKind, React.ReactNode> = {
+const CANONICAL_KIND_ICONS: Record<CanonicalTaskKind, React.ReactNode> = {
   surveys: <ClipboardList className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />,
-  smart_links: <Link2 className="w-4 h-4 text-teal-600 dark:text-teal-400" />,
-  ad_watch: <PlaySquare className="w-4 h-4 text-rose-600 dark:text-rose-400" />,
-  app_testing: <Smartphone className="w-4 h-4 text-blue-600 dark:text-blue-400" />,
-  quick_tasks: <Zap className="w-4 h-4 text-amber-600 dark:text-amber-400" />,
-  external_offers: <Globe className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />,
+  video_watch: <PlaySquare className="w-4 h-4 text-teal-600 dark:text-teal-400" />,
+  website_visit: <Globe className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />,
+  social_follow: <UserPlus className="w-4 h-4 text-blue-600 dark:text-blue-400" />,
+  social_engagement: <Heart className="w-4 h-4 text-rose-600 dark:text-rose-400" />,
+  app_testing: <Smartphone className="w-4 h-4 text-amber-600 dark:text-amber-400" />,
+  account_signup: <ShieldCheck className="w-4 h-4 text-emerald-700 dark:text-emerald-300" />,
+  custom_proof: <Sparkles className="w-4 h-4 text-slate-700 dark:text-slate-300" />,
 };
+
+const INLINE_Q_TYPES: Array<{ id: SurveyQuestionType; labelAr: string }> = [
+  { id: 'single_choice', labelAr: 'اختيار واحد' },
+  { id: 'multiple_choice', labelAr: 'اختيار متعدد' },
+  { id: 'yes_no', labelAr: 'نعم / لا' },
+  { id: 'short_text', labelAr: 'نص قصير' },
+  { id: 'long_text', labelAr: 'نص طويل' },
+  { id: 'number', labelAr: 'رقم' },
+  { id: 'rating_1_5', labelAr: 'تقييم 1 إلى 5' },
+];
 
 export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
   meta,
@@ -53,7 +86,12 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
   assets: propAssets,
   surveys: propSurveys,
 }) => {
+  const canonicalKind = toCanonicalTaskKind(meta.taskKind);
   const fields = meta.fields || {};
+  const normalizedProof = normalizeProofRequirements(meta.proofConfig, meta, meta.taskKind);
+  const activeModes: TaskProofMode[] = normalizedProof.modes || ['text'];
+  const difficulty: TaskDifficulty = meta.difficulty || 'easy';
+
   const [galleryAssets, setGalleryAssets] = useState<TaskAssetItem[]>(propAssets || []);
   const [availableSurveys, setAvailableSurveys] = useState<SurveyItem[]>(propSurveys || []);
   const [isUploadingAsset, setIsUploadingAsset] = useState(false);
@@ -73,13 +111,13 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
   useEffect(() => {
     if (propSurveys) {
       setAvailableSurveys(propSurveys);
-    } else if (canFeatureDirectly && meta.taskKind === 'surveys') {
+    } else if (canFeatureDirectly && canonicalKind === 'surveys') {
       api
         .getAdminSurveys()
         .then((res) => setAvailableSurveys(res.surveys || []))
         .catch(() => {});
     }
-  }, [propSurveys, canFeatureDirectly, meta.taskKind]);
+  }, [propSurveys, canFeatureDirectly, canonicalKind]);
 
   const updateFields = (patch: Partial<NonNullable<TaskBuilderMeta['fields']>>) => {
     onChange({
@@ -87,6 +125,71 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
       fields: {
         ...fields,
         ...patch,
+      },
+    });
+  };
+
+  const updateProofConfig = (patch: Partial<TaskProofRequirements>) => {
+    const nextConfig: TaskProofRequirements = {
+      ...normalizedProof,
+      ...patch,
+    };
+    delete nextConfig._taskMeta;
+    const modes = nextConfig.modes || [];
+    nextConfig.requireText = modes.includes('text');
+    nextConfig.requireImage = modes.includes('image');
+    nextConfig.requireUrl = modes.includes('url');
+    nextConfig.requireCodeNumber = modes.includes('code_number');
+    nextConfig.requireChoice = modes.includes('choice');
+    nextConfig.requireMultiQuestion = modes.includes('multi_question');
+    onChange({
+      ...meta,
+      proofConfig: nextConfig,
+    });
+  };
+
+  const toggleProofMode = (mode: TaskProofMode) => {
+    const exists = activeModes.includes(mode);
+    const nextModes = exists ? activeModes.filter((m) => m !== mode) : [...activeModes, mode];
+    const safeModes: TaskProofMode[] = nextModes.length > 0 ? nextModes : ['text'];
+    const patch: Partial<TaskProofRequirements> = { modes: safeModes };
+    if (mode === 'multi_question' && !exists && (!normalizedProof.customQuestions || normalizedProof.customQuestions.length === 0)) {
+      patch.customQuestions = [
+        {
+          id: `iq_${Date.now().toString(36)}`,
+          surveyId: 'inline',
+          orderIndex: 0,
+          questionText: '',
+          questionType: 'short_text',
+          isRequired: true,
+          options: [],
+          branchRules: [],
+        },
+      ];
+    }
+    if (mode === 'choice' && !exists && (!normalizedProof.choiceOptions || normalizedProof.choiceOptions.length === 0)) {
+      patch.choiceOptions = ['نعم، تم التنفيذ', 'لا'];
+    }
+    updateProofConfig(patch);
+  };
+
+  const handleSelectKind = (opt: (typeof TASK_KIND_OPTIONS)[number]) => {
+    const nextProof = normalizeProofRequirements(
+      { modes: opt.defaultProofModes },
+      { ...meta, taskKind: opt.kind },
+      opt.kind
+    );
+    delete nextProof._taskMeta;
+
+    onChange({
+      ...meta,
+      taskKind: opt.kind,
+      cardTheme: opt.defaultTheme,
+      badgeLabel: opt.defaultBadgeLabel,
+      proofConfig: {
+        ...nextProof,
+        acceptanceCriteria: meta.acceptanceCriteria,
+        rejectionCriteria: meta.rejectionCriteria,
       },
     });
   };
@@ -110,7 +213,7 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
       const res = await api.uploadAdminTaskAsset({
         title: file.name.replace(/\.[^.]+$/, ''),
         assetKind: 'task_illustration',
-        taskKind: meta.taskKind,
+        taskKind: canonicalKind,
         fileName: file.name,
         contentType: file.type || 'image/jpeg',
         base64Data,
@@ -127,44 +230,60 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
     }
   };
 
+  // Detect any sensitive signup warning in live editing
+  let signupSecurityWarning = '';
+  if (canonicalKind === 'account_signup') {
+    try {
+      assertNoSensitiveSignupFields('account_signup', [
+        fields.signupRequirements,
+        fields.offerConditions,
+        fields.proofNotes,
+        normalizedProof.proofPromptText,
+        meta.acceptanceCriteria,
+      ]);
+    } catch (err: any) {
+      signupSecurityWarning = err?.message || 'ممنوع طلب بيانات سرية.';
+    }
+  }
+
   const illustrationAssets = galleryAssets.filter((a) => a.assetKind !== 'category_icon');
+  const inlineQuestions: SurveyQuestion[] = normalizedProof.customQuestions || [];
+
+  const updateInlineQuestions = (next: SurveyQuestion[]) => {
+    updateProofConfig({
+      customQuestions: next.map((q, idx) => ({ ...q, orderIndex: idx })),
+    });
+  };
 
   return (
     <div className="space-y-4">
-      {/* Task Type Visual Selector */}
+      {/* 1. Task Type Visual Selector (All 8 Primary Types) */}
       <div>
-        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
-          نوع المهمة (تتغير الحقول والتصميم تلقائياً حسب النوع)
+        <label className="block text-xs font-extrabold text-slate-800 dark:text-slate-200 mb-2">
+          نوع المهمة (8 أنواع متخصصة — تتغير الحقول وطرق الإثبات تلقائياً)
         </label>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {TASK_KIND_OPTIONS.map((opt) => {
-            const active = meta.taskKind === opt.kind;
+            const active = canonicalKind === opt.kind;
             return (
               <button
                 key={opt.kind}
                 type="button"
-                onClick={() =>
-                  onChange({
-                    ...meta,
-                    taskKind: opt.kind,
-                    cardTheme: opt.defaultTheme,
-                    badgeLabel: meta.badgeLabel || opt.defaultBadgeLabel,
-                  })
-                }
-                className={`p-2.5 rounded-xl border text-right transition-all flex flex-col gap-1 min-h-[68px] ${
+                onClick={() => handleSelectKind(opt)}
+                className={`p-2.5 rounded-xl border text-right transition-all flex flex-col gap-1 min-h-[72px] ${
                   active
-                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 ring-1 ring-emerald-500/30'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500 ring-2 ring-emerald-500/25 shadow-sm'
                     : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 hover:border-emerald-400'
                 }`}
               >
                 <div className="flex items-center justify-between gap-1">
-                  {KIND_ICONS[opt.kind]}
+                  {CANONICAL_KIND_ICONS[opt.kind]}
                   {active && <span className="w-2 h-2 rounded-full bg-emerald-600" />}
                 </div>
                 <div className="text-xs font-extrabold text-slate-900 dark:text-white leading-tight">
                   {opt.labelAr}
                 </div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight line-clamp-2">
                   {opt.subtitleAr}
                 </div>
               </button>
@@ -173,14 +292,15 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
         </div>
       </div>
 
-      {/* Dynamic Type-Specific Fields */}
-      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-3">
-        {meta.taskKind === 'surveys' && (
+      {/* 2. Dynamic Type-Specific Fields */}
+      <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700/80 space-y-4">
+        {/* A. SURVEYS */}
+        {canonicalKind === 'surveys' && (
           <div className="space-y-3">
             {canFeatureDirectly && availableSurveys.length > 0 && (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  ربط باستبيان تفاعلي متسلسل (اختياري)
+                  ربط باستبيان تفاعلي متسلسل من منشئ الاستبيانات (موصى به)
                 </label>
                 <select
                   value={meta.linkedSurveyId || fields.linkedSurveyId || ''}
@@ -193,7 +313,7 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
                   }
                   className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                 >
-                  <option value="">بدون ربط (مهمة استبيان تقليدية)</option>
+                  <option value="">بدون ربط (استخدم الأسئلة المدمجة أو وصف المهمة أدناه)</option>
                   {availableSurveys.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.title} ({s.questions.length} أسئلة · {s.status})
@@ -204,262 +324,714 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
             )}
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                ملخص أسئلة الاستبيان (اكتب كل سؤال في سطر مستقل)
+                ملخص محاور الاستبيان (اختياري — يظهر للمنفذ في بطاقة التفاصيل)
               </label>
               <textarea
-                rows={3}
+                rows={2}
                 value={(fields.questions || []).join('\n')}
-                onChange={(e) =>
-                  updateFields({
-                    questions: e.target.value.split('\n').map((s) => s),
-                  })
-                }
-                placeholder={'1. ما رأيك في سرعة التطبيق؟\n2. ما الميزة التي تقترح إضافتها؟'}
+                onChange={(e) => updateFields({ questions: e.target.value.split('\n') })}
+                placeholder={'1. تقييم تجربة التسوق\n2. اقتراحات التحسين'}
                 className="w-full p-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
               />
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                خيارات الإجابة المتاحة (اختياري)
-              </label>
-              <input
-                type="text"
-                value={fields.optionsText || ''}
-                onChange={(e) => updateFields({ optionsText: e.target.value })}
-                placeholder="مثال: ممتاز / جيد / مقبول / يحتاج تحسين"
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
           </div>
         )}
 
-        {meta.taskKind === 'smart_links' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                اسم المزوّد / الشريك (Smart Link Provider)
-              </label>
-              <input
-                type="text"
-                value={fields.providerName || ''}
-                onChange={(e) => updateFields({ providerName: e.target.value })}
-                placeholder="مثال: TimeWall أو CPX Research"
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                رابط شعار المزوّد (اختياري)
-              </label>
-              <input
-                type="url"
-                value={fields.providerLogoUrl || ''}
-                onChange={(e) => updateFields({ providerLogoUrl: e.target.value })}
-                placeholder="https://..."
-                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                رابط التتبع الذكي (يدعم {'{click_id}'} و {'{user_id}'})
-              </label>
-              <input
-                type="url"
-                value={fields.trackingUrl || ''}
-                onChange={(e) => updateFields({ trackingUrl: e.target.value })}
-                placeholder="https://provider.example/offer?subid={click_id}&uid={user_id}"
-                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-            {canFeatureDirectly && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  مفتاح التحقق السري للـ Postback (Secret)
-                </label>
-                <input
-                  type="text"
-                  value={fields.postbackSecret || ''}
-                  onChange={(e) => updateFields({ postbackSecret: e.target.value })}
-                  placeholder="أدخل مفتاح التحقق السري المعتمد مع المزوّد"
-                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-                />
-              </div>
-            )}
-            <div className={canFeatureDirectly ? '' : 'sm:col-span-2'}>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                تعليمات وشروط التحقق
-              </label>
-              <input
-                type="text"
-                value={fields.smartLinkInstructions || ''}
-                onChange={(e) => updateFields({ smartLinkInstructions: e.target.value })}
-                placeholder="مثال: أكمل العرض بالكامل وتُضاف المكافأة آلياً بعد تأكيد المزوّد"
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-        )}
-
-        {meta.taskKind === 'ad_watch' && (
+        {/* B. VIDEO WATCH */}
+        {canonicalKind === 'video_watch' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                رابط الإعلان أو الفيديو
+                رابط الفيديو (YouTube أو رابط MP4/WebM مباشر)
               </label>
               <input
                 type="url"
-                value={fields.adUrl || ''}
-                onChange={(e) => updateFields({ adUrl: e.target.value })}
-                placeholder="https://..."
+                value={fields.videoUrl || fields.adUrl || ''}
+                onChange={(e) => updateFields({ videoUrl: e.target.value, adUrl: e.target.value })}
+                placeholder="https://www.youtube.com/watch?v=... أو https://.../video.mp4"
                 className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
               />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                مدة المشاهدة المطلوبة (ثانية)
+                مدة المشاهدة الإلزامية قبل تفعيل الإكمال (ثانية)
               </label>
               <input
                 type="number"
                 min="5"
                 max="3600"
                 value={fields.watchDurationSeconds || 30}
-                onChange={(e) => updateFields({ watchDurationSeconds: Number(e.target.value) || 30 })}
+                onChange={(e) => updateFields({ watchDurationSeconds: Math.max(5, Number(e.target.value) || 30) })}
                 className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
               />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                شرط إتمام المشاهدة
+                تعليمات المشاهدة (اختياري)
               </label>
               <input
                 type="text"
                 value={fields.completionRule || ''}
                 onChange={(e) => updateFields({ completionRule: e.target.value })}
-                placeholder="مثال: إكمال الفيديو وإرفاق لقطة النهاية"
+                placeholder="مثال: شاهد الفيديو دون إغلاق النافذة حتى اكتمال العداد"
                 className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
               />
             </div>
           </div>
         )}
 
-        {meta.taskKind === 'app_testing' && (
+        {/* C. WEBSITE VISIT & SMART LINKS */}
+        {canonicalKind === 'website_visit' && (
           <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  رابط الموقع المستهدف (URL)
+                </label>
+                <input
+                  type="url"
+                  value={fields.targetUrl || fields.trackingUrl || ''}
+                  onChange={(e) => updateFields({ targetUrl: e.target.value })}
+                  placeholder="https://example.com/article"
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  أقل مدة تصفح (ثانية)
+                </label>
+                <input
+                  type="number"
+                  min="5"
+                  max="1800"
+                  value={fields.minVisitSeconds || 20}
+                  onChange={(e) => updateFields({ minVisitSeconds: Math.max(5, Number(e.target.value) || 20) })}
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+
+            <label className="inline-flex items-center gap-2 text-xs font-bold text-indigo-700 dark:text-indigo-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(fields.useSmartLinkPostback || meta.taskKind === 'smart_links')}
+                onChange={(e) => updateFields({ useSmartLinkPostback: e.target.checked })}
+                className="w-4 h-4 rounded text-indigo-600"
+              />
+              <Link2 className="w-3.5 h-3.5" />
+              <span>تفعيل وضع الرابط الذكي المتتبع (Smart Link Postback)</span>
+            </label>
+
+            {(fields.useSmartLinkPostback || meta.taskKind === 'smart_links') && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    اسم المزوّد / الشريك
+                  </label>
+                  <input
+                    type="text"
+                    value={fields.providerName || ''}
+                    onChange={(e) => updateFields({ providerName: e.target.value })}
+                    placeholder="مثال: TimeWall أو CPX Research"
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    رابط التتبع الذكي ({'{click_id}'} و {'{user_id}'})
+                  </label>
+                  <input
+                    type="url"
+                    value={fields.trackingUrl || ''}
+                    onChange={(e) => updateFields({ trackingUrl: e.target.value })}
+                    placeholder="https://provider.example/offer?subid={click_id}"
+                    className="w-full px-3 py-1.5 text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+                  />
+                </div>
+                {canFeatureDirectly && (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      مفتاح Postback السري
+                    </label>
+                    <input
+                      type="text"
+                      value={fields.postbackSecret || ''}
+                      onChange={(e) => updateFields({ postbackSecret: e.target.value })}
+                      className="w-full px-3 py-1.5 text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+                    />
+                  </div>
+                )}
+                <div className={canFeatureDirectly ? '' : 'sm:col-span-2'}>
+                  <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    تعليمات العرض الذكي
+                  </label>
+                  <input
+                    type="text"
+                    value={fields.smartLinkInstructions || ''}
+                    onChange={(e) => updateFields({ smartLinkInstructions: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* D. SOCIAL FOLLOW */}
+        {canonicalKind === 'social_follow' && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  منصة التواصل
+                </label>
+                <select
+                  value={fields.socialPlatform || 'instagram'}
+                  onChange={(e) => updateFields({ socialPlatform: e.target.value as any })}
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                >
+                  {SOCIAL_PLATFORM_OPTIONS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.labelAr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  معرف الحساب المستهدف (@Handle)
+                </label>
+                <input
+                  type="text"
+                  value={fields.socialAccountHandle || ''}
+                  onChange={(e) => updateFields({ socialAccountHandle: e.target.value })}
+                  placeholder="@YemenTaskOfficial"
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  رابط الحساب أو القناة المباشر
+                </label>
+                <input
+                  type="url"
+                  value={fields.socialAccountUrl || ''}
+                  onChange={(e) => updateFields({ socialAccountUrl: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+            </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                رابط تحميل أو متجر التطبيق
+                خطوات المتابعة (كل خطوة في سطر)
               </label>
-              <input
-                type="url"
-                value={fields.appDownloadUrl || ''}
-                onChange={(e) => updateFields({ appDownloadUrl: e.target.value })}
-                placeholder="https://play.google.com/store/apps/..."
-                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+              <textarea
+                rows={2}
+                value={(fields.steps || []).join('\n')}
+                onChange={(e) => updateFields({ steps: e.target.value.split('\n') })}
+                placeholder={'افتح الحساب من الرابط أعلاه\nاضغط متابعة / اشتراك\nأدخل اسم حسابك في خانة الإثبات'}
+                className="w-full p-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
               />
             </div>
+          </div>
+        )}
+
+        {/* E. SOCIAL ENGAGEMENT */}
+        {canonicalKind === 'social_engagement' && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  منصة التواصل
+                </label>
+                <select
+                  value={fields.socialPlatform || 'youtube'}
+                  onChange={(e) => updateFields({ socialPlatform: e.target.value as any })}
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                >
+                  {SOCIAL_PLATFORM_OPTIONS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.labelAr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  نوع التفاعل المطلوب
+                </label>
+                <select
+                  value={fields.engagementAction || 'like'}
+                  onChange={(e) => updateFields({ engagementAction: e.target.value as any })}
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                >
+                  {SOCIAL_ENGAGEMENT_ACTION_OPTIONS.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.labelAr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  رابط المنشور أو الفيديو
+                </label>
+                <input
+                  type="url"
+                  value={fields.engagementTargetUrl || ''}
+                  onChange={(e) => updateFields({ engagementTargetUrl: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                خطوات التفاعل المطلوبة (كل خطوة في سطر)
+              </label>
+              <textarea
+                rows={2}
+                value={(fields.steps || []).join('\n')}
+                onChange={(e) => updateFields({ steps: e.target.value.split('\n') })}
+                placeholder={'افتح المنشور من الرابط\nنفّذ الإعجاب والتعليق المطلوب\nأرسل اسم حسابك أو لقطة الشاشة حسب الإعداد'}
+                className="w-full p-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* F. APP TESTING */}
+        {canonicalKind === 'app_testing' && (
+          <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  تعليمات الاختبار
+                  رابط تحميل أو متجر التطبيق
                 </label>
                 <input
-                  type="text"
-                  value={fields.testingInstructions || ''}
-                  onChange={(e) => updateFields({ testingInstructions: e.target.value })}
-                  placeholder="مثال: ثبت التطبيق وأنشئ حساباً وتصفح لمدة دقيقتين"
-                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                  type="url"
+                  value={fields.appDownloadUrl || ''}
+                  onChange={(e) => updateFields({ appDownloadUrl: e.target.value })}
+                  placeholder="https://play.google.com/store/apps/..."
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  الإثبات المطلوب بعد التجربة
+                  متطلبات الجهاز والنظام
                 </label>
                 <input
                   type="text"
-                  value={fields.requiredProofNote || ''}
-                  onChange={(e) => updateFields({ requiredProofNote: e.target.value })}
-                  placeholder="مثال: لقطة شاشة للشاشة الرئيسية داخل التطبيق"
-                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                  value={fields.appRequirements || ''}
+                  onChange={(e) => updateFields({ appRequirements: e.target.value })}
+                  placeholder="مثال: أندرويد 9 فأحدث — حجم 25 ميجا"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
                 />
               </div>
             </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                خطوات التجربة (كل خطوة في سطر)
+              </label>
+              <textarea
+                rows={2}
+                value={(fields.steps || []).join('\n')}
+                onChange={(e) => updateFields({ steps: e.target.value.split('\n') })}
+                placeholder={'ثبّت التطبيق من المتجر الرسمي\nافتح التطبيق وتصفحه لمدة دقيقتين\nسجّل ملاحظتك أو لقطة الشاشة'}
+                className="w-full p-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+              />
+            </div>
           </div>
         )}
 
-        {meta.taskKind === 'quick_tasks' && (
+        {/* G. ACCOUNT SIGNUP (With Strict Privacy/No-Secrets Guard) */}
+        {canonicalKind === 'account_signup' && (
+          <div className="space-y-3">
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <strong>حماية الخصوصية الإلزامية:</strong> يُمنع تماماً طلب كلمات المرور أو رموز التحقق (OTP) أو أي بيانات سرية. اطلب فقط <strong>اسم المستخدم أو المعرف المسجل</strong> كإثبات غير حساس.
+              </div>
+            </div>
+
+            {signupSecurityWarning && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span>{signupSecurityWarning}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  اسم المنصة أو التطبيق
+                </label>
+                <input
+                  type="text"
+                  value={fields.partnerName || ''}
+                  onChange={(e) => updateFields({ partnerName: e.target.value })}
+                  placeholder="مثال: منصة المتجر المحلي"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  رابط التسجيل المباشر
+                </label>
+                <input
+                  type="url"
+                  value={fields.signupUrl || fields.offerUrl || ''}
+                  onChange={(e) => updateFields({ signupUrl: e.target.value, offerUrl: e.target.value })}
+                  placeholder="https://..."
+                  className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                خطوات التسجيل وشروط الإثبات غير الحساس (كل خطوة في سطر)
+              </label>
+              <textarea
+                rows={2}
+                value={(fields.steps || []).join('\n')}
+                onChange={(e) => updateFields({ steps: e.target.value.split('\n') })}
+                placeholder={'افتح رابط التسجيل وأنشئ حساباً جديداً\nأرسل اسم المستخدم المسجل به فقط (دون أي كلمة مرور)'}
+                className="w-full p-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* H. CUSTOM PROOF */}
+        {canonicalKind === 'custom_proof' && (
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                خطوات التنفيذ السريعة (كل خطوة في سطر)
+                وصف خطوات المهمة المخصصة (كل خطوة في سطر)
               </label>
               <textarea
-                rows={3}
+                rows={2}
                 value={(fields.steps || []).join('\n')}
+                onChange={(e) => updateFields({ steps: e.target.value.split('\n') })}
+                placeholder={'نفّذ المطلوب وفق التعليمات\nقدم الإثبات المحدد أدناه'}
+                className="w-full p-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                ملاحظات إضافية للمنفذ
+              </label>
+              <input
+                type="text"
+                value={fields.customProofSummary || fields.proofNotes || ''}
+                onChange={(e) => updateFields({ customProofSummary: e.target.value, proofNotes: e.target.value })}
+                placeholder="مثال: أدخل الرمز الظاهر نهاية الصفحة..."
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 3. Difficulty + Acceptance & Rejection Criteria */}
+        <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700/80 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                مستوى صعوبة المهمة
+              </label>
+              <div className="flex items-center gap-1.5">
+                {TASK_DIFFICULTY_OPTIONS.map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => onChange({ ...meta, difficulty: d.id })}
+                    className={`flex-1 py-2 rounded-xl text-xs font-bold border transition-all ${
+                      difficulty === d.id
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
+                    {d.labelAr}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                شروط القبول السريع (اختياري)
+              </label>
+              <input
+                type="text"
+                value={meta.acceptanceCriteria || ''}
+                onChange={(e) => onChange({ ...meta, acceptanceCriteria: e.target.value })}
+                placeholder="مثال: حساب نشط وظاهر للاسم"
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                أسباب الرفض المحتملة (اختياري)
+              </label>
+              <input
+                type="text"
+                value={meta.rejectionCriteria || ''}
+                onChange={(e) => onChange({ ...meta, rejectionCriteria: e.target.value })}
+                placeholder="مثال: إلغاء المتابعة قبل المراجعة"
+                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* 4. Dynamic Proof Config Builder (No hardcoded mandatory screenshots!) */}
+        <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700/80 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+              <SlidersHorizontal className="w-4 h-4 text-emerald-600" />
+              <span>نظام الإثبات المطلوب لهذه المهمة (مرن ومخصص لكل مهمة)</span>
+            </span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              يظهر للمنفذ ما تختاره هنا فقط
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {TASK_PROOF_MODE_OPTIONS.map((opt) => {
+              const checked = activeModes.includes(opt.id);
+              return (
+                <label
+                  key={opt.id}
+                  className={`p-2.5 rounded-xl border cursor-pointer flex items-start gap-2.5 transition-all ${
+                    checked
+                      ? 'bg-emerald-50 dark:bg-emerald-950/35 border-emerald-500'
+                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-emerald-300'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleProofMode(opt.id)}
+                    className="w-4 h-4 mt-0.5 rounded text-emerald-600"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-slate-900 dark:text-white">{opt.labelAr}</div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">{opt.descriptionAr}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Conditional Sub-Editors for Selected Proof Modes */}
+          {activeModes.includes('text') && (
+            <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+              <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                عنوان/توجيه حقل الإجابة النصية للمنفذ
+              </label>
+              <input
+                type="text"
+                value={normalizedProof.proofPromptText || ''}
+                onChange={(e) => updateProofConfig({ proofPromptText: e.target.value })}
+                placeholder="مثال: اكتب اسم حسابك المسجل أو ملخص تجربتك..."
+                className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+              />
+            </div>
+          )}
+
+          {activeModes.includes('choice') && (
+            <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>إعداد سؤال الاختيار</span>
+                </span>
+                <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(normalizedProof.choiceMultiSelect)}
+                    onChange={(e) => updateProofConfig({ choiceMultiSelect: e.target.checked })}
+                    className="w-3.5 h-3.5 rounded text-emerald-600"
+                  />
+                  <span>السماح باختيار أكثر من إجابة</span>
+                </label>
+              </div>
+              <input
+                type="text"
+                value={normalizedProof.choiceQuestion || ''}
+                onChange={(e) => updateProofConfig({ choiceQuestion: e.target.value })}
+                placeholder="اكتب نص السؤال الاختياري للمنفذ..."
+                className="w-full px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+              />
+              <textarea
+                rows={3}
+                value={(normalizedProof.choiceOptions || []).join('\n')}
                 onChange={(e) =>
-                  updateFields({
-                    steps: e.target.value.split('\n').map((s) => s),
+                  updateProofConfig({
+                    choiceOptions: e.target.value.split('\n').map((x) => x),
                   })
                 }
-                placeholder={'افتح الرابط المرفق\nأكمل الإجراء المطلوب\nأرفع لقطة الشاشة'}
-                className="w-full p-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                placeholder={'اكتب كل خيار في سطر مستقل:\nالخيار الأول\nالخيار الثاني'}
+                className="w-full p-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
               />
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                ملاحظات إضافية للإثبات
-              </label>
-              <input
-                type="text"
-                value={fields.proofNotes || ''}
-                onChange={(e) => updateFields({ proofNotes: e.target.value })}
-                placeholder="مثال: اسم الحساب أو رقم العملية..."
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-        )}
+          )}
 
-        {meta.taskKind === 'external_offers' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                اسم الشريك أو المنصة
-              </label>
-              <input
-                type="text"
-                value={fields.partnerName || ''}
-                onChange={(e) => updateFields({ partnerName: e.target.value })}
-                placeholder="مثال: متجر الشريك المعتمد"
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                رابط العرض الخارجي
-              </label>
-              <input
-                type="url"
-                value={fields.offerUrl || ''}
-                onChange={(e) => updateFields({ offerUrl: e.target.value })}
-                placeholder="https://..."
-                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-            <div className="sm:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                شروط احتساب العرض
-              </label>
-              <input
-                type="text"
-                value={fields.offerConditions || ''}
-                onChange={(e) => updateFields({ offerConditions: e.target.value })}
-                placeholder="مثال: مخصص للتسجيلات الجديدة فقط من داخل اليمن"
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
-              />
-            </div>
-          </div>
-        )}
+          {activeModes.includes('multi_question') && (
+            <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                  الأسئلة المتتابعة المدمجة داخل المهمة ({inlineQuestions.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateInlineQuestions([
+                      ...inlineQuestions,
+                      {
+                        id: `iq_${Date.now().toString(36)}_${inlineQuestions.length + 1}`,
+                        surveyId: 'inline',
+                        orderIndex: inlineQuestions.length,
+                        questionText: '',
+                        questionType: 'short_text',
+                        isRequired: true,
+                        options: [],
+                        branchRules: [],
+                      },
+                    ])
+                  }
+                  className="px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 text-[11px] font-bold inline-flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>إضافة سؤال</span>
+                </button>
+              </div>
 
-        {/* Visual Card Design & Custom Artwork Selection */}
+              {inlineQuestions.map((iq, idx) => {
+                const needsOpts =
+                  iq.questionType === 'single_choice' ||
+                  iq.questionType === 'multiple_choice' ||
+                  iq.questionType === 'yes_no';
+                return (
+                  <div
+                    key={iq.id}
+                    className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-2"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono font-bold text-emerald-600">#{idx + 1}</span>
+                        <select
+                          value={iq.questionType}
+                          onChange={(e) => {
+                            const nextType = e.target.value as SurveyQuestionType;
+                            updateInlineQuestions(
+                              inlineQuestions.map((item, i) =>
+                                i === idx
+                                  ? {
+                                      ...item,
+                                      questionType: nextType,
+                                      options:
+                                        nextType === 'yes_no'
+                                          ? [
+                                              { id: `${item.id}_y`, questionId: item.id, orderIndex: 0, optionText: 'نعم', nextQuestionId: null },
+                                              { id: `${item.id}_n`, questionId: item.id, orderIndex: 1, optionText: 'لا', nextQuestionId: null },
+                                            ]
+                                          : nextType === 'single_choice' || nextType === 'multiple_choice'
+                                            ? item.options.length > 0
+                                              ? item.options
+                                              : [
+                                                  { id: `${item.id}_1`, questionId: item.id, orderIndex: 0, optionText: 'خيار 1', nextQuestionId: null },
+                                                  { id: `${item.id}_2`, questionId: item.id, orderIndex: 1, optionText: 'خيار 2', nextQuestionId: null },
+                                                ]
+                                            : [],
+                                    }
+                                  : item
+                              )
+                            );
+                          }}
+                          className="px-2 py-1 text-[11px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg font-bold"
+                        >
+                          {INLINE_Q_TYPES.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.labelAr}
+                            </option>
+                          ))}
+                        </select>
+                        <label className="inline-flex items-center gap-1 text-[11px] font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={iq.isRequired}
+                            onChange={(e) =>
+                              updateInlineQuestions(
+                                inlineQuestions.map((item, i) =>
+                                  i === idx ? { ...item, isRequired: e.target.checked } : item
+                                )
+                              )
+                            }
+                            className="w-3.5 h-3.5 rounded text-emerald-600"
+                          />
+                          <span>إلزامي</span>
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => updateInlineQuestions(inlineQuestions.filter((_, i) => i !== idx))}
+                        className="p-1 text-rose-500 hover:bg-rose-50 rounded"
+                        title="حذف السؤال"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={iq.questionText}
+                      onChange={(e) =>
+                        updateInlineQuestions(
+                          inlineQuestions.map((item, i) =>
+                            i === idx ? { ...item, questionText: e.target.value } : item
+                          )
+                        )
+                      }
+                      placeholder="نص السؤال..."
+                      className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg"
+                    />
+
+                    {needsOpts && (
+                      <textarea
+                        rows={2}
+                        value={(iq.options || []).map((o) => o.optionText).join('\n')}
+                        onChange={(e) => {
+                          const lines = e.target.value.split('\n');
+                          updateInlineQuestions(
+                            inlineQuestions.map((item, i) =>
+                              i === idx
+                                ? {
+                                    ...item,
+                                    options: lines.map((txt, oi) => ({
+                                      id: `${item.id}_o_${oi + 1}`,
+                                      questionId: item.id,
+                                      orderIndex: oi,
+                                      optionText: txt,
+                                      nextQuestionId: null,
+                                    })),
+                                  }
+                                : item
+                            )
+                          );
+                        }}
+                        placeholder="خيار في كل سطر..."
+                        className="w-full p-2 text-[11px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 5. Visual Card Design & Custom Artwork Selection */}
         <div className="pt-3 border-t border-slate-200/80 dark:border-slate-700/80 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
@@ -486,7 +1058,6 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
 
           {uploadErr && <div className="text-[11px] text-rose-600 font-semibold">{uploadErr}</div>}
 
-          {/* Saved Gallery Picker */}
           {illustrationAssets.length > 0 && (
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
               <button
@@ -573,7 +1144,7 @@ export const TaskBuilderFields: React.FC<TaskBuilderFieldsProps> = ({
           </div>
         </div>
 
-        {/* Featured Toggle (Permission-Aware) */}
+        {/* 6. Featured Toggle */}
         <div className="pt-2 border-t border-slate-200/80 dark:border-slate-700/80 flex items-center justify-between gap-3">
           <label className="flex items-center gap-2.5 cursor-pointer text-xs">
             <input
@@ -623,12 +1194,16 @@ export const TaskCardLivePreview: React.FC<TaskCardLivePreviewProps> = ({
   advertiserLabel = 'مصدّق من المعلن',
 }) => {
   const isFeatured = Boolean(meta.isFeatured || meta.featuredRequested);
+  const canonicalKind = toCanonicalTaskKind(meta.taskKind, category);
+  const normalizedProof = normalizeProofRequirements(meta.proofConfig, meta, meta.taskKind);
+
   const previewTask: TaskItem = {
     id: 'preview-task',
     title: title.trim() || 'عنوان المهمة سيظهر هنا للمستخدمين...',
     description: description.trim() || 'وصف المهمة المختصر وتعليماتها سيظهر هنا للمنفذين...',
     category: mapTaskKindToCategory(meta.taskKind, category),
-    taskKind: meta.taskKind,
+    taskKind: canonicalKind,
+    difficulty: meta.difficulty || 'easy',
     isFeatured,
     sortOrder: meta.sortOrder ?? 0,
     imageUrl: meta.imageUrl || getDefaultTaskImageUrl(meta.taskKind, isFeatured, category),
@@ -640,8 +1215,8 @@ export const TaskCardLivePreview: React.FC<TaskCardLivePreviewProps> = ({
     providerLogoUrl: meta.fields?.providerLogoUrl,
     taskMeta: meta,
     rewardYer: Number(rewardYer) || 0,
-    steps: meta.fields?.steps || [],
-    proofRequirements: { requireImage: true, requireText: true },
+    steps: (meta.fields?.steps || []).filter(Boolean),
+    proofRequirements: normalizedProof,
     timeEstimateMinutes: Math.max(1, Number(timeEstimateMinutes) || 10),
     totalQuantity: Math.max(1, Number(slots) || 50),
     completedQuantity: 0,

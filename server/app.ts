@@ -10,7 +10,12 @@ import {
   saveUserPushSubscription,
   removeUserPushSubscription,
 } from './pushService.js';
-import { mapTaskKindToCategory, sanitizeTaskBuilderMeta } from '../shared/taskMeta.js';
+import {
+  assertNoSensitiveSignupFields,
+  mapTaskKindToCategory,
+  normalizeProofRequirements,
+  sanitizeTaskBuilderMeta,
+} from '../shared/taskMeta.js';
 import { taskSystemService } from './taskSystemService.js';
 import {
   parseMoneyStrict,
@@ -999,6 +1004,44 @@ app.post('/api/tasks/:id/favorite', authMiddleware, async (req: AuthenticatedReq
   }
 });
 
+app.post('/api/tasks/:id/execution-session/start', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const mode = req.body?.mode === 'website_visit' ? 'website_visit' : 'video_watch';
+    const task = await supabaseDb.getTaskById(req.params.id, { userId: req.user.id, maskSecrets: true });
+    if (!task) {
+      return res.status(404).json({ error: 'المهمة المطلوبة غير موجودة.' });
+    }
+    const session = await taskSystemService.startExecutionSession({
+      task,
+      userId: req.user.id,
+      mode,
+    });
+    res.json({ success: true, session });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر بدء جلسة التحقق للمهمة.' });
+  }
+});
+
+app.post('/api/tasks/:id/execution-session/ping', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { sessionId, deltaSeconds, playerActive, returnedFromVisit } = req.body || {};
+    if (!sessionId) {
+      return res.status(400).json({ error: 'معرف جلسة التنفيذ مطلوب.' });
+    }
+    const session = await taskSystemService.pingExecutionSession({
+      taskId: req.params.id,
+      sessionId: String(sessionId),
+      userId: req.user.id,
+      deltaSeconds: deltaSeconds !== undefined ? Number(deltaSeconds) : undefined,
+      playerActive: playerActive !== undefined ? Boolean(playerActive) : undefined,
+      returnedFromVisit: returnedFromVisit !== undefined ? Boolean(returnedFromVisit) : undefined,
+    });
+    res.json({ success: true, session });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر تحديث مدة التنفيذ.' });
+  }
+});
+
 app.get('/api/tasks/:id', async (req: Request, res: Response) => {
   try {
     const userId = await resolveOptionalUserId(req);
@@ -1148,7 +1191,16 @@ app.post('/api/public/advertiser-logo-url', async (req: Request, res: Response) 
 // Task Submission (creates pending submission only; zero payout until admin approval)
 app.post('/api/tasks/submit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { taskId, proofText, proofImages, proofUrl } = req.body || {};
+    const {
+      taskId,
+      proofText,
+      proofImages,
+      proofUrl,
+      proofCodeNumber,
+      proofChoiceAnswer,
+      proofMultiAnswers,
+      executionSessionId,
+    } = req.body || {};
     if (!taskId) {
       return res.status(400).json({ error: 'معرف المهمة مطلوب.' });
     }
@@ -1160,6 +1212,10 @@ app.post('/api/tasks/submit', authMiddleware, async (req: AuthenticatedRequest, 
       proofText,
       proofImages,
       proofUrl,
+      proofCodeNumber,
+      proofChoiceAnswer,
+      proofMultiAnswers,
+      executionSessionId,
     });
 
     res.json({ success: true, submission });
@@ -2188,9 +2244,30 @@ app.put('/api/admin/tasks/:id', adminMiddleware, async (req: AuthenticatedReques
         },
         effectiveCategory
       );
+
+      assertNoSensitiveSignupFields(resolvedNextMeta.taskKind, [
+        title,
+        description,
+        resolvedNextMeta.proofConfig?.proofPromptText,
+        resolvedNextMeta.fields?.signupRequirements,
+        resolvedNextMeta.fields?.proofNotes,
+        proofRequirements?.proofPromptText,
+        proofRequirements?.instructions,
+        ...(Array.isArray(steps) ? steps : []),
+      ]);
+
+      const normalizedReqs = normalizeProofRequirements(
+        {
+          ...existingReqs,
+          ...(proofRequirements && typeof proofRequirements === 'object' ? proofRequirements : {}),
+        },
+        resolvedNextMeta,
+        resolvedNextMeta.taskKind
+      );
+
       updates.proof_requirements = {
-        ...existingReqs,
-        ...(proofRequirements && typeof proofRequirements === 'object' ? proofRequirements : {}),
+        ...(existingReqs._campaignMeta ? { _campaignMeta: existingReqs._campaignMeta } : {}),
+        ...normalizedReqs,
         _taskMeta: resolvedNextMeta,
       };
     }

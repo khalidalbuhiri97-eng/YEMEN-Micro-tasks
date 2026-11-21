@@ -14,9 +14,13 @@ import {
 } from './app.js';
 import { sendWebPushToUser } from './pushService.js';
 import {
+  assertNoSensitiveSignupFields,
   inferTaskKindFromCategory,
   mapTaskKindToCategory,
+  normalizeProofRequirements,
   sanitizeTaskBuilderMeta,
+  toCanonicalTaskKind,
+  validateDynamicTaskProof,
 } from '../shared/taskMeta.js';
 import { taskSystemService } from './taskSystemService.js';
 import type {
@@ -849,13 +853,7 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean; maskSecret
   const taskKind = t.task_kind || rawTaskMeta?.taskKind || inferTaskKindFromCategory(t.category);
   const priority = Number(rawTaskMeta?.priority ?? t.priority ?? (isFeatured ? 100 : 0));
 
-  const proofRequirements = {
-    requireImage: rawReqs.requireImage ?? rawReqs.require_image ?? false,
-    requireText: rawReqs.requireText ?? rawReqs.require_text ?? true,
-    requireUrl: rawReqs.requireUrl ?? rawReqs.require_url ?? false,
-    instructions: rawReqs.instructions,
-    ...(rawTaskMeta ? { _taskMeta: rawTaskMeta } : {}),
-  };
+  const proofRequirements = normalizeProofRequirements(rawReqs, rawTaskMeta, taskKind);
 
   const identity = resolvePublicTaskAdvertiserIdentity(t, options);
   const rawMetaGeo = t.proof_requirements?._campaignMeta?.geo || {};
@@ -879,6 +877,7 @@ function mapTaskRow(t: any, options?: { maskHiddenIdentity?: boolean; maskSecret
     description: t.description || '',
     category: (t.category || 'app_testing') as TaskItem['category'],
     taskKind,
+    difficulty: rawTaskMeta?.difficulty || 'easy',
     isFeatured,
     priority,
     sortOrder: Number(t.sort_order ?? rawTaskMeta?.sortOrder ?? 0),
@@ -1940,15 +1939,22 @@ export const supabaseDb = {
         effectiveCategory
       );
 
-      const mergedProofReqs = {
-        requireImage: Boolean(taskData.proofRequirements?.requireImage ?? true),
-        requireText: Boolean(taskData.proofRequirements?.requireText ?? true),
-        requireUrl: Boolean(taskData.proofRequirements?.requireUrl ?? false),
-        ...(taskData.proofRequirements?.instructions
-          ? { instructions: String(taskData.proofRequirements.instructions) }
-          : {}),
-        _taskMeta: normalizedMeta,
-      };
+      assertNoSensitiveSignupFields(normalizedMeta.taskKind, [
+        taskData.title,
+        taskData.description,
+        normalizedMeta.proofConfig?.proofPromptText,
+        normalizedMeta.fields?.signupRequirements,
+        normalizedMeta.fields?.proofNotes,
+        taskData.proofRequirements?.proofPromptText,
+        taskData.proofRequirements?.instructions,
+        ...(Array.isArray(taskData.steps) ? taskData.steps : []),
+      ]);
+
+      const mergedProofReqs = normalizeProofRequirements(
+        taskData.proofRequirements,
+        normalizedMeta,
+        normalizedMeta.taskKind
+      );
 
       const taskUpdatePayload: Record<string, any> = {
         category: effectiveCategory,
@@ -2037,6 +2043,10 @@ export const supabaseDb = {
     proofText?: string;
     proofImages?: string[];
     proofUrl?: string;
+    proofCodeNumber?: string;
+    proofChoiceAnswer?: string | string[];
+    proofMultiAnswers?: Record<string, any> | Array<{ questionId: string; questionText?: string; answer: any }>;
+    executionSessionId?: string;
   }): Promise<TaskSubmission> {
     const startTime = Date.now();
     const db = getDbClient();
@@ -2083,7 +2093,39 @@ export const supabaseDb = {
         throw new Error('انتهت مهلة تنفيذ هذه المهمة.');
       }
 
-      // 2. Sanitize and validate proof fields
+      // 2. Load enriched task (hydrates taskKind, taskMeta, and normalized proofRequirements)
+      const enrichedTask = await this.getTaskById(payload.taskId, {
+        userId: payload.userId,
+        maskSecrets: true,
+      });
+
+      const canonicalKind = toCanonicalTaskKind(
+        enrichedTask?.taskKind || taskData.task_kind,
+        enrichedTask?.category || taskData.category
+      );
+      const watchSeconds = Number(enrichedTask?.taskMeta?.fields?.watchDurationSeconds || 0);
+      const visitSeconds = Number(enrichedTask?.taskMeta?.fields?.minVisitSeconds || 0);
+      const requiredExecSeconds =
+        canonicalKind === 'video_watch'
+          ? watchSeconds
+          : canonicalKind === 'website_visit'
+            ? visitSeconds
+            : 0;
+
+      let execVerification: { verified: boolean; verifiedSeconds: number; sessionId?: string } = {
+        verified: false,
+        verifiedSeconds: 0,
+      };
+      if (requiredExecSeconds > 0 || payload.executionSessionId) {
+        execVerification = await taskSystemService.verifyExecutionSession({
+          taskId: payload.taskId,
+          userId: payload.userId,
+          sessionId: payload.executionSessionId,
+          requiredSeconds: Math.max(1, requiredExecSeconds),
+        });
+      }
+
+      // 3. Sanitize & validate proof dynamically per task proofRequirements
       const cleanProofText =
         typeof payload.proofText === 'string' && payload.proofText.trim().length > 0
           ? payload.proofText.trim()
@@ -2100,11 +2142,30 @@ export const supabaseDb = {
           ? payload.proofUrl.trim()
           : undefined;
 
-      if (!cleanProofText && cleanProofImages.length === 0 && !cleanProofUrl) {
-        throw new Error('يرجى تقديم نص الإثبات أو صورة أو رابط قبل الإرسال.');
+      const cleanCodeNumber =
+        typeof payload.proofCodeNumber === 'string' && payload.proofCodeNumber.trim().length > 0
+          ? payload.proofCodeNumber.trim()
+          : undefined;
+
+      const validation = validateDynamicTaskProof(
+        enrichedTask || mapTaskRow(taskData),
+        {
+          proofText: cleanProofText,
+          proofImages: cleanProofImages,
+          proofUrl: cleanProofUrl,
+          proofCodeNumber: cleanCodeNumber,
+          proofChoiceAnswer: payload.proofChoiceAnswer,
+          proofMultiAnswers: payload.proofMultiAnswers,
+          executionSessionVerified: execVerification.verified,
+          verifiedSeconds: execVerification.verifiedSeconds,
+        }
+      );
+
+      if (!validation.valid) {
+        throw new Error(validation.error || 'بيانات الإثبات غير مكتملة.');
       }
 
-      // 3. Check duplicate submission (block pending/under_review/approved; allow resubmission if rejected)
+      // 4. Check duplicate submission (block pending/under_review/approved; allow resubmission if rejected)
       const { data: existingList, error: existingError } = await db
         .from('task_submissions')
         .select('id, status')
@@ -2132,13 +2193,23 @@ export const supabaseDb = {
         }
       }
 
-      // 4. Build JSONB proof payload matching live task_submissions.proof schema
+      // 5. Build JSONB proof payload matching live task_submissions.proof schema
       const proofPayload: Record<string, any> = {};
-      if (cleanProofText) proofPayload.text = cleanProofText;
+      const resolvedText = cleanProofText || validation.summaryText || undefined;
+      if (resolvedText) proofPayload.text = resolvedText;
       if (cleanProofUrl) proofPayload.url = cleanProofUrl;
       if (cleanProofImages.length > 0) {
         proofPayload.images = cleanProofImages;
         proofPayload.storage_path = cleanProofImages[0];
+      }
+      if (cleanCodeNumber) proofPayload.code_number = cleanCodeNumber;
+      if (validation.normalizedChoice !== undefined) proofPayload.choice_answer = validation.normalizedChoice;
+      if (validation.normalizedMultiAnswers && validation.normalizedMultiAnswers.length > 0) {
+        proofPayload.multi_answers = validation.normalizedMultiAnswers;
+      }
+      if (execVerification.verified) {
+        proofPayload.verified_watch_seconds = execVerification.verifiedSeconds;
+        proofPayload.execution_session_id = execVerification.sessionId || payload.executionSessionId;
       }
 
       let submissionId: string | null = null;
@@ -2151,10 +2222,10 @@ export const supabaseDb = {
         });
 
         if (rpcErr) {
-          // Pre-migration 010 live DB rejects `images` key in submit_task_proof RPC;
-          // insert directly into `task_submissions.proof` only for that exact legacy constraint.
+          // Live `submit_task_proof` RPC may reject extended JSONB keys (`images`, `code_number`, etc.)
+          // with "Unsupported proof field"; fall back to verified direct insert on `task_submissions`.
           const msg = String(rpcErr.message || '');
-          if (msg.includes('Unsupported proof field') && cleanProofImages.length > 0) {
+          if (msg.includes('Unsupported proof field')) {
             const { data: insertedSub, error: insertErr } = await db
               .from('task_submissions')
               .insert({
@@ -2206,6 +2277,10 @@ export const supabaseDb = {
         submissionId = insertedSub.id;
       }
 
+      if (execVerification.verified) {
+        await taskSystemService.markExecutionSessionConsumed(payload.taskId, payload.userId);
+      }
+
       const { data: createdRow, error: fetchErr } = await db
         .from('task_submissions')
         .select('*')
@@ -2230,6 +2305,13 @@ export const supabaseDb = {
             ? createdRow.proof_images
             : [],
         proofUrl: proofObj.url ?? createdRow.proof_url ?? undefined,
+        proofCodeNumber: proofObj.code_number ?? undefined,
+        proofChoiceAnswer: proofObj.choice_answer ?? undefined,
+        proofMultiAnswers: Array.isArray(proofObj.multi_answers) ? proofObj.multi_answers : undefined,
+        proofMeta: {
+          verifiedSeconds: proofObj.verified_watch_seconds,
+          executionSessionId: proofObj.execution_session_id,
+        },
         status: String(createdRow.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
         rejectionReason: createdRow.review_note ?? createdRow.rejection_reason ?? undefined,
         reviewedBy: createdRow.reviewed_by ?? undefined,
@@ -2268,6 +2350,13 @@ export const supabaseDb = {
               ? s.proof_images
               : [],
           proofUrl: proofObj.url ?? s.proof_url ?? undefined,
+          proofCodeNumber: proofObj.code_number ?? undefined,
+          proofChoiceAnswer: proofObj.choice_answer ?? undefined,
+          proofMultiAnswers: Array.isArray(proofObj.multi_answers) ? proofObj.multi_answers : undefined,
+          proofMeta: {
+            verifiedSeconds: proofObj.verified_watch_seconds,
+            executionSessionId: proofObj.execution_session_id,
+          },
           status: String(s.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
           rejectionReason: s.review_note ?? s.rejection_reason ?? undefined,
           reviewedBy: s.reviewed_by ?? undefined,
@@ -2321,6 +2410,13 @@ export const supabaseDb = {
               ? s.proof_images
               : [],
           proofUrl: proofObj.url ?? s.proof_url ?? undefined,
+          proofCodeNumber: proofObj.code_number ?? undefined,
+          proofChoiceAnswer: proofObj.choice_answer ?? undefined,
+          proofMultiAnswers: Array.isArray(proofObj.multi_answers) ? proofObj.multi_answers : undefined,
+          proofMeta: {
+            verifiedSeconds: proofObj.verified_watch_seconds,
+            executionSessionId: proofObj.execution_session_id,
+          },
           status: String(s.status || 'PENDING').toUpperCase() as TaskSubmission['status'],
           rejectionReason: s.review_note ?? s.rejection_reason ?? undefined,
           reviewedBy: s.reviewed_by ?? undefined,
@@ -5311,9 +5407,24 @@ export const supabaseDb = {
         )
       : undefined;
 
+    assertNoSensitiveSignupFields(sanitizedTaskMeta?.taskKind, [
+      cleanTitle,
+      cleanDesc,
+      sanitizedTaskMeta?.proofConfig?.proofPromptText,
+      sanitizedTaskMeta?.fields?.signupRequirements,
+      sanitizedTaskMeta?.fields?.proofNotes,
+      params.proofRequirements?.proofPromptText,
+      params.proofRequirements?.instructions,
+    ]);
+
+    const normalizedProofReqs = normalizeProofRequirements(
+      params.proofRequirements,
+      sanitizedTaskMeta,
+      sanitizedTaskMeta?.taskKind
+    );
+
     const mergedProofRequirements = {
-      ...(params.proofRequirements || { requireImage: true, requireText: true }),
-      ...(sanitizedTaskMeta ? { _taskMeta: sanitizedTaskMeta } : {}),
+      ...normalizedProofReqs,
       _campaignMeta: {
         isExternalCampaign: true,
         hideAdvertiserName,

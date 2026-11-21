@@ -64,6 +64,11 @@ export function isSurveyQuestionAnswered(question: SurveyQuestion, answer: any):
       const n = Number(answer);
       return Number.isFinite(n) && n >= 1 && n <= 5;
     }
+    case 'number': {
+      const raw = String(answer).trim();
+      if (!raw) return false;
+      return Number.isFinite(Number(raw));
+    }
     case 'single_choice':
     case 'yes_no':
     case 'short_text':

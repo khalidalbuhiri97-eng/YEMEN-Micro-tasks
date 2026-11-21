@@ -14,7 +14,7 @@ import { AdPartnersManager } from './AdPartnersManager.tsx';
 import { AdminSurveysAndAssetsView } from './AdminSurveysAndAssetsView.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
 import { TaskBuilderFields, TaskCardLivePreview } from '../tasks/TaskBuilderFields.tsx';
-import { getDefaultTaskImageUrl, getTaskKindLabel, inferTaskKindFromCategory, mapTaskKindToCategory } from '../../../shared/taskMeta.ts';
+import { assertNoSensitiveSignupFields, getDefaultTaskImageUrl, getTaskKindLabel, inferTaskKindFromCategory, mapTaskKindToCategory, normalizeProofRequirements } from '../../../shared/taskMeta.ts';
 import { fetchGeoCountries } from '../../services/geoService.ts';
 import type { CountryItem } from '../../types/index.ts';
 import {
@@ -290,11 +290,22 @@ export const AdminDashboard: React.FC = () => {
     setIsSubmittingTask(true);
 
     try {
+      assertNoSensitiveSignupFields(newTaskMeta.taskKind, [
+        newTaskTitle,
+        newTaskDesc,
+        newTaskMeta.fields?.signupRequirements,
+        newTaskMeta.fields?.offerConditions,
+        newTaskMeta.fields?.proofNotes,
+        newTaskMeta.proofConfig?.proofPromptText,
+        newTaskMeta.acceptanceCriteria,
+      ]);
+
       const daysNum = Math.min(30, Math.max(1, Number(newTaskDurationDays) || 7));
       const deadline = new Date(Date.now() + daysNum * 24 * 60 * 60 * 1000).toISOString();
       const derivedSteps = (newTaskMeta.fields?.steps || newTaskMeta.fields?.questions || [])
         .map((s) => s.trim())
         .filter(Boolean);
+      const normalizedProof = normalizeProofRequirements(newTaskMeta.proofConfig, newTaskMeta, newTaskMeta.taskKind);
 
       await api.createAdminTask({
         title: newTaskTitle,
@@ -308,7 +319,7 @@ export const AdminDashboard: React.FC = () => {
         totalQuantity: Number(newTaskQty),
         timeEstimateMinutes: Number(newTaskTime),
         deadline,
-        proofRequirements: { requireImage: true, requireText: true, _taskMeta: newTaskMeta },
+        proofRequirements: normalizedProof,
         creationKey,
         countryId: newTaskGeo.countryId || undefined,
         isNationwide: newTaskGeo.isNationwide,
@@ -336,15 +347,19 @@ export const AdminDashboard: React.FC = () => {
     setEditTaskCat(task.category);
     setEditTaskTime(String(task.timeEstimateMinutes || 10));
     setEditTaskStatus(task.status);
-    setEditTaskMeta(
-      task.taskMeta || {
-        taskKind: task.taskKind || inferTaskKindFromCategory(task.category),
-        isFeatured: Boolean(task.isFeatured),
-        fields: {
-          steps: task.steps && task.steps.length > 0 ? task.steps : undefined,
-        },
-      }
-    );
+    const hydratedProof = normalizeProofRequirements(task.proofRequirements, task.taskMeta, task.taskKind || inferTaskKindFromCategory(task.category));
+    const { _taskMeta: _dropMeta, ...cleanProofConfig } = hydratedProof;
+    setEditTaskMeta({
+      ...(task.taskMeta || {}),
+      taskKind: task.taskMeta?.taskKind || task.taskKind || inferTaskKindFromCategory(task.category),
+      difficulty: task.taskMeta?.difficulty || task.difficulty || 'easy',
+      isFeatured: Boolean(task.taskMeta?.isFeatured ?? task.isFeatured),
+      proofConfig: cleanProofConfig,
+      fields: {
+        ...(task.taskMeta?.fields || {}),
+        steps: task.taskMeta?.fields?.steps || (task.steps && task.steps.length > 0 ? task.steps : undefined),
+      },
+    });
   };
 
   const handleSaveTaskEdit = async (e: React.FormEvent) => {
@@ -352,9 +367,21 @@ export const AdminDashboard: React.FC = () => {
     if (!editingTask) return;
     setIsSavingTaskEdit(true);
     try {
+      assertNoSensitiveSignupFields(editTaskMeta.taskKind, [
+        editTaskTitle,
+        editTaskDesc,
+        editTaskMeta.fields?.signupRequirements,
+        editTaskMeta.fields?.offerConditions,
+        editTaskMeta.fields?.proofNotes,
+        editTaskMeta.proofConfig?.proofPromptText,
+        editTaskMeta.acceptanceCriteria,
+      ]);
+
       const derivedSteps = (editTaskMeta.fields?.steps || editTaskMeta.fields?.questions || [])
         .map((s) => s.trim())
         .filter(Boolean);
+      const normalizedProof = normalizeProofRequirements(editTaskMeta.proofConfig, editTaskMeta, editTaskMeta.taskKind);
+
       await api.updateAdminTask(editingTask.id, {
         title: editTaskTitle.trim(),
         description: editTaskDesc.trim(),
@@ -362,6 +389,7 @@ export const AdminDashboard: React.FC = () => {
         taskKind: editTaskMeta.taskKind,
         isFeatured: Boolean(editTaskMeta.isFeatured),
         taskMeta: editTaskMeta,
+        proofRequirements: normalizedProof,
         timeEstimateMinutes: Math.max(1, Number(editTaskTime) || 10),
         status: editTaskStatus,
         ...(derivedSteps.length > 0 ? { steps: derivedSteps } : {}),
@@ -770,7 +798,7 @@ export const AdminDashboard: React.FC = () => {
                           {formatYer(sub.taskRewardYer ?? 0)} ر.ي
                         </td>
                         <td className="py-3 px-4">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5 max-w-[260px]">
                             {sub.proofImages && sub.proofImages.length > 0 && (
                               <button
                                 onClick={() => setPreviewImage(sub.proofImages[0])}
@@ -780,8 +808,28 @@ export const AdminDashboard: React.FC = () => {
                                 <span>صورة</span>
                               </button>
                             )}
+                            {sub.proofCodeNumber && (
+                              <span className="px-2 py-0.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 rounded font-mono font-bold text-[10px]">
+                                رمز: {sub.proofCodeNumber}
+                              </span>
+                            )}
+                            {sub.proofChoiceAnswer && (
+                              <span className="px-2 py-0.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded font-bold text-[10px]">
+                                اختيار: {Array.isArray(sub.proofChoiceAnswer) ? sub.proofChoiceAnswer.join('، ') : sub.proofChoiceAnswer}
+                              </span>
+                            )}
+                            {sub.proofMultiAnswers && sub.proofMultiAnswers.length > 0 && (
+                              <span className="px-2 py-0.5 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 rounded font-bold text-[10px]">
+                                {sub.proofMultiAnswers.length} إجابات مدمجة
+                              </span>
+                            )}
+                            {sub.proofMeta?.verifiedSeconds ? (
+                              <span className="px-2 py-0.5 bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 rounded font-mono font-bold text-[10px]">
+                                تحقق آلي ({sub.proofMeta.verifiedSeconds}ث)
+                              </span>
+                            ) : null}
                             {sub.proofText && (
-                              <span className="text-slate-500 max-w-[160px] truncate block" title={sub.proofText}>
+                              <span className="text-slate-500 max-w-[180px] truncate block" title={sub.proofText}>
                                 {sub.proofText}
                               </span>
                             )}

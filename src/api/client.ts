@@ -290,8 +290,53 @@ export const api = {
     return request<any>(`/tasks?${q.toString()}`);
   },
   getTaskById: (id: string) => request<any>(`/tasks/${id}`),
-  submitTaskProof: (payload: { taskId: string; proofText?: string; proofImages?: string[]; proofUrl?: string }) =>
-    request<any>('/tasks/submit', { method: 'POST', body: JSON.stringify(payload) }),
+  submitTaskProof: (payload: {
+    taskId: string;
+    proofText?: string;
+    proofImages?: string[];
+    proofUrl?: string;
+    proofCodeNumber?: string;
+    proofChoiceAnswer?: string | string[];
+    proofMultiAnswers?: Record<string, any> | Array<{ questionId: string; questionText?: string; answer: any }>;
+    executionSessionId?: string;
+  }) => request<any>('/tasks/submit', { method: 'POST', body: JSON.stringify(payload) }),
+  startTaskExecutionSession: (taskId: string, mode: 'video_watch' | 'website_visit') =>
+    request<{
+      success: boolean;
+      session: {
+        id: string;
+        taskId: string;
+        mode: 'video_watch' | 'website_visit';
+        requiredSeconds: number;
+        verifiedSeconds: number;
+        completed: boolean;
+        startedAt: string;
+      };
+    }>(`/tasks/${encodeURIComponent(taskId)}/execution-session/start`, {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
+  pingTaskExecutionSession: (
+    taskId: string,
+    payload: {
+      sessionId: string;
+      deltaSeconds?: number;
+      playerActive?: boolean;
+      returnedFromVisit?: boolean;
+    }
+  ) =>
+    request<{
+      success: boolean;
+      session: {
+        id: string;
+        requiredSeconds: number;
+        verifiedSeconds: number;
+        completed: boolean;
+      };
+    }>(`/tasks/${encodeURIComponent(taskId)}/execution-session/ping`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getUploadSignedUrl: (payload: { taskId: string; fileName: string; contentType: string; fileSize: number }) =>
     request<{ signedUrl: string; token: string; path: string }>('/upload/signed-url', { method: 'POST', body: JSON.stringify(payload) }),
   getViewSignedUrl: (storagePath: string) =>

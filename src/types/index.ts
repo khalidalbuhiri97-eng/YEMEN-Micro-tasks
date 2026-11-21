@@ -623,44 +623,124 @@ export type TaskCategory =
 
 export type TaskKind =
   | 'surveys'
-  | 'ad_watch'
+  | 'video_watch'
+  | 'website_visit'
+  | 'social_follow'
+  | 'social_engagement'
   | 'app_testing'
+  | 'account_signup'
+  | 'custom_proof'
+  // Legacy aliases preserved for existing Supabase records
+  | 'ad_watch'
+  | 'smart_links'
   | 'quick_tasks'
-  | 'external_offers'
-  | 'smart_links';
+  | 'external_offers';
+
+export type CanonicalTaskKind =
+  | 'surveys'
+  | 'video_watch'
+  | 'website_visit'
+  | 'social_follow'
+  | 'social_engagement'
+  | 'app_testing'
+  | 'account_signup'
+  | 'custom_proof';
+
+export type TaskDifficulty = 'easy' | 'medium' | 'hard';
+
+export type SocialPlatform =
+  | 'facebook'
+  | 'instagram'
+  | 'youtube'
+  | 'tiktok'
+  | 'telegram'
+  | 'x'
+  | 'whatsapp'
+  | 'other';
+
+export type SocialEngagementAction = 'like' | 'comment' | 'share' | 'subscribe' | 'save';
+
+export type TaskProofMode =
+  | 'text'
+  | 'choice'
+  | 'url'
+  | 'image'
+  | 'code_number'
+  | 'multi_question'
+  | 'auto_verified';
 
 export type TaskCardTheme = 'emerald' | 'indigo' | 'amber' | 'teal' | 'rose' | 'slate';
 
+export interface TaskProofRequirements {
+  modes?: TaskProofMode[];
+  requireImage: boolean;
+  requireText: boolean;
+  requireUrl?: boolean;
+  requireCodeNumber?: boolean;
+  requireChoice?: boolean;
+  requireMultiQuestion?: boolean;
+  autoVerifyMode?: 'video_watch' | 'smart_link_postback' | 'survey';
+  proofPromptText?: string;
+  choiceQuestion?: string;
+  choiceOptions?: string[];
+  choiceMultiSelect?: boolean;
+  customQuestions?: SurveyQuestion[];
+  acceptanceCriteria?: string;
+  rejectionCriteria?: string;
+  instructions?: string;
+  _taskMeta?: TaskBuilderMeta;
+}
+
 export interface TaskTypeSpecificFields {
-  // surveys
+  // 1. surveys
   questions?: string[];
   optionsText?: string;
   linkedSurveyId?: string;
-  // ad_watch
+  // 2. video_watch (+ legacy ad_watch)
+  videoUrl?: string;
+  videoProvider?: 'direct' | 'youtube' | 'vimeo' | 'external';
   adUrl?: string;
   watchDurationSeconds?: number;
   completionRule?: string;
-  // app_testing
-  appDownloadUrl?: string;
-  testingInstructions?: string;
-  requiredProofNote?: string;
-  // quick_tasks
-  steps?: string[];
-  proofNotes?: string;
-  // external_offers
-  partnerName?: string;
-  offerUrl?: string;
-  offerConditions?: string;
-  // smart_links
+  // 3. website_visit (+ smart_links)
+  targetUrl?: string;
+  minVisitSeconds?: number;
+  useSmartLinkPostback?: boolean;
   providerName?: string;
   providerLogoUrl?: string;
   trackingUrl?: string;
   postbackSecret?: string;
   smartLinkInstructions?: string;
+  // 4. social_follow
+  socialPlatform?: SocialPlatform;
+  socialAccountHandle?: string;
+  socialAccountUrl?: string;
+  // 5. social_engagement
+  engagementAction?: SocialEngagementAction;
+  engagementTargetUrl?: string;
+  // 6. app_testing
+  appDownloadUrl?: string;
+  appRequirements?: string;
+  testingInstructions?: string;
+  requiredProofNote?: string;
+  // 7. account_signup (+ legacy external_offers)
+  signupUrl?: string;
+  signupRequirements?: string;
+  partnerName?: string;
+  offerUrl?: string;
+  offerConditions?: string;
+  // 8. custom_proof (+ legacy quick_tasks)
+  steps?: string[];
+  proofNotes?: string;
+  customProofSummary?: string;
 }
 
 export interface TaskBuilderMeta {
   taskKind: TaskKind;
+  difficulty?: TaskDifficulty;
+  acceptanceCriteria?: string;
+  rejectionCriteria?: string;
+  proofConfig?: Omit<TaskProofRequirements, '_taskMeta'>;
   isFeatured?: boolean;
   featuredRequested?: boolean;
   priority?: number;
@@ -679,6 +759,7 @@ export interface TaskItem {
   description: string;
   category: TaskCategory;
   taskKind?: TaskKind;
+  difficulty?: TaskDifficulty;
   isFeatured?: boolean;
   priority?: number;
   sortOrder?: number;
@@ -696,13 +777,7 @@ export interface TaskItem {
   taskMeta?: TaskBuilderMeta;
   rewardYer: number;
   steps: string[];
-  proofRequirements: {
-    requireImage: boolean;
-    requireText: boolean;
-    requireUrl?: boolean;
-    instructions?: string;
-    _taskMeta?: TaskBuilderMeta;
-  };
+  proofRequirements: TaskProofRequirements;
   timeEstimateMinutes: number;
   totalQuantity: number;
   completedQuantity: number;
@@ -755,6 +830,7 @@ export type SurveyQuestionType =
   | 'yes_no'
   | 'short_text'
   | 'long_text'
+  | 'number'
   | 'rating_1_5';
 
 export interface SurveyBranchRule {
@@ -780,6 +856,7 @@ export interface SurveyQuestion {
   questionText: string;
   questionType: SurveyQuestionType;
   isRequired: boolean;
+  imageUrl?: string | null;
   options: SurveyOption[];
   branchRules?: SurveyBranchRule[];
 }
@@ -846,6 +923,10 @@ export interface TaskSubmission {
   proofText?: string;
   proofImages: string[];
   proofUrl?: string;
+  proofCodeNumber?: string;
+  proofChoiceAnswer?: string | string[];
+  proofMultiAnswers?: Array<{ questionId: string; questionText: string; answer: any }>;
+  proofMeta?: Record<string, any>;
   status: SubmissionStatus;
   rejectionReason?: string;
   reviewedBy?: string;

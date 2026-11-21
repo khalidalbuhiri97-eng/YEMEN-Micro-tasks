@@ -40,6 +40,7 @@ const QUESTION_TYPE_LABELS: Array<{ id: SurveyQuestionType; labelAr: string }> =
   { id: 'yes_no', labelAr: 'نعم أو لا' },
   { id: 'short_text', labelAr: 'نص قصير' },
   { id: 'long_text', labelAr: 'نص طويل' },
+  { id: 'number', labelAr: 'إجابة رقمية' },
   { id: 'rating_1_5', labelAr: 'تقييم رقمي / نجوم (1 إلى 5)' },
 ];
 
@@ -181,7 +182,7 @@ export const AdminSurveysAndAssetsView: React.FC = () => {
             { id: `opt_${crypto.randomUUID().slice(0, 8)}`, questionId: q.id, orderIndex: 0, optionText: 'الخيار الأول', nextQuestionId: null },
             { id: `opt_${crypto.randomUUID().slice(0, 8)}`, questionId: q.id, orderIndex: 1, optionText: 'الخيار الثاني', nextQuestionId: null },
           ];
-        } else if (nextType === 'short_text' || nextType === 'long_text' || nextType === 'rating_1_5') {
+        } else if (nextType === 'short_text' || nextType === 'long_text' || nextType === 'number' || nextType === 'rating_1_5') {
           nextOpts = [];
         }
         return {
@@ -222,6 +223,7 @@ export const AdminSurveysAndAssetsView: React.FC = () => {
         questionText: q.questionText.trim(),
         questionType: q.questionType,
         isRequired: q.isRequired,
+        imageUrl: q.imageUrl?.trim() || null,
         orderIndex: qIdx,
         options: cleanOptions,
         branchRules: buildBranchRulesFromOptions(
@@ -771,6 +773,27 @@ export const AdminSurveysAndAssetsView: React.FC = () => {
                         className="w-full px-3.5 py-2.5 text-xs font-bold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                       />
 
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                        <input
+                          type="url"
+                          value={q.imageUrl || ''}
+                          onChange={(e) =>
+                            setQuestions((prev) =>
+                              prev.map((item, i) => (i === qIdx ? { ...item, imageUrl: e.target.value || null } : item))
+                            )
+                          }
+                          placeholder="رابط صورة توضيحية للسؤال (اختياري https://...)"
+                          className="flex-1 px-3 py-1.5 text-[11px] font-mono bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
+                        />
+                        {q.imageUrl && (
+                          <img
+                            src={q.imageUrl}
+                            alt="معاينة صورة السؤال"
+                            className="w-12 h-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                          />
+                        )}
+                      </div>
+
                       {hasOptions && (
                         <div className="space-y-2 pt-1">
                           <div className="flex items-center justify-between text-[11px] font-bold text-slate-500">
@@ -1044,11 +1067,13 @@ export const AdminSurveysAndAssetsView: React.FC = () => {
                   className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl disabled:opacity-50"
                 >
                   <option value="surveys">الاستبيانات</option>
-                  <option value="smart_links">الروابط الذكية</option>
+                  <option value="video_watch">مشاهدة الفيديوهات</option>
+                  <option value="website_visit">زيارة المواقع والروابط</option>
+                  <option value="social_follow">متابعة الحسابات</option>
+                  <option value="social_engagement">الإعجاب والتفاعل</option>
                   <option value="app_testing">تجربة التطبيقات</option>
-                  <option value="ad_watch">مشاهدة الإعلانات</option>
-                  <option value="quick_tasks">المهام السريعة</option>
-                  <option value="external_offers">العروض الخارجية</option>
+                  <option value="account_signup">التسجيل وإنشاء الحسابات</option>
+                  <option value="custom_proof">إثباتات مخصصة</option>
                 </select>
               </div>
               <div>

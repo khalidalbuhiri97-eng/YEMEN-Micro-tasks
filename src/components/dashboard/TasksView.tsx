@@ -1,77 +1,39 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api, NetworkOfflineError } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { SurveyItem, TaskCategoryItem, TaskItem } from '../../types/index.ts';
+import type { SurveyItem, TaskCategoryItem, TaskDifficulty, TaskItem } from '../../types/index.ts';
 import {
   Search,
   Clock,
-  CheckCircle,
-  Upload,
-  Link as LinkIcon,
   X,
   FileText,
   AlertCircle,
-  Building2,
-  EyeOff,
-  Zap,
   WifiOff,
-  Star,
-  ExternalLink,
-  ShieldCheck,
   Coins,
   Users,
   ChevronsLeft,
   ClipboardList,
   Link2,
+  SlidersHorizontal,
 } from 'lucide-react';
-import confetti from 'canvas-confetti';
-import { SecureImageView } from '../common/SecureImageView.tsx';
 import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 import { GeoLocationSelector, type GeoFilterValue } from '../common/GeoLocationSelector.tsx';
 import { formatYer } from '../../../shared/money.ts';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
 import {
   SUPABASE_TASK_ASSET_URLS,
-  getTaskKindLabel,
+  TASK_DIFFICULTY_OPTIONS,
+  TASK_KIND_OPTIONS,
   inferTaskKindFromCategory,
+  toCanonicalTaskKind,
 } from '../../../shared/taskMeta.ts';
 import { TaskVisualCard } from '../tasks/TaskVisualCard.tsx';
 import { SmartLinkModal } from '../tasks/SmartLinkModal.tsx';
 import { SurveyRunnerModal } from '../tasks/SurveyRunnerModal.tsx';
-
-function renderTextWithSafeLinks(text: string) {
-  if (!text) return null;
-  const urlRegex = /(https?:\/\/[^\s]+)/g;
-  const parts = text.split(urlRegex);
-  return parts.map((part, i) => {
-    if (part.match(/^https?:\/\//i)) {
-      const lower = part.toLowerCase();
-      if (lower.startsWith('javascript:') || lower.startsWith('data:') || lower.startsWith('vbscript:')) {
-        return part;
-      }
-      return (
-        <a
-          key={i}
-          href={part}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-emerald-600 dark:text-emerald-400 underline hover:text-emerald-700 font-medium break-all inline-flex items-center gap-1"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {part}
-        </a>
-      );
-    }
-    return part;
-  });
-}
-
-function isSafeHttpUrl(url?: string): boolean {
-  if (!url) return false;
-  return /^https?:\/\//i.test(url.trim());
-}
+import { TaskExecutionModal } from '../tasks/TaskExecutionModal.tsx';
 
 type QuickFilterType = 'all' | 'featured' | 'popular' | 'quick';
+type SortOptionType = 'recommended' | 'newest' | 'reward_desc' | 'quickest';
 
 interface TasksViewProps {
   onGoToSubmissions: () => void;
@@ -80,12 +42,14 @@ interface TasksViewProps {
 }
 
 export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
-  const { refreshWallet, showToast, isOnline } = useAuth();
+  const { isOnline } = useAuth();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [surveys, setSurveys] = useState<SurveyItem[]>([]);
   const [categories, setCategories] = useState<TaskCategoryItem[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || 'all');
   const [quickFilter, setQuickFilter] = useState<QuickFilterType>('all');
+  const [difficultyFilter, setDifficultyFilter] = useState<'all' | TaskDifficulty>('all');
+  const [sortBy, setSortBy] = useState<SortOptionType>('recommended');
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [geoFilter, setGeoFilter] = useState<GeoFilterValue>({ countryId: '', divisionId: '' });
@@ -99,18 +63,11 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
     }
   }, [initialCategory]);
 
-  // Modal state for standard tasks, info sheet, smart links, and sequential surveys
+  // Modal state for dynamic task execution, info sheet, smart links, and sequential surveys
   const [activeTask, setActiveTask] = useState<TaskItem | null>(null);
   const [infoModalTask, setInfoModalTask] = useState<TaskItem | null>(null);
   const [activeSmartLinkTask, setActiveSmartLinkTask] = useState<TaskItem | null>(null);
   const [activeSurveyId, setActiveSurveyId] = useState<string | null>(null);
-
-  const [proofText, setProofText] = useState('');
-  const [proofUrl, setProofUrl] = useState('');
-  const [proofImages, setProofImages] = useState<string[]>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
-  const [submitError, setSubmitError] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load categories & synced favorites
@@ -199,16 +156,11 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
   const loadTasks = useCallback(async () => {
     setIsLoading(true);
     setLoadError(null);
-    const cacheKey = `tasks_list_${selectedCategory}_${geoFilter.countryId || 'all'}`;
-    const apiCategory =
-      selectedCategory === 'all' || selectedCategory === 'favorites' || selectedCategory === 'smart_links'
-        ? undefined
-        : selectedCategory;
+    const cacheKey = `tasks_list_all_${geoFilter.countryId || 'all'}`;
 
     try {
       const [res, surveysRes] = await Promise.all([
         api.getTasks({
-          category: apiCategory,
           search: searchQuery || undefined,
           countryId: geoFilter.countryId || undefined,
           divisionId: geoFilter.divisionId || undefined,
@@ -279,16 +231,11 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
 
   const handleOpenProofTask = (task: TaskItem) => {
     setActiveTask(task);
-    setProofText('');
-    setProofUrl('');
-    setProofImages([]);
-    setSubmitError('');
-    setIsUploadingImage(false);
   };
 
   const handleStartTask = (task: TaskItem) => {
     const kind = task.taskKind || task.taskMeta?.taskKind || inferTaskKindFromCategory(task.category);
-    if (kind === 'smart_links') {
+    if (kind === 'smart_links' || Boolean(task.taskMeta?.fields?.useSmartLinkPostback)) {
       setActiveSmartLinkTask(task);
       return;
     }
@@ -303,142 +250,24 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
   const handleInfoTask = (task: TaskItem) => {
     const kind = task.taskKind || task.taskMeta?.taskKind || inferTaskKindFromCategory(task.category);
     const linkedSurvey = task.linkedSurveyId || task.taskMeta?.linkedSurveyId || task.taskMeta?.fields?.linkedSurveyId;
-    if (kind === 'smart_links' || linkedSurvey) {
+    if (kind === 'smart_links' || Boolean(task.taskMeta?.fields?.useSmartLinkPostback) || linkedSurvey) {
       setInfoModalTask(task);
       return;
     }
     handleOpenProofTask(task);
   };
 
-  const handleCloseModal = () => {
-    setActiveTask(null);
-    setIsUploadingImage(false);
-  };
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!isOnline) {
-      setSubmitError('رفع صور الإثبات يتطلب اتصالاً نشطاً بالإنترنت.');
-      e.target.value = '';
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      setSubmitError('حجم الصورة كبير جداً، يرجى اختيار صورة أقل من 5 ميجابايت.');
-      return;
-    }
-
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-    if (file.type && !allowedTypes.includes(file.type.toLowerCase())) {
-      setSubmitError('صيغة الملف غير مدعومة. يرجى اختيار صورة JPEG أو PNG أو WEBP.');
-      return;
-    }
-
-    setIsUploadingImage(true);
-    setSubmitError('');
-
-    try {
-      const signRes = await api.getUploadSignedUrl({
-        taskId: activeTask!.id,
-        fileName: file.name,
-        contentType: file.type || 'image/jpeg',
-        fileSize: file.size,
-      });
-
-      if (!signRes?.signedUrl || !signRes?.path) {
-        throw new Error('تعذر الحصول على رابط الرفع المؤقت.');
-      }
-
-      const uploadRes = await fetch(signRes.signedUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': file.type || 'image/jpeg',
-        },
-        body: file,
-      });
-
-      if (!uploadRes.ok) {
-        throw new Error('فشل رفع الصورة مباشرة إلى التخزين السحابي.');
-      }
-
-      setProofImages([signRes.path]);
-      showToast('تم رفع الصورة بنجاح إلى التخزين السحابي الآمن', 'success');
-    } catch (err: any) {
-      setSubmitError(err.message || 'فشل رفع الصورة إلى التخزين السحابي، يرجى المحاولة مجدداً.');
-    } finally {
-      setIsUploadingImage(false);
-      e.target.value = '';
-    }
-  };
-
-  const handleSubmitProof = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!activeTask) return;
-
-    if (!isOnline) {
-      setSubmitError('لا يمكن إرسال إثبات المهمة بدون اتصال بالإنترنت. يرجى المحاولة عند عودة الشبكة.');
-      return;
-    }
-
-    if (activeTask.proofRequirements.requireText && !proofText.trim()) {
-      setSubmitError('يرجى كتابة نص الإثبات أو الملاحظات المطلوبة.');
-      return;
-    }
-
-    if (proofImages.length === 0) {
-      setSubmitError('صورة إثبات الإنجاز إجبارية. يرجى رفع لقطة الشاشة كإثبات.');
-      return;
-    }
-
-    if (activeTask.proofRequirements.requireUrl && !proofUrl.trim()) {
-      setSubmitError('هذه المهمة تتطلب إدخال رابط الإثبات (URL).');
-      return;
-    }
-
-    setIsSubmitting(true);
-    setSubmitError('');
-
-    try {
-      await api.submitTaskProof({
-        taskId: activeTask.id,
-        proofText: proofText.trim() || undefined,
-        proofImages,
-        proofUrl: proofUrl.trim() || undefined,
-      });
-
-      try {
-        confetti({
-          particleCount: 80,
-          spread: 60,
-          origin: { y: 0.6 },
-        });
-      } catch {}
-
-      showToast('تم إرسال إثبات المهمة بنجاح! سيتم تدقيقه وقيد المكافأة.', 'success');
-      handleCloseModal();
-      refreshWallet();
-      loadTasks();
-    } catch (err: any) {
-      setSubmitError(err.message || 'فشل في إرسال الإثبات.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const categoryTabs = useMemo(() => {
+    const catBySlug = new Map(categories.map((c) => [c.slug, c]));
     const base = [
       { id: 'all', label: 'كافة المهام', iconUrl: SUPABASE_TASK_ASSET_URLS.cat_all },
+      ...TASK_KIND_OPTIONS.map((opt) => ({
+        id: opt.kind,
+        label: opt.labelAr,
+        iconUrl: opt.defaultImageUrl,
+      })),
       { id: 'smart_links', label: 'الروابط الذكية', iconUrl: SUPABASE_TASK_ASSET_URLS.smart_links },
-      { id: 'surveys', label: 'الاستبيانات', iconUrl: SUPABASE_TASK_ASSET_URLS.surveys },
-      { id: 'app_testing', label: 'تجربة التطبيقات', iconUrl: SUPABASE_TASK_ASSET_URLS.app_testing },
-      { id: 'social_engagement', label: 'التفاعل والإعلانات', iconUrl: SUPABASE_TASK_ASSET_URLS.ad_watch },
-      { id: 'data_entry', label: 'إدخال البيانات', iconUrl: SUPABASE_TASK_ASSET_URLS.quick_tasks },
-      { id: 'review_ratings', label: 'التقييمات والخرائط', iconUrl: SUPABASE_TASK_ASSET_URLS.external_offers },
-      { id: 'local_services', label: 'عروض الشركاء', iconUrl: SUPABASE_TASK_ASSET_URLS.external_offers },
     ];
-    const catBySlug = new Map(categories.map((c) => [c.slug, c]));
     return [
       ...base.map((b) => {
         const remote = catBySlug.get(b.id);
@@ -452,29 +281,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
       { id: 'favorites', label: `المفضلة (${favoriteIds.length})`, iconUrl: SUPABASE_TASK_ASSET_URLS.cat_featured },
     ];
   }, [categories, favoriteIds.length]);
-
-  const getCategoryLabel = (cat: string) => {
-    const matched = categories.find((c) => c.slug === cat);
-    if (matched) return matched.labelAr;
-    switch (cat) {
-      case 'smart_links':
-        return 'رابط ذكي';
-      case 'app_testing':
-        return 'تجربة تطبيق';
-      case 'surveys':
-        return 'استبيان';
-      case 'review_ratings':
-        return 'خرائط وتقييم';
-      case 'data_entry':
-        return 'إدخال بيانات';
-      case 'social_engagement':
-        return 'تفاعل اجتماعي';
-      case 'content_writing':
-        return 'كتابة محتوى';
-      default:
-        return 'مهمة عامة';
-    }
-  };
 
   // Merge standalone active surveys into unified TaskVisualCard list
   const combinedTasks = useMemo<TaskItem[]>(() => {
@@ -492,6 +298,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
         description: s.description || `استبيان متسلسل مكون من ${s.questions.length} أسئلة تفاعلية.`,
         category: 'surveys',
         taskKind: 'surveys',
+        difficulty: 'easy',
         isFeatured: s.isFeatured,
         sortOrder: s.sortOrder,
         imageUrl: s.imageUrl || SUPABASE_TASK_ASSET_URLS.surveys,
@@ -520,15 +327,25 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
   const displayedTasks = useMemo(() => {
     const qLower = searchQuery.trim().toLowerCase();
     const filtered = combinedTasks.filter((item) => {
-      const kind = item.taskKind || item.taskMeta?.taskKind || inferTaskKindFromCategory(item.category);
+      const rawKind = item.taskKind || item.taskMeta?.taskKind || inferTaskKindFromCategory(item.category);
+      const canonical = toCanonicalTaskKind(rawKind, item.category);
       const isFeat = Boolean(item.isFeatured || item.taskMeta?.isFeatured);
+      const itemDiff = item.difficulty || item.taskMeta?.difficulty || 'easy';
 
       if (selectedCategory === 'favorites') {
         if (!favoriteIds.includes(item.id)) return false;
       } else if (selectedCategory === 'smart_links') {
-        if (item.category !== 'smart_links' && kind !== 'smart_links') return false;
+        if (item.category !== 'smart_links' && rawKind !== 'smart_links' && !item.taskMeta?.fields?.useSmartLinkPostback) {
+          return false;
+        }
       } else if (selectedCategory !== 'all') {
-        if (item.category !== selectedCategory) return false;
+        const isCanonicalMatch = canonical === selectedCategory;
+        const isCategoryMatch = item.category === selectedCategory;
+        if (!isCanonicalMatch && !isCategoryMatch) return false;
+      }
+
+      if (difficultyFilter !== 'all' && itemDiff !== difficultyFilter) {
+        return false;
       }
 
       if (qLower) {
@@ -538,11 +355,21 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
 
       if (quickFilter === 'featured') return isFeat;
       if (quickFilter === 'popular') return (item.completedQuantity || 0) > 0 || (item.totalQuantity || 0) >= 50;
-      if (quickFilter === 'quick') return (item.timeEstimateMinutes || 10) <= 5 || kind === 'quick_tasks' || kind === 'ad_watch';
+      if (quickFilter === 'quick') return (item.timeEstimateMinutes || 10) <= 5 || rawKind === 'quick_tasks' || canonical === 'video_watch';
       return true;
     });
 
     return [...filtered].sort((a, b) => {
+      if (sortBy === 'newest') {
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      }
+      if (sortBy === 'reward_desc') {
+        return Number(b.rewardYer || 0) - Number(a.rewardYer || 0);
+      }
+      if (sortBy === 'quickest') {
+        return Number(a.timeEstimateMinutes || 10) - Number(b.timeEstimateMinutes || 10);
+      }
+
       const aFeat = a.isFeatured || a.taskMeta?.isFeatured ? 1 : 0;
       const bFeat = b.isFeatured || b.taskMeta?.isFeatured ? 1 : 0;
       if (aFeat !== bFeat) return bFeat - aFeat;
@@ -566,7 +393,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
 
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
     });
-  }, [combinedTasks, selectedCategory, quickFilter, favoriteIds, searchQuery]);
+  }, [combinedTasks, selectedCategory, quickFilter, difficultyFilter, sortBy, favoriteIds, searchQuery]);
 
   const quickPills = useMemo(() => {
     const catBySlug = new Map(categories.map((c) => [c.slug, c]));
@@ -672,14 +499,62 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
         })}
       </div>
 
-      {/* Cascading Arab Country & Division Filter */}
-      <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+      {/* Cascading Arab Country & Division Filter + Difficulty & Sort Controls */}
+      <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
         <GeoLocationSelector
           mode="filter"
           countryId={geoFilter.countryId}
           divisionId={geoFilter.divisionId}
           onChange={setGeoFilter}
         />
+
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-500 inline-flex items-center gap-1 ml-1">
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>الصعوبة:</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setDifficultyFilter('all')}
+              className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                difficultyFilter === 'all'
+                  ? 'bg-emerald-600 text-white border-emerald-600'
+                  : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+              }`}
+            >
+              الكل
+            </button>
+            {TASK_DIFFICULTY_OPTIONS.map((d) => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => setDifficultyFilter(d.id)}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                  difficultyFilter === d.id
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                {d.labelAr}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <label className="text-[11px] font-bold text-slate-500">ترتيب:</label>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortOptionType)}
+              className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+            >
+              <option value="recommended">الموصى به (المميز أولاً)</option>
+              <option value="newest">الأحدث إضافة</option>
+              <option value="reward_desc">الأعلى مكافأة</option>
+              <option value="quickest">الأقصر مدة</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* Stale Offline Cache Notice */}
@@ -775,364 +650,13 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
         </div>
       )}
 
-      {/* Task Details & Submission Modal (Mobile-first bottom sheet) */}
+      {/* Dynamic Multi-Type Task Execution & Proof Modal */}
       {activeTask && (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-slate-950/70 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={handleCloseModal}
-        >
-          <div
-            className="relative w-full sm:max-w-xl max-h-[92vh] bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="sm:hidden w-10 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mt-3 shrink-0" />
-            {/* Header */}
-            <div className="flex items-start justify-between px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 shrink-0">
-              <div>
-                <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                  {getCategoryLabel(activeTask.category)} · {activeTask.timeEstimateMinutes} دقائق تقريباً ·{' '}
-                  {activeTask.countryFlag ? `${activeTask.countryFlag} ` : ''}
-                  {activeTask.locationLabel || activeTask.countryNameAr || 'جميع الدول العربية'}
-                </span>
-                <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white mt-0.5">
-                  {activeTask.title}
-                </h2>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                aria-label="إغلاق"
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Scrollable Content */}
-            <div className="p-4 sm:p-6 overflow-y-auto space-y-5">
-              {/* Advertiser Attribution Strip inside Task Modal */}
-              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  {activeTask.isExternalCampaign && !activeTask.hideAdvertiserName && activeTask.advertiserLogoUrl ? (
-                    <SecureImageView
-                      storagePathOrUrl={activeTask.advertiserLogoUrl}
-                      alt={activeTask.advertiserDisplayName || 'شعار المعلن'}
-                      className="w-8 h-8 rounded-lg object-cover border border-slate-200 dark:border-slate-700 shrink-0"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-500 shrink-0">
-                      {activeTask.isExternalCampaign && activeTask.hideAdvertiserName ? (
-                        <EyeOff className="w-4 h-4" />
-                      ) : (
-                        <Building2 className="w-4 h-4" />
-                      )}
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
-                      {activeTask.isExternalCampaign ? 'الجهة المعلنة' : 'مصدر المهمة'}
-                    </div>
-                    <div className="font-bold text-slate-900 dark:text-white truncate">
-                      {activeTask.isExternalCampaign
-                        ? activeTask.hideAdvertiserName
-                          ? 'معلن عبر يمن تاسك'
-                          : activeTask.advertiserDisplayName || 'معلن عبر يمن تاسك'
-                        : 'مهمة مباشرة من المنصة'}
-                    </div>
-                  </div>
-                </div>
-                {activeTask.isExternalCampaign && (
-                  <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 shrink-0">
-                    حملة معلن خارجي
-                  </span>
-                )}
-              </div>
-
-              {/* Reward Strip */}
-              <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-between">
-                <div>
-                  <span className="text-xs text-emerald-800 dark:text-emerald-300 font-medium">
-                    المكافأة عند اعتماد الإثبات:
-                  </span>
-                  <div className="text-xl font-extrabold text-amber-600 dark:text-amber-400 font-mono tabular-nums">
-                    {formatYer(activeTask.rewardYer)}{' '}
-                    <span className="text-sm font-bold text-emerald-700 dark:text-emerald-400">ريال يمني (YER)</span>
-                  </div>
-                </div>
-                <div className="text-left text-xs text-emerald-700 dark:text-emerald-400 font-medium">
-                  إيداع فوري في المحفظة
-                </div>
-              </div>
-
-              {/* Dynamic Type-Specific Metadata Details */}
-              {activeTask.taskMeta?.fields &&
-                Object.values(activeTask.taskMeta.fields).some((v) =>
-                  Array.isArray(v) ? v.length > 0 : Boolean(v)
-                ) && (
-                  <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-2.5 text-xs">
-                    <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                      <Zap className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>متطلبات وتفاصيل {getTaskKindLabel(activeTask.taskKind, activeTask.category)}</span>
-                    </div>
-
-                    {activeTask.taskMeta.fields.questions && activeTask.taskMeta.fields.questions.length > 0 && (
-                      <div className="space-y-1">
-                        <div className="font-semibold text-slate-700 dark:text-slate-300">الأسئلة المطلوبة:</div>
-                        <ul className="list-disc pr-4 space-y-1 text-slate-600 dark:text-slate-300">
-                          {activeTask.taskMeta.fields.questions.map((q, idx) => (
-                            <li key={idx}>{q}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {activeTask.taskMeta.fields.optionsText && (
-                      <div className="text-slate-600 dark:text-slate-300">
-                        <strong className="text-slate-800 dark:text-slate-200">خيارات الإجابة: </strong>
-                        {activeTask.taskMeta.fields.optionsText}
-                      </div>
-                    )}
-
-                    {isSafeHttpUrl(activeTask.taskMeta.fields.adUrl) && (
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                        <span className="text-slate-600 dark:text-slate-300">
-                          مدة المشاهدة:{' '}
-                          <strong className="font-mono text-emerald-700 dark:text-emerald-400">
-                            {activeTask.taskMeta.fields.watchDurationSeconds || 30} ثانية
-                          </strong>
-                        </span>
-                        <a
-                          href={activeTask.taskMeta.fields.adUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold inline-flex items-center gap-1"
-                        >
-                          <span>فتح رابط الإعلان</span>
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                    )}
-
-                    {activeTask.taskMeta.fields.completionRule && (
-                      <div className="text-slate-600 dark:text-slate-300">
-                        <strong className="text-slate-800 dark:text-slate-200">شرط الإتمام: </strong>
-                        {activeTask.taskMeta.fields.completionRule}
-                      </div>
-                    )}
-
-                    {isSafeHttpUrl(activeTask.taskMeta.fields.appDownloadUrl) && (
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">رابط التطبيق:</span>
-                        <a
-                          href={activeTask.taskMeta.fields.appDownloadUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold inline-flex items-center gap-1"
-                        >
-                          <span>فتح / تحميل التطبيق</span>
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                    )}
-
-                    {activeTask.taskMeta.fields.testingInstructions && (
-                      <div className="text-slate-600 dark:text-slate-300">
-                        <strong className="text-slate-800 dark:text-slate-200">تعليمات الاختبار: </strong>
-                        {activeTask.taskMeta.fields.testingInstructions}
-                      </div>
-                    )}
-
-                    {(activeTask.taskMeta.fields.requiredProofNote || activeTask.taskMeta.fields.proofNotes) && (
-                      <div className="text-amber-700 dark:text-amber-300 font-medium">
-                        ملاحظة الإثبات:{' '}
-                        {activeTask.taskMeta.fields.requiredProofNote || activeTask.taskMeta.fields.proofNotes}
-                      </div>
-                    )}
-
-                    {activeTask.taskMeta.fields.partnerName && (
-                      <div className="text-slate-600 dark:text-slate-300">
-                        <strong className="text-slate-800 dark:text-slate-200">الشريك: </strong>
-                        {activeTask.taskMeta.fields.partnerName}
-                      </div>
-                    )}
-
-                    {isSafeHttpUrl(activeTask.taskMeta.fields.offerUrl) && (
-                      <div>
-                        <a
-                          href={activeTask.taskMeta.fields.offerUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold inline-flex items-center gap-1"
-                        >
-                          <span>فتح رابط العرض</span>
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                    )}
-
-                    {activeTask.taskMeta.fields.offerConditions && (
-                      <div className="text-slate-600 dark:text-slate-300">
-                        <strong className="text-slate-800 dark:text-slate-200">الشروط: </strong>
-                        {activeTask.taskMeta.fields.offerConditions}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-              {/* Instructions Steps */}
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-2">
-                  خطوات تنفيذ المهمة:
-                </h3>
-                {activeTask.steps && activeTask.steps.length > 0 ? (
-                  <ul className="space-y-2 text-xs sm:text-sm text-slate-600 dark:text-slate-300">
-                    {activeTask.steps.map((step, idx) => (
-                      <li key={idx} className="flex items-start gap-2.5">
-                        <span className="w-5 h-5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center justify-center font-mono text-[11px] font-bold shrink-0 mt-0.5">
-                          {idx + 1}
-                        </span>
-                        <span className="leading-relaxed">{step}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
-                    {renderTextWithSafeLinks(activeTask.description)}
-                  </p>
-                )}
-              </div>
-
-              {/* Submission Form */}
-              <form onSubmit={handleSubmitProof} className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-4">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  تقديم إثبات الإنجاز:
-                </h3>
-
-                {!isOnline && (
-                  <div className="p-3 text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-lg flex items-center gap-2">
-                    <WifiOff className="w-4 h-4 shrink-0" />
-                    <span>إرسال الإثبات ورفع لقطة الشاشة يتطلبان اتصالاً بالإنترنت.</span>
-                  </div>
-                )}
-
-                {submitError && (
-                  <div className="p-3 text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>{submitError}</span>
-                  </div>
-                )}
-
-                {activeTask.proofRequirements.requireText && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      النص أو الملاحظات المطلوبة
-                    </label>
-                    <textarea
-                      rows={3}
-                      required
-                      value={proofText}
-                      onChange={(e) => setProofText(e.target.value)}
-                      placeholder="اكتب الإجابات أو الملاحظات التي تم التوصل إليها بدقة..."
-                      className="w-full p-3 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100"
-                    />
-                  </div>
-                )}
-
-                {activeTask.proofRequirements.requireUrl && (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      رابط التقييم أو المنشور (URL)
-                    </label>
-                    <div className="relative">
-                      <LinkIcon className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
-                      <input
-                        type="url"
-                        value={proofUrl}
-                        onChange={(e) => setProofUrl(e.target.value)}
-                        placeholder="https://..."
-                        className="w-full pr-9 pl-3 py-2 text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100 font-mono"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Image Proof Upload */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    لقطة الشاشة / صورة الإثبات <span className="text-rose-500">* (إجباري)</span>
-                  </label>
-                  <div className="mt-1 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 hover:border-emerald-500 transition-colors bg-slate-50/50 dark:bg-slate-800/30">
-                    {proofImages.length > 0 ? (
-                      <div className="relative w-full max-h-48 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700">
-                        <SecureImageView
-                          storagePathOrUrl={proofImages[0]}
-                          alt="إثبات المهمة المرفوع"
-                          className="w-full h-40 object-cover rounded-lg"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setProofImages([])}
-                          className="absolute top-2 left-2 p-1 bg-rose-600 text-white rounded-md text-xs hover:bg-rose-700"
-                        >
-                          حذف وتغيير الصورة
-                        </button>
-                      </div>
-                    ) : isUploadingImage ? (
-                      <div className="flex flex-col items-center justify-center py-6 gap-2">
-                        <div className="w-8 h-8 rounded-full border-2 border-emerald-600 border-t-transparent animate-spin" />
-                        <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                          جاري رفع الصورة إلى التخزين الآمن...
-                        </span>
-                      </div>
-                    ) : (
-                      <label className={`flex flex-col items-center justify-center w-full py-3 ${isOnline ? 'cursor-pointer' : 'opacity-60 cursor-not-allowed'}`}>
-                        <Upload className="w-8 h-8 text-emerald-600 mb-2" />
-                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
-                          انقر لاختيار لقطة الشاشة من جهازك
-                        </span>
-                        <span className="text-[11px] text-slate-400 mt-1">
-                          PNG, JPG, WEBP حتى 5 ميجابايت
-                        </span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          disabled={!isOnline}
-                          onChange={handleFileChange}
-                          className="hidden"
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-
-                <div className="pt-2 flex items-center justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={handleCloseModal}
-                    className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
-                  >
-                    إلغاء
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={!isOnline || isSubmitting || isUploadingImage || proofImages.length === 0}
-                    className="px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {isSubmitting ? (
-                      <span>جاري إرسال الإثبات...</span>
-                    ) : isUploadingImage ? (
-                      <span>جاري رفع الصورة...</span>
-                    ) : (
-                      <>
-                        <CheckCircle className="w-4 h-4" />
-                        <span>إرسال الإثبات للاعتماد</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
+        <TaskExecutionModal
+          task={activeTask}
+          onClose={() => setActiveTask(null)}
+          onSubmitted={() => loadTasks()}
+        />
       )}
 
       {/* Info Modal for Smart Links & Sequential Surveys */}
