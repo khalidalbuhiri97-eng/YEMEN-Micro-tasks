@@ -3949,6 +3949,32 @@ const clixwallHandlers = createClixWallHandlers({
   },
 });
 
+// YT Coin mining: user-scoped JWT RPCs; independent from YER wallets and financial ledgers.
+app.get('/api/yt-coin/summary', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
+    const userClient = getSupabaseUserClient(req.authToken);
+    const { data, error } = await userClient.rpc('get_my_yt_coin_summary');
+    if (error) throw error;
+    return res.json({ summary: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_SUMMARY', apiRoute: '/api/yt-coin/summary' });
+    return res.status(400).json({ error: err?.message || 'تعذر تحميل ملخص YT Coin.' });
+  }
+});
+app.post('/api/yt-coin/claim', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
+    const userClient = getSupabaseUserClient(req.authToken);
+    const { data, error } = await userClient.rpc('claim_my_yt_coin_daily');
+    if (error) throw error;
+    return res.json({ result: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_DAILY_CLAIM', apiRoute: '/api/yt-coin/claim' });
+    return res.status(400).json({ error: err?.message || 'تعذر استلام مكافأة التعدين.' });
+  }
+});
+
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
