@@ -45,6 +45,7 @@ const DEFAULT_FORM: PartnerFormState = {
 const PLACEMENT_OPTIONS = [
   { key: 'home_clixwall_slot', label: 'نافذة الإعلانات بجانب ClixWall (الرئيسية 300×250)' },
   { key: 'clixwall_card_embed', label: 'منطقة الشريك المدمجة داخل بطاقة ClixWall' },
+  { key: 'home_upcoming_offers', label: 'داخل مربع العروض الجديدة قريباً (300×160)' },
 ];
 
 export const AdPartnersManager: React.FC = () => {
@@ -477,7 +478,18 @@ export const AdPartnersManager: React.FC = () => {
                   </label>
                   <select
                     value={form.placementKey}
-                    onChange={(e) => setForm({ ...form, placementKey: e.target.value })}
+                    onChange={(e) => {
+                      const placementKey = e.target.value;
+                      setForm({
+                        ...form,
+                        placementKey,
+                        ...(placementKey === 'home_upcoming_offers'
+                          ? { width: '300', height: '160' }
+                          : placementKey === 'home_clixwall_slot'
+                            ? { width: '300', height: '250' }
+                            : {}),
+                      });
+                    }}
                     className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white"
                   >
                     {PLACEMENT_OPTIONS.map((opt) => (
