@@ -14,6 +14,7 @@ type MiningSummary = {
   eligible?: boolean;
   eligibilityMessage?: string | null;
   dailyCapRemainingUnits?: number;
+  history?: Array<{ id: string; eventType: string; amountUnits: number; createdAt: string }>;
 };
 
 const toCoin = (units?: number) => (Number(units || 0) / 1_000_000).toFixed(2);
@@ -66,6 +67,10 @@ export const YtCoinMiningCard: React.FC = () => {
   const claimedToday = summary?.lastClaimDate === today;
   const enabled = Boolean(summary?.miningEnabled && summary?.dailyCapConfigured);
   const eligible = Boolean(summary?.eligible);
+  const capRemainingUnits = Number(summary?.dailyCapRemainingUnits ?? 0);
+  const nextRewardUnits = Number(summary?.nextRewardUnits ?? 0);
+  const capReached = capRemainingUnits < nextRewardUnits;
+  const recentHistory = (summary?.history || []).slice(0, 5);
 
   return (
     <section dir="rtl" aria-label="تعدين عملة YT Coin" className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-3">
@@ -116,13 +121,40 @@ export const YtCoinMiningCard: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
                   {enabled ? <ShieldCheck className="w-4 h-4 text-emerald-600" /> : <LockKeyhole className="w-4 h-4 text-amber-600" />}
-                  <span>{!enabled ? 'التعدين غير مفعّل حالياً.' : !eligible ? (summary?.eligibilityMessage || 'يلزم حساب نشط ومهمة واحدة معتمدة على الأقل.') : claimedToday ? 'استلمت مكافأة اليوم؛ عد غداً للمطالبة التالية.' : 'أنت مؤهل؛ المطالبة مرة واحدة يومياً بتوقيت اليمن.'}</span>
+                  <span>{!enabled ? 'التعدين غير مفعّل حالياً.' : !eligible ? (summary?.eligibilityMessage || 'يلزم حساب نشط ومهمة واحدة معتمدة على الأقل.') : claimedToday ? 'استلمت مكافأة اليوم؛ عد غداً للمطالبة التالية.' : capReached ? 'اكتمل سقف التعدين اليومي للمنصة؛ حاول غداً.' : 'أنت مؤهل؛ المطالبة مرة واحدة يومياً بتوقيت اليمن.'}</span>
                 </div>
-                <button type="button" onClick={claim} disabled={!enabled || !eligible || claimedToday || claiming || loading} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 px-5 py-3 text-xs font-extrabold text-white shadow-sm transition-colors">
+                <button type="button" onClick={claim} disabled={!enabled || !eligible || claimedToday || capReached || claiming || loading} className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:text-slate-500 px-5 py-3 text-xs font-extrabold text-white shadow-sm transition-colors">
                   <Pickaxe className="w-4 h-4" />{claiming ? 'جارٍ تسجيل المطالبة...' : claimedToday ? 'تم التعدين اليوم' : 'استلام مكافأة التعدين'}
                 </button>
               </div>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400">المكافأة تبدأ من 0.50 YT وتزداد 0.01 YT لكل يوم متتالٍ حتى 1.50 YT. تفويت يوم يعيدها إلى 0.50 YT. سقف المنصة اليومي 10,000 YT.</p>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/75 dark:bg-slate-800/60 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-3 text-[11px]">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">المتبقي من سقف التعدين اليومي للمنصة</span>
+                  <strong className="font-mono text-emerald-700 dark:text-emerald-300">{toCoin(capRemainingUnits)} / 10,000 YT</strong>
+                </div>
+                <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden" role="progressbar" aria-label="المتبقي من سقف التعدين اليومي" aria-valuemin={0} aria-valuemax={10000} aria-valuenow={Math.max(0, Math.min(10000, capRemainingUnits / 1_000_000))}>
+                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.max(0, Math.min(100, capRemainingUnits / 100_000_000))}%` }} />
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/75 dark:bg-slate-800/60 p-3">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <h3 className="text-xs font-extrabold text-slate-800 dark:text-slate-100">آخر مكافآت التعدين</h3>
+                  <span className="text-[10px] text-slate-400">آخر 5 عمليات</span>
+                </div>
+                {recentHistory.length ? (
+                  <ul className="space-y-2">
+                    {recentHistory.map((item) => (
+                      <li key={item.id} className="flex items-center justify-between gap-3 text-[11px]">
+                        <span className="text-slate-500 dark:text-slate-400">{new Date(item.createdAt).toLocaleString('ar-YE', { timeZone: 'Asia/Aden', dateStyle: 'medium' })}</span>
+                        <strong className="font-mono text-emerald-700 dark:text-emerald-300">+{toCoin(item.amountUnits)} YT</strong>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">لا توجد مطالبات تعدين سابقة حتى الآن.</p>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400">المكافأة تبدأ من 0.50 YT وتزداد 0.01 YT لكل يوم متتالٍ حتى 1.50 YT. تفويت يوم يعيدها إلى 0.50 YT. لا تؤثر عملة YT على محفظة الريال اليمني.</p>
             </>
           )}
         </div>
