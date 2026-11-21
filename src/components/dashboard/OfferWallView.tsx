@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
+import { SandboxedAdSlot } from '../ads/SandboxedAdSlot.tsx';
+import type { AdPartner } from '../../types/index.ts';
 import { formatYer, toYerDecimal } from '../../../shared/money.ts';
 import {
   ExternalLink,
@@ -41,7 +43,10 @@ interface ClixWallSummary {
 
 export const OfferWallView: React.FC = () => {
   const { user, openAuthModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'wall' | 'history'>('wall');
+  const [activeTab, setActiveTab] = useState<'hub' | 'wall' | 'partner' | 'history'>('hub');
+  const [offerWallPartners, setOfferWallPartners] = useState<AdPartner[]>([]);
+  const [selectedPartner, setSelectedPartner] = useState<AdPartner | null>(null);
+  const selectedPartnerOverride = useMemo(() => selectedPartner ? [selectedPartner] : [], [selectedPartner]);
   const [offerWallUrl, setOfferWallUrl] = useState<string>('');
   const [rewards, setRewards] = useState<ClixWallReward[]>([]);
   const [summary, setSummary] = useState<ClixWallSummary>({
@@ -102,6 +107,21 @@ export const OfferWallView: React.FC = () => {
     fetchOfferWallData();
   }, [fetchOfferWallData]);
 
+  useEffect(() => {
+    let cancelled = false;
+    api.getPublicAdPartners('offerwall_hub')
+      .then((result) => {
+        if (!cancelled) {
+          const partners = Array.isArray(result?.partners) ? result.partners : [];
+          setOfferWallPartners(partners.filter((partner) => partner.isActive && partner.code?.trim()));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setOfferWallPartners([]);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const fmtYer = (n: number | undefined | null) => formatYer(n ?? 0);
   const fmtUsd = (n: number | undefined | null) => {
     const fixed = toYerDecimal(n ?? 0).toDecimalPlaces(8).toFixed(8);
@@ -142,10 +162,10 @@ export const OfferWallView: React.FC = () => {
             <span className="bg-white/20 p-2 rounded-xl backdrop-blur-md shadow-inner">
               <ClixWallIcon size={32} />
             </span>
-            <h1 className="text-2xl font-bold">عروض كسب الإضافية (ClixWall Offer Wall)</h1>
+            <h1 className="text-2xl font-bold">بوابة حوائط العروض</h1>
           </div>
           <p className="text-emerald-100 text-sm max-w-2xl leading-relaxed">
-            أتمم المهام والعروض واستطلع العطاءات المتاحة لتحصل على مكافآت فورية بالدولار تُصرف وتُودع مباشرة في محفظتك بالريال اليمني بسعر صرف ثابت (1 دولار = 1,600 ر.ي).
+            اختر ClixWall أو أي شريك عروض آخر تضيفه الإدارة. تظهر مكافآت ClixWall المؤكدة في محفظتك بالريال اليمني وفق سعر الصرف المعتمد.
           </p>
         </div>
       </div>
@@ -203,33 +223,101 @@ export const OfferWallView: React.FC = () => {
         </div>
       </div>
 
-      {/* Tabs Switcher */}
-      <div className="flex border-b border-slate-200 dark:border-slate-700 gap-6">
+      {/* Offer walls hub navigation */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-700 pb-3">
         <button
-          onClick={() => setActiveTab('wall')}
-          className={`pb-3 font-medium text-sm flex items-center gap-2 border-b-2 transition-colors ${
-            activeTab === 'wall'
-              ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
-              : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400'
-          }`}
+          onClick={() => { setSelectedPartner(null); setActiveTab('hub'); }}
+          className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors ${activeTab === 'hub' || activeTab === 'wall' || activeTab === 'partner' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
         >
-          <Layers className="w-4 h-4" />
-          حائط العروض المباشر
+          <Layers className="inline w-4 h-4 ml-1" /> حوائط العروض
         </button>
         <button
           onClick={() => setActiveTab('history')}
-          className={`pb-3 font-medium text-sm flex items-center gap-2 border-b-2 transition-colors ${
-            activeTab === 'history'
-              ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
-              : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400'
-          }`}
+          className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors ${activeTab === 'history' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
         >
-          <RefreshCw className="w-4 h-4" />
-          سجل المكافآت والمعاملات ({rewards.length})
+          <RefreshCw className="inline w-4 h-4 ml-1" /> سجل مكافآت ClixWall ({rewards.length})
         </button>
+        {activeTab !== 'hub' && (
+          <button
+            onClick={() => { setSelectedPartner(null); setActiveTab('hub'); }}
+            className="mr-auto rounded-xl px-3 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            العودة إلى جميع الحوائط
+          </button>
+        )}
       </div>
 
       {/* Tab Content */}
+      {/* Unified offer walls directory */}
+      {activeTab === 'hub' && (
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-base font-extrabold text-slate-900 dark:text-white">اختر حائط العروض</h2>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">يمكن إضافة شركاء جدد من لوحة الإدارة دون تغيير تكامل ClixWall.</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <button
+              type="button"
+              onClick={() => { setSelectedPartner(null); setActiveTab('wall'); }}
+              className="min-h-[190px] rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-emerald-950/40 dark:via-slate-900 dark:to-slate-900 p-5 text-right shadow-sm hover:shadow-md hover:border-emerald-400 transition-all flex flex-col justify-between"
+            >
+              <div className="flex items-center gap-3">
+                <span className="w-12 h-12 rounded-xl bg-white dark:bg-slate-800 border border-emerald-100 dark:border-emerald-900 flex items-center justify-center"><ClixWallIcon size={32} /></span>
+                <span>
+                  <strong className="block text-base font-extrabold text-slate-900 dark:text-white">ClixWall</strong>
+                  <span className="text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">متصل · مكافآت بالدولار</span>
+                </span>
+              </div>
+              <span className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">افتح حائط ClixWall المخصص لحسابك وتابع مكافآتك وسجل التحويلات.</span>
+              <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400">فتح حائط ClixWall ←</span>
+            </button>
+            {offerWallPartners.map((partner) => (
+              <button
+                key={partner.id}
+                type="button"
+                onClick={() => { setSelectedPartner(partner); setActiveTab('partner'); }}
+                className="min-h-[190px] rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 text-right shadow-sm hover:shadow-md hover:border-emerald-400 transition-all flex flex-col justify-between"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="w-12 h-12 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center"><Layers className="w-6 h-6 text-emerald-600" /></span>
+                  <span>
+                    <strong className="block text-sm font-extrabold text-slate-900 dark:text-white">{partner.partnerName}</strong>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">شريك عروض إضافي</span>
+                  </span>
+                </div>
+                <span className="text-xs text-slate-600 dark:text-slate-300">عروض ومهام من {partner.partnerName}.</span>
+                <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400">فتح العروض ←</span>
+              </button>
+            ))}
+          </div>
+          {offerWallPartners.length === 0 && (
+            <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 p-4 text-xs text-slate-500 dark:text-slate-400">
+              ClixWall هو حائط العروض المتاح حالياً. لإضافة حائط آخر: افتح الإدارة ← إدارة الشركاء والإعلانات، وأضف شريكاً بمفتاح الموضع <strong className="font-mono">offerwall_hub</strong>، ونوع كود iframe، ثم أدخل رابط الحائط الآمن.
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'partner' && selectedPartner && (
+        <section className="space-y-3">
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">{selectedPartner.partnerName}</h2>
+              <p className="text-[11px] text-slate-500">حائط عروض خارجي معزول داخل إطار آمن</p>
+            </div>
+            <button type="button" onClick={() => { setSelectedPartner(null); setActiveTab('hub'); }} className="rounded-lg px-3 py-2 bg-slate-100 dark:bg-slate-800 text-xs font-bold">كل الحوائط</button>
+          </div>
+          <div className="min-h-[620px] rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2">
+            <SandboxedAdSlot
+              placementKey="offerwall_hub"
+              partnersOverride={selectedPartnerOverride}
+              className="w-full min-h-[600px]"
+              emptyPlaceholderText="تعذر تحميل حائط العروض حالياً."
+            />
+          </div>
+        </section>
+      )}
+
       {activeTab === 'wall' && (
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-900/50">
