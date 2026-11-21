@@ -121,6 +121,14 @@ export const AdPartnersManager: React.FC = () => {
       return;
     }
 
+    if (
+      form.placementKey === 'offerwall_hub' &&
+      (form.codeType !== 'iframe' || !/^https:\/\/[^\s]+$/i.test(form.code.trim()))
+    ) {
+      setFormError('حوائط العروض الإضافية تتطلب نوع iframe ورابط HTTPS مباشر صالح.');
+      return;
+    }
+
     const w = Number(form.width) || 300;
     const h = Number(form.height) || 250;
     if (w < 100 || w > 1200 || h < 50 || h > 800) {
