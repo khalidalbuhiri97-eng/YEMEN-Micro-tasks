@@ -45,6 +45,7 @@ const DEFAULT_FORM: PartnerFormState = {
 const PLACEMENT_OPTIONS = [
   { key: 'home_clixwall_slot', label: 'نافذة الإعلانات بجانب ClixWall (الرئيسية 300×250)' },
   { key: 'clixwall_card_embed', label: 'منطقة الشريك المدمجة داخل بطاقة ClixWall' },
+  { key: 'offerwall_hub', label: 'بوابة حوائط العروض (رابط iframe خارجي)' },
 ];
 
 export const AdPartnersManager: React.FC = () => {
