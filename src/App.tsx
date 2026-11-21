@@ -23,6 +23,7 @@ import { OfferWallView } from './components/dashboard/OfferWallView.tsx';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
 import { PWAInstallTopBanner } from './components/pwa/PWAInstallButton.tsx';
 import { HomeShortcutsStrip } from './components/home/HomeShortcutsStrip.tsx';
+import { YtCoinMiningCard } from './components/home/YtCoinMiningCard.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
@@ -104,6 +105,7 @@ function MainApp() {
         {currentTab === 'home' && (
           <main>
             <HomeShortcutsStrip onNavigate={(tab) => setCurrentTab(tab as any)} />
+            <YtCoinMiningCard />
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
