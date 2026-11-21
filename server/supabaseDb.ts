@@ -159,7 +159,7 @@ export function computeReferralSummary(params: {
 
   return {
     code,
-    shareUrl: code ? `https://kasbyemen.com/?ref=${encodeURIComponent(code)}` : 'https://kasbyemen.com/',
+    shareUrl: code ? `https://yemen-micro-tasks.vercel.app/?ref=${encodeURIComponent(code)}` : 'https://yemen-micro-tasks.vercel.app/',
     referralBonus: Math.max(0, Number(params.referralBonus ?? 0)),
     totalReferred: referredUsers.length,
     qualifiedReferralsCount,
@@ -5082,7 +5082,7 @@ export const supabaseDb = {
         const ownCode = String(rpcSummary.code || generateReferralCode(userId));
         return {
           code: ownCode,
-          shareUrl: ownCode ? `https://kasbyemen.com/?ref=${encodeURIComponent(ownCode)}` : 'https://kasbyemen.com/',
+          shareUrl: ownCode ? `https://yemen-micro-tasks.vercel.app/?ref=${encodeURIComponent(ownCode)}` : 'https://yemen-micro-tasks.vercel.app/',
           referralBonus: Number(rpcSummary.referralBonus ?? settings.referralBonus),
           totalReferred: Number(rpcSummary.totalReferred || 0),
           qualifiedReferralsCount: Number(rpcSummary.qualifiedReferralsCount || 0),
