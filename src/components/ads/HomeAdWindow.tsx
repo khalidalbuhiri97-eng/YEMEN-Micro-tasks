@@ -25,6 +25,7 @@ export const HomeAdWindow: React.FC<HomeAdWindowProps> = ({ className = '' }) =>
             scriptSrc="https://bicea.org/22/598beabfde4bf58eec891131c86415eb"
             width={300}
             height={250}
+            className="!my-0"
           />
         </div>
       </div>
