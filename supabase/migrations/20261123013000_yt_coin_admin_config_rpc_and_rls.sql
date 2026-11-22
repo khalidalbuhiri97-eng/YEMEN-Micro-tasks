@@ -124,6 +124,27 @@ BEGIN
        v_network.enabled, v_now);
   END LOOP;
 
+  INSERT INTO yt_coin.audit_log(actor_id, action, entity_type, entity_id, details)
+  VALUES (
+    v_actor,
+    'admin_update_config',
+    'yt_coin_config',
+    'singleton',
+    jsonb_build_object(
+      'mining_enabled', p_mining_enabled,
+      'base_reward_units', p_base_reward_units,
+      'tap_reward_units', p_tap_reward_units,
+      'ad_click_reward_units', p_ad_click_reward_units,
+      'ad_view_reward_units', p_ad_view_reward_units,
+      'daily_tap_limit', p_daily_tap_limit,
+      'daily_ad_limit', p_daily_ad_limit,
+      'daily_cap_start_units', p_daily_cap_start_units,
+      'daily_cap_max_units', p_daily_cap_max_units,
+      'swap_enabled', p_swap_enabled,
+      'exchange_rate_yer_per_yt', p_exchange_rate_yer_per_yt
+    )
+  );
+
   RETURN jsonb_build_object(
     'success', true,
     'config', to_jsonb(v_cfg),
