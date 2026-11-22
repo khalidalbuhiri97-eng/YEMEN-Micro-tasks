@@ -14,11 +14,6 @@ function safeEqualHex(expected: string, received: string): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-function readField(req: Request, key: string): string {
-  const value = (req.body && req.body[key] !== undefined) ? req.body[key] : req.query[key];
-  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
-}
-
 // Offerwall.GG supports canonical field names and common callback aliases.
 // Accept both so a placement configured with the documented short macros
 // (user/amount/tx/sig) is processed exactly like the canonical form.
