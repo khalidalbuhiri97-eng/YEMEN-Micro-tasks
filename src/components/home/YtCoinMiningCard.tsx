@@ -534,7 +534,7 @@ function formatCountdown(secondsTotal: number): string {
 const PAGE_TITLES: Record<TabId, string> = {
   home: 'منجم عملة YT Coin الرقمية',
   tasks: 'مركز المهام والمكافآت اليومية',
-  wallet: 'محفظة YT Vault الرقمية المستقلة',
+  wallet: 'محفظة YT Coin الرقمية المستقلة',
   dashboard: 'لوحة الإحصائيات ونمو المعروض',
   admin: 'لوحة الإدارة وضبط إعدادات المنجم',
 };
@@ -689,7 +689,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     setIsRefreshingSpin(true);
     window.setTimeout(() => setIsRefreshingSpin(false), 650);
     await loadSummary(false);
-    showToast('تمت مزامنة العقدة ومحفظة YT Vault بنجاح', 'info');
+    showToast('تم تحديث بيانات YT Coin من قاعدة البيانات بنجاح', 'info');
   };
 
   const handleCoinTap = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -701,7 +701,6 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
       showToast('عذراً، عقد التعدين متوقف مؤقتاً للصيانة', 'error');
       return;
     }
-    const gain = 1;
     const nextTaps = todayTaps + 1;
     setTodayTaps(nextTaps);
 
@@ -759,11 +758,11 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
         showToast(resultMessage || 'تم استلام مكافأة اليوم مسبقاً.', 'info');
       } else if (claimedAmount !== null) {
         showToast(
-          resultMessage || `تم تحويل +${formatYt(claimedAmount)} YT Coin إلى محفظتك الخارجية بنجاح!`,
+          resultMessage || `تمت إضافة مكافأة ${formatYt(claimedAmount)} YT إلى رصيد حسابك الداخلي.`,
           'success'
         );
       } else {
-        showToast(resultMessage || 'تم إيداع مكافأة التعدين في محفظتك المستقلة!', 'success');
+        showToast(resultMessage || 'تم تسجيل مكافأة التعدين في رصيد YT Coin الداخلي.', 'success');
       }
       await loadSummary(true);
     } catch (err: any) {
