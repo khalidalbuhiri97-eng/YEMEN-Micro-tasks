@@ -30,6 +30,7 @@ import {
   FileText,
   Eye,
   WifiOff,
+  Coins,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CampaignLedgerTxModal } from '../advertiser/CampaignModals.tsx';
@@ -47,6 +48,7 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
   const [filterType, setFilterType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [ytCoinSummary, setYtCoinSummary] = useState<any>(null);
 
   // Transfer Modal State
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
@@ -70,12 +72,14 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
     }
     setIsLoading(true);
     try {
-      const [walletRes, transfersRes] = await Promise.all([
+      const [walletRes, transfersRes, ytCoinRes] = await Promise.all([
         api.getMyWallet(),
         api.getWalletTransfers().catch(() => ({ transfers: [] })),
+        api.getMyYtCoinSummary().catch(() => null),
       ]);
       setTransactions(walletRes.transactions || []);
       setTransfers(transfersRes.transfers || []);
+      setYtCoinSummary(ytCoinRes?.summary || null);
       await refreshWallet();
     } catch (err: any) {
       console.error('Error loading wallet data', err);
@@ -449,6 +453,27 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
           <p className="text-[11px] text-slate-400 mt-2">مجموع مكافآت المهام المعتمدة</p>
         </div>
       </div>
+
+      {/* Independent YT Coin balance: never mixed with the YER financial wallet */}
+      <section className="rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-gradient-to-l from-amber-50 via-white to-yellow-50 dark:from-slate-900 dark:via-slate-900 dark:to-amber-950/20 p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-11 w-11 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0"><Coins className="w-6 h-6" /></div>
+            <div className="min-w-0">
+              <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">محفظة YT Coin المستقلة</h2>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">رصيد منفصل تماماً عن الريال اليمني ولا يدخل في السحب أو التحويل المالي</p>
+            </div>
+          </div>
+          <div className="text-left shrink-0">
+            <strong className="block text-xl font-extrabold font-mono text-amber-700 dark:text-amber-300">{(Number(ytCoinSummary?.balanceUnits || 0) / 1000000).toFixed(2)}</strong>
+            <span className="text-xs font-bold text-amber-700 dark:text-amber-300">YT</span>
+          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-amber-100 dark:border-amber-900/40 pt-3 text-[11px]">
+          <span className="text-slate-600 dark:text-slate-300">إجمالي المكتسب: <b className="font-mono">{(Number(ytCoinSummary?.lifetimeEarnedUnits || 0) / 1000000).toFixed(2)} YT</b></span>
+          <span className="text-slate-500 dark:text-slate-400">تُجمع عبر التعدين والمكافآت الداخلية</span>
+        </div>
+      </section>
 
       {/* Wallet Statistics Ad Placement (Isolated between summary cards and ledger history) */}
       <AdsterraAd placementId="wallet_stats_between" />
