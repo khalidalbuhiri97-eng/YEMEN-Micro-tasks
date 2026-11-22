@@ -69,7 +69,7 @@ function pickYtUnits(sources: Array<Record<string, any> | null>, ytKeys: string[
   const direct = pickNumber(sources, ytKeys);
   if (direct !== null) return direct;
   const units = pickNumber(sources, unitKeys);
-  return units === null ? null : units / 1_000_000;
+  return units === null ? null : units / 2;
 }
 
 function formatDateTime(iso: string | null): string {
@@ -249,7 +249,7 @@ export const YtCoinAdminView: React.FC = () => {
       let displayLabel = METRIC_LABELS[k] || k;
       if (typeof v === 'boolean') displayVal = v ? 'نعم' : 'لا';
       else if (typeof v === 'number' && (k.endsWith('_units') || k.endsWith('Units'))) {
-        displayVal = formatNum(v / 1_000_000);
+        displayVal = formatNum(v / 2);
         displayLabel = METRIC_LABELS[k.replace(/_units$|Units$/, '_yt')] || k.replace(/_units$|Units$/, ' (YT)');
       } else if (typeof v === 'number') displayVal = formatNum(v);
       else if (k.endsWith('_at')) displayVal = formatDateTime(v);
@@ -462,7 +462,7 @@ export const YtCoinAdminView: React.FC = () => {
                         <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-amber-700 dark:text-amber-400">
                           {formatNum(
                             pickYtUnits([t], ['balance_yt', 'available_yt'], ['balance_units', 'balanceUnits']) ??
-                              (t.balance_atomic != null ? Number(t.balance_atomic) / 1_000_000 : null)
+                              (t.balance_atomic != null ? Number(t.balance_atomic) / 2 : null)
                           )}{' '}
                           YT
                         </td>
