@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   CheckSquare,
   Wallet,
@@ -21,7 +21,6 @@ interface HomeShortcutsStripProps {
 
 export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNavigate }) => {
   const { user, wallet, isAdmin } = useAuth();
-  const [showAllShortcuts, setShowAllShortcuts] = useState(false);
 
   const shortcuts = [
     {
@@ -146,8 +145,9 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
 
         <div className="relative">
           <div
-            className={`flex flex-col gap-2 overflow-y-auto overscroll-contain scroll-smooth transition-[max-height] duration-300 pr-0.5 ${showAllShortcuts ? 'max-h-[620px]' : 'max-h-[184px]'}`}
-            aria-label="بطاقات التنقل الرأسية"
+            dir="rtl"
+            className="flex flex-row gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-smooth snap-x snap-mandatory pb-3 pt-1 px-0.5 [scrollbar-width:thin] [scrollbar-color:#a7f3d0_transparent]"
+            aria-label="بطاقات الخدمات والتنقل - مرر جانبياً"
           >
             {shortcuts.map((item) => {
               const Icon = item.icon;
@@ -159,34 +159,24 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
                   disabled={disabled}
                   onClick={() => item.targetTab && onNavigate(item.targetTab)}
                   aria-label={disabled ? item.label + ' - قريباً' : item.label}
-                  className={`group w-full min-h-[54px] shrink-0 flex flex-row-reverse items-center justify-between gap-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-800/60 px-3 py-2 text-right transition-all ${disabled ? 'opacity-75 cursor-default' : 'hover:border-emerald-400 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30 cursor-pointer'}`}
+                  className={`group relative flex h-[132px] w-[112px] min-w-[112px] shrink-0 snap-start flex-col items-center justify-center gap-3 overflow-hidden rounded-2xl border border-slate-200/80 dark:border-slate-700/80 bg-gradient-to-b from-white to-slate-50 dark:from-slate-800 dark:to-slate-900 px-2 py-3 text-center shadow-sm transition-all duration-200 ${disabled ? 'opacity-75 cursor-default' : 'cursor-pointer hover:-translate-y-0.5 hover:border-emerald-400 hover:shadow-md active:scale-[0.98]'} before:absolute before:inset-x-5 before:top-0 before:h-1 before:rounded-b-full before:bg-emerald-400/70`}
                 >
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm shrink-0 ${item.accent}`}>
-                      <Icon className="w-5 h-5" />
-                    </span>
-                    <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
-                      {item.label}
-                    </span>
+                  <span className={`flex h-14 w-14 items-center justify-center rounded-2xl shadow-sm ring-1 ring-black/5 dark:ring-white/10 transition-transform duration-200 ${item.accent} ${disabled ? '' : 'group-hover:scale-105'}`}>
+                    <Icon className="h-7 w-7" strokeWidth={2.1} />
                   </span>
-                  <span className="flex items-center gap-2 shrink-0">
-                    {disabled && <span className="text-[10px] text-slate-400">قريباً</span>}
-                    {!disabled && <span className="text-[10px] text-slate-400">فتح</span>}
+                  <span className="w-full text-[11px] font-extrabold leading-4 text-slate-800 dark:text-slate-100 line-clamp-2">
+                    {item.label}
                   </span>
+                  {disabled ? (
+                    <span className="absolute bottom-1.5 rounded-full bg-slate-200/80 dark:bg-slate-700 px-2 py-0.5 text-[9px] font-semibold text-slate-500 dark:text-slate-300">قريباً</span>
+                  ) : (
+                    <span className="absolute bottom-1.5 h-1 w-5 rounded-full bg-emerald-400/70 opacity-0 transition-opacity group-hover:opacity-100" />
+                  )}
                 </button>
               );
             })}
           </div>
-          {shortcuts.length > 3 && (
-            <button
-              type="button"
-              onClick={() => setShowAllShortcuts((value) => !value)}
-              aria-expanded={showAllShortcuts}
-              className="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-            >
-              {showAllShortcuts ? 'إخفاء البطاقات الإضافية' : 'عرض بقية البطاقات والتمرير'}
-            </button>
-          )}
+          <p className="mt-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">اسحب جانبياً لاستعراض جميع الخدمات <span aria-hidden="true">←</span></p>
         </div>
       </div>
     </section>
