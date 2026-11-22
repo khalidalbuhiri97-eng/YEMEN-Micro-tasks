@@ -1222,7 +1222,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       </span>
                       <div className="flex items-baseline gap-2.5 mt-1">
                         <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight font-mono">
-                          {formatInt(effectiveBalance)}
+                          {formatYt(effectiveBalance)}
                         </h2>
                         <span className="text-lg font-extrabold text-amber-400">YT Coin</span>
                       </div>
@@ -1375,7 +1375,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <TrendingUp className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-xl font-black text-white font-mono">{formatYt(effectiveDailyCap)}</div>
-                    <div className="text-[11px] text-emerald-400 mt-1">نمو تصاعدي بدون كسور عشرية</div>
+                    <div className="text-[11px] text-emerald-400 mt-1">زيادة يومية قدرها 0.5 YT</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
@@ -1522,22 +1522,24 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6">
                     <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-3">
                       <label className="text-xs font-bold text-gray-300 block">
-                        مكافأة المطالبة الحالية (عدد صحيح YT)
+                        مكافأة المطالبة الحالية (YT)
                       </label>
                       <div className="flex gap-2">
                         <input
                           name="claimInput"
                           type="number"
-                          min={1}
-                          step={1}
+                          min={0.5}
+                          step={0.5}
                           defaultValue={effectiveClaimReward}
+                          readOnly
                           className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-amber-400"
                         />
                         <button
-                          type="submit"
-                          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-extrabold text-xs shrink-0 cursor-pointer"
+                          type="button"
+                          disabled
+                          className="px-4 py-2.5 rounded-xl bg-slate-700 text-slate-400 font-extrabold text-xs shrink-0 cursor-not-allowed"
                         >
-                          حفظ
+                          قراءة فقط
                         </button>
                       </div>
                     </div>
@@ -1548,23 +1550,25 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <input
                           name="capInput"
                           type="number"
-                          min={1000}
-                          step={1}
+                          min={0.5}
+                          step={0.5}
                           defaultValue={effectiveDailyCap}
+                          readOnly
                           className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-amber-400"
                         />
                         <button
-                          type="submit"
-                          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-extrabold text-xs shrink-0 cursor-pointer"
+                          type="button"
+                          disabled
+                          className="px-4 py-2.5 rounded-xl bg-slate-700 text-slate-400 font-extrabold text-xs shrink-0 cursor-not-allowed"
                         >
-                          تطبيق
+                          قراءة فقط
                         </button>
                       </div>
                     </div>
 
                     <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-3">
                       <label className="text-xs font-bold text-gray-300 block">
-                        النقر على العملة
+                        النقر التفاعلي (لا يضيف رصيداً)
                       </label>
                       <div className="flex gap-2">
                         <input
@@ -1572,14 +1576,16 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                           type="number"
                           min={1}
                           step={1}
-                          value={0}\n                          readOnly
+                          value={0}
+                          readOnly
                           className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-amber-400"
                         />
                         <button
-                          type="submit"
-                          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-extrabold text-xs shrink-0 cursor-pointer"
+                          type="button"
+                          disabled
+                          className="px-4 py-2.5 rounded-xl bg-slate-700 text-slate-400 font-extrabold text-xs shrink-0 cursor-not-allowed"
                         >
-                          تعديل
+                          غير متاح
                         </button>
                       </div>
                     </div>
@@ -1587,23 +1593,17 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 flex items-center justify-between">
                       <div>
                         <span className="text-xs font-bold text-gray-200 block">حالة عقد التعدين الذكي</span>
-                        <span className="text-[11px] text-gray-400">تفعيل أو إيقاف التعدين مؤقتاً</span>
+                        <span className="text-[11px] text-gray-400">الحالة الفعلية من Supabase (قراءة فقط)</span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = !effectiveNetworkActive;
-                          setNetworkActiveOverride(next);
-                          showToast(next ? 'تم تفعيل شبكة التعدين' : 'تم إيقاف شبكة التعدين مؤقتاً', 'info');
-                        }}
-                        className={`px-4 py-2 rounded-xl font-bold text-xs cursor-pointer ${
+                      <span
+                        className={`px-4 py-2 rounded-xl font-bold text-xs ${
                           effectiveNetworkActive
                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                             : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
                         }`}
                       >
                         {effectiveNetworkActive ? 'نشط (Active)' : 'متوقف (Paused)'}
-                      </button>
+                      </span>
                     </div>
                   </div>
 
@@ -1724,7 +1724,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                 <div className="flex justify-between text-xs text-gray-400 mb-1">
                   <span>المبلغ (YT)</span>
                   <span>
-                    المتاح: <strong className="text-amber-400 font-mono">{formatInt(effectiveBalance)}</strong> YT
+                    المتاح: <strong className="text-amber-400 font-mono">{formatYt(effectiveBalance)}</strong> YT
                   </span>
                 </div>
                 <input
