@@ -155,7 +155,8 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   const canClaimExplicit = pickBoolean(sources, ['canClaim', 'can_claim']);
 
   const dailyCapUnits = pickNumber(sources, ['dailyCapUnits', 'daily_cap_units']) || 1;
-  const dailyCapRemainingUnits = pickNumber(sources, ['dailyCapRemainingUnits', 'daily_cap_remaining_units']) || dailyCapUnits;
+  const dailyCapRemainingRaw = pickNumber(sources, ['dailyCapRemainingUnits', 'daily_cap_remaining_units']);
+  const dailyCapRemainingUnits = dailyCapRemainingRaw === null ? dailyCapUnits : dailyCapRemainingRaw;
   const minedTodayUnits = pickNumber(sources, ['minedTodayUnits', 'mined_today_units', 'paid_units']) || 0;
   const maxSupplyUnits = pickNumber(sources, ['maxSupplyUnits', 'max_supply_units']) || 2000000000;
   const totalMinedUnits = pickNumber(sources, ['totalMinedUnits', 'total_mined_units']) || 0;
