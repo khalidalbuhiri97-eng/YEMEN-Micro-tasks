@@ -36,6 +36,15 @@ import confetti from 'canvas-confetti';
 import { CampaignLedgerTxModal } from '../advertiser/CampaignModals.tsx';
 import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 
+function formatYtCoinUnits(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '0';
+  const units = Number(value);
+  if (!Number.isFinite(units)) return '0';
+  const yt = units / 1_000_000;
+  if (yt !== 0 && Math.abs(yt) < 0.01) return yt < 0 ? '-<0.01' : '<0.01';
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(yt);
+}
+
 interface WalletViewProps {
   onGoToWithdraw: () => void;
   onGoToTasks: () => void;
@@ -465,12 +474,12 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
             </div>
           </div>
           <div className="text-left shrink-0">
-            <strong className="block text-xl font-extrabold font-mono text-amber-700 dark:text-amber-300">{(Number(ytCoinSummary?.balanceUnits || 0) / 1000000).toFixed(2)}</strong>
+            <strong className="block text-xl font-extrabold font-mono text-amber-700 dark:text-amber-300">{formatYtCoinUnits(ytCoinSummary?.balanceUnits ?? ytCoinSummary?.balance_units)}</strong>
             <span className="text-xs font-bold text-amber-700 dark:text-amber-300">YT</span>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-amber-100 dark:border-amber-900/40 pt-3 text-[11px]">
-          <span className="text-slate-600 dark:text-slate-300">إجمالي المكتسب: <b className="font-mono">{(Number(ytCoinSummary?.lifetimeEarnedUnits || 0) / 1000000).toFixed(2)} YT</b></span>
+          <span className="text-slate-600 dark:text-slate-300">إجمالي المكتسب: <b className="font-mono">{formatYtCoinUnits(ytCoinSummary?.lifetimeEarnedUnits ?? ytCoinSummary?.lifetime_earned_units)} YT</b></span>
           <span className="text-slate-500 dark:text-slate-400">تُجمع عبر التعدين والمكافآت الداخلية</span>
         </div>
       </section>
