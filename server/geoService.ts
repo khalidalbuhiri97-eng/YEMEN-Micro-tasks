@@ -229,7 +229,7 @@ function loadGeoDataset(): IndexedGeoDataset {
 // TTL CACHE & DB HELPERS
 // ==============================================================================
 
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = 5 * 60_000;
 
 interface TimedEntry<T> {
   value: T;
@@ -394,12 +394,17 @@ export const geoService = {
     const includeInactive = Boolean(options?.includeInactive);
     const cacheKey = includeInactive ? 'ALL' : 'ACTIVE';
     const now = Date.now();
-    const status = await this.checkGeoTablesStatus(options?.authToken);
-
     const cached = countriesCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
-      return { countries: cached.value, geoTablesReady: status.ready };
+      // Country metadata is public and changes rarely; serve the warm cache without
+      // waiting for an additional Supabase readiness round-trip.
+      return {
+        countries: cached.value,
+        geoTablesReady: readinessCache?.value.ready ?? true,
+      };
     }
+
+    const status = await this.checkGeoTablesStatus(options?.authToken);
 
     if (status.ready) {
       try {
