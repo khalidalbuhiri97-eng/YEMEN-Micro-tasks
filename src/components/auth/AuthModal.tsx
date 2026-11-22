@@ -1,21 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { supabase } from '../../api/supabase.ts';
 import { GeoLocationSelector, type GeoSingleValue } from '../common/GeoLocationSelector.tsx';
 import { X, Lock, Phone, User, Mail, ArrowRight, Shield, Eye, EyeOff, Building2 } from 'lucide-react';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultMode?: 'login' | 'register' | 'owner';
+  defaultMode?: 'login' | 'register' | 'owner' | 'forgot' | 'reset';
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMode = 'login' }) => {
   const { login, register } = useAuth();
-  const [mode, setMode] = useState<'login' | 'register' | 'owner'>(defaultMode);
+  const [mode, setMode] = useState<'login' | 'register' | 'owner' | 'forgot' | 'reset'>(defaultMode);
   const [userType, setUserType] = useState<'user' | 'advertiser'>('user');
   
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
   const [companyName, setCompanyName] = useState('');
@@ -37,6 +40,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
     setMode(defaultMode);
     setUserType('user');
     setError('');
+    setSuccessMessage('');
     if (typeof window !== 'undefined') {
       const refParam = new URLSearchParams(window.location.search).get('ref');
       if (refParam && refParam.trim()) {
@@ -53,7 +57,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
     setIsSubmitting(true);
 
     try {
-      if (mode === 'login' || mode === 'owner') {
+      if (mode === 'forgot') {
+        const recoveryEmail = (email || identifier).trim().toLowerCase();
+        if (!recoveryEmail || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(recoveryEmail)) {
+          throw new Error('أدخل البريد الإلكتروني المسجل في حسابك.');
+        }
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
+          redirectTo: `${window.location.origin}/`,
+        });
+        if (resetError) throw resetError;
+        setSuccessMessage('إذا كان البريد مسجلاً، فستصلك رسالة تحتوي رابطاً آمناً لإعادة تعيين كلمة المرور. تحقق من الوارد والرسائل غير المرغوب فيها.');
+      } else if (mode === 'reset') {
+        if (password.length < 8) throw new Error('يجب أن تتكون كلمة المرور الجديدة من 8 أحرف على الأقل.');
+        if (password !== passwordConfirm) throw new Error('تأكيد كلمة المرور غير مطابق.');
+        const { data: userData } = await supabase.auth.getUser();
+        const { error: updateError } = await supabase.auth.updateUser({ password });
+        if (updateError) throw updateError;
+        const recoveredEmail = userData.user?.email || '';
+        await supabase.auth.signOut({ scope: 'local' });
+        setPassword('');
+        setPasswordConfirm('');
+        setIdentifier(recoveredEmail);
+        setMode('login');
+        setSuccessMessage('تم تغيير كلمة المرور بنجاح. سجّل الدخول الآن باستخدام كلمة المرور الجديدة.');
+      } else if (mode === 'login' || mode === 'owner') {
         await login(identifier, password);
       } else {
         if (!geoSelection.countryId || !geoSelection.divisionId) {
@@ -148,6 +175,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {successMessage && (
+            <div className="p-3 text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 rounded-lg">
+              {successMessage}
+            </div>
+          )}
           {error && (
             <div className="p-3 text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg">
               {error}
@@ -263,10 +295,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             </>
           )}
 
-          {(mode === 'login' || mode === 'owner') && (
+          {(mode === 'login' || mode === 'owner' || mode === 'forgot') && (
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                {mode === 'owner' ? 'البريد الإلكتروني للمالك المعتمد' : 'رقم الهاتف أو البريد الإلكتروني'}
+                {mode === 'owner' ? 'البريد الإلكتروني للمالك المعتمد' : mode === 'forgot' ? 'البريد الإلكتروني المسجل' : 'رقم الهاتف أو البريد الإلكتروني'}
               </label>
               <div className="relative">
                 {mode === 'owner' ? (
@@ -279,16 +311,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder={mode === 'owner' ? 'khalidalbuhiri@gmail.com' : '770000000'}
+                  placeholder={mode === 'owner' || mode === 'forgot' ? 'email@example.com' : '770000000'}
                   className="w-full pr-9 pl-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100 font-mono"
                 />
               </div>
             </div>
           )}
 
+          {mode !== 'forgot' && (
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              كلمة المرور
+              {mode === 'reset' ? 'كلمة المرور الجديدة' : 'كلمة المرور'}
             </label>
             <div className="relative">
               <Lock className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
@@ -310,6 +343,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
               </button>
             </div>
           </div>
+          )}
+          {mode === 'reset' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">تأكيد كلمة المرور الجديدة</label>
+              <input type="password" required minLength={8} value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} placeholder="أعد كتابة كلمة المرور" className="w-full px-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100" />
+            </div>
+          )}
 
           <button
             type="submit"
@@ -323,7 +363,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             }`}
           >
             {isSubmitting ? (
-              <span>جاري التحقق من الخادم...</span>
+              <span>جارٍ تنفيذ الطلب...</span>
             ) : (
               <>
                 <span>
@@ -331,6 +371,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                     ? 'دخول لوحة تحكم المالك'
                     : mode === 'login'
                     ? 'تسجيل الدخول'
+                    : mode === 'forgot'
+                    ? 'إرسال رابط الاستعادة'
+                    : mode === 'reset'
+                    ? 'حفظ كلمة المرور الجديدة'
                     : (userType === 'advertiser' ? 'إنشاء حساب معلن جديد' : 'إنشاء الحساب وبدء الكسب')}
                 </span>
                 <ArrowRight className="w-4 h-4" />
@@ -342,6 +386,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
         {/* Footer switches */}
         <div className="px-6 py-3 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800 text-center text-xs text-slate-500 flex flex-col gap-2">
           {mode === 'login' ? (
+            <>
+            <div>
+              نسيت كلمة المرور؟{' '}
+              <button type="button" onClick={() => { setError(''); setSuccessMessage(''); setEmail(identifier.includes('@') ? identifier : ''); setMode('forgot'); }} className="text-emerald-600 font-bold hover:underline">استعدها الآن</button>
+            </div>
             <div>
               ليس لديك حساب بعد؟{' '}
               <button
@@ -355,6 +404,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                 سجل الآن مجاناً
               </button>
             </div>
+            </>
           ) : mode === 'register' ? (
             <div>
               لديك حساب بالفعل؟{' '}
@@ -387,17 +437,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
           )}
 
           {/* Discreet Owner Link at bottom */}
-          {mode !== 'owner' && (
+          {mode !== 'owner' && mode !== 'reset' && (
             <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50">
               <button
                 type="button"
-                onClick={() => setMode('owner')}
+                onClick={() => { setError(''); setSuccessMessage(''); setMode('owner'); }}
                 className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 flex items-center justify-center gap-1 mx-auto"
               >
                 <Shield className="w-3 h-3 text-slate-400" />
                 <span>بوابة دخول مالك المنصة</span>
               </button>
             </div>
+          )}
+          {(mode === 'forgot' || mode === 'reset') && (
+            <button type="button" onClick={() => { setError(''); setSuccessMessage(''); setMode('login'); }} className="text-emerald-600 font-bold hover:underline">العودة إلى تسجيل الدخول</button>
           )}
         </div>
       </div>
