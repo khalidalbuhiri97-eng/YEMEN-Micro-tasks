@@ -377,8 +377,8 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       role,
       companyName,
     } = req.body || {};
-    if (!fullName || !phone || !password) {
-      return res.status(400).json({ error: 'يرجى إدخال الاسم ورقم الهاتف وكلمة المرور.' });
+    if (!fullName || !phone || !password || typeof email !== 'string' || !email.trim()) {
+      return res.status(400).json({ error: 'يرجى إدخال الاسم ورقم الهاتف والبريد الإلكتروني وكلمة المرور.' });
     }
     if (password.length < 6) {
       return res.status(400).json({ error: 'كلمة المرور يجب أن لا تقل عن 6 خانات.' });
@@ -405,7 +405,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       'صنعاء';
 
     const cleanPhone = phone.trim();
-    const cleanEmail = email ? email.trim().toLowerCase() : `ky_${cleanPhone.replace(/\D/g, '')}@kasbyemen.local`;
+    const cleanEmail = email.trim().toLowerCase();
     const cleanReferralCode = typeof referralCode === 'string' ? referralCode.trim().toUpperCase() : '';
 
     // 1. Validate optional referral code strictly BEFORE creating auth user (reject nonexistent / self-referral)
