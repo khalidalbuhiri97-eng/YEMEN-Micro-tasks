@@ -284,7 +284,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                   <Mail className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
                   <input
                     type="email"
-                    required={userType === 'advertiser'}
+                    required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="email@example.com"
