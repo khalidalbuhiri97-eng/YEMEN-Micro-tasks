@@ -627,7 +627,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <div className="flex items-center justify-between text-xs font-bold text-slate-300">
                           <span className="flex items-center gap-1.5">
                             <Lock className="w-4 h-4 text-amber-400" />
-                            <span>المعروض المستخرج من إجمالي 1 مليار عملة</span>
+                            <span>المعروض المستخرج من إجمالي المعروض</span>
                           </span>
                           <span className="font-mono text-amber-300">
                             {formatYtUnits(summary.totalMinedUnits)} / {formatYtUnits(summary.maxSupplyUnits)} YT
