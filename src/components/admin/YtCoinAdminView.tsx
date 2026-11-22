@@ -56,12 +56,12 @@ function pickArray(sources: Array<Record<string, any> | null>, keys: string[]): 
   return [];
 }
 
-function formatNum(value: number | null, maxDecimals = 2): string {
+function formatNum(value: number | null, maxDecimals = 1): string {
   if (value === null || !Number.isFinite(value)) return '—';
-  if (value !== 0 && Math.abs(value) < 0.01) return value < 0 ? '-<0.01' : '<0.01';
+  if (value !== 0 && Math.abs(value) < 0.1) return value < 0 ? '-<0.1' : '<0.1';
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 0,
-    maximumFractionDigits: Math.min(2, Math.max(0, maxDecimals)),
+    maximumFractionDigits: Math.min(1, Math.max(0, maxDecimals)),
   }).format(value);
 }
 
@@ -108,6 +108,13 @@ const METRIC_LABELS: Record<string, string> = {
   total_claims: 'إجمالي المطالبات',
   total_claims_count: 'إجمالي المطالبات',
   daily_reward_yt: 'مكافأة التعدين اليومي (YT)',
+  base_reward_yt: 'مكافأة اليوم الأول (YT)',
+  daily_increment_yt: 'الزيادة اليومية التراكمية (YT)',
+  max_daily_reward_yt: 'مكافأة اليوم 20 وما بعده (YT)',
+  daily_cap_start_yt: 'السقف اليومي الابتدائي (YT)',
+  daily_cap_increment_yt: 'زيادة السقف اليومي (YT)',
+  daily_cap_max_yt: 'الحد الأقصى للسقف اليومي (YT)',
+  daily_cap_yt: 'السقف اليومي الحالي (YT)',
   mining_enabled: 'حالة التعدين',
   cap_reached: 'بلوغ سقف التعدين',
   updated_at: 'آخر تحديث',
@@ -425,7 +432,7 @@ export const YtCoinAdminView: React.FC = () => {
               <div className="flex items-center justify-between text-xs font-bold">
                 <span className="text-slate-700 dark:text-slate-200">نسبة استهلاك سقف التعدين</span>
                 <span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">
-                  {parsed.poolPct.toFixed(2)}%
+                  {parsed.poolPct.toFixed(1)}%
                 </span>
               </div>
               <div className="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">

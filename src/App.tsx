@@ -89,16 +89,18 @@ function MainApp() {
       <OfflineIndicator />
 
       {/* Top Bar Navigation */}
-      <Navbar
-        currentTab={currentTab}
-        onNavigate={(tab) => {
-          if (tab === 'privacy') setLegalModalType('privacy');
-          else if (tab === 'terms') setLegalModalType('terms');
-          else setCurrentTab(tab as any);
-        }}
-        isDark={isDark}
-        onToggleDark={toggleDark}
-      />
+      {currentTab !== 'ytcoin' && (
+        <Navbar
+          currentTab={currentTab}
+          onNavigate={(tab) => {
+            if (tab === 'privacy') setLegalModalType('privacy');
+            else if (tab === 'terms') setLegalModalType('terms');
+            else setCurrentTab(tab as any);
+          }}
+          isDark={isDark}
+          onToggleDark={toggleDark}
+        />
+      )}
 
       {/* Main View Router */}
       <div className="flex-1 pb-16 md:pb-0">
@@ -131,8 +133,8 @@ function MainApp() {
         )}
 
         {currentTab === 'ytcoin' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <YtCoinMiningCard />
+          <div className="w-full h-full min-h-[100dvh]">
+            <YtCoinMiningCard onExit={() => setCurrentTab('home')} />
           </div>
         )}
 
@@ -189,16 +191,19 @@ function MainApp() {
       </div>
 
       {/* Footer */}
-      <Footer
-        onNavigate={(tab) => {
-          if (tab === 'privacy') setLegalModalType('privacy');
-          else if (tab === 'terms') setLegalModalType('terms');
-          else setCurrentTab(tab as any);
-        }}
-      />
+      {currentTab !== 'ytcoin' && (
+        <Footer
+          onNavigate={(tab) => {
+            if (tab === 'privacy') setLegalModalType('privacy');
+            else if (tab === 'terms') setLegalModalType('terms');
+            else setCurrentTab(tab as any);
+          }}
+        />
+      )}
 
       {/* Mobile Sticky Thumb Navigation Bar (§1.I 15% Mobile Sticky Cap) */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-3 py-2 flex items-center justify-around text-[10px] font-bold">
+      {currentTab !== 'ytcoin' && (
+        <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-3 py-2 flex items-center justify-around text-[10px] font-bold">
         <button
           onClick={() => setCurrentTab('home')}
           className={`flex flex-col items-center gap-1 transition-colors ${
@@ -263,6 +268,7 @@ function MainApp() {
           </button>
         )}
       </div>
+      )}
 
       {/* Legal & Terms Modal */}
       <LegalModal type={legalModalType} onClose={() => setLegalModalType(null)} />

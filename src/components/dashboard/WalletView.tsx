@@ -41,8 +41,8 @@ function formatYtCoinUnits(value: unknown): string {
   const units = Number(value);
   if (!Number.isFinite(units)) return '0';
   const yt = units / 2;
-  if (yt !== 0 && Math.abs(yt) < 0.01) return yt < 0 ? '-<0.01' : '<0.01';
-  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(yt);
+  if (yt !== 0 && Math.abs(yt) < 0.1) return yt < 0 ? '-<0.1' : '<0.1';
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(yt);
 }
 
 interface WalletViewProps {

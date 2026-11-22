@@ -719,6 +719,18 @@ export const api = {
   claimDailyYtCoin: () => request<{ result: any }>('/yt-coin/claim', { method: 'POST' }),
 
   getAdminYtCoinSummary: () => request<{ summary: any }>('/admin/yt-coin/summary'),
+  updateAdminYtCoinConfig: (payload: {
+    miningEnabled?: boolean;
+    baseRewardYt?: number;
+    dailyIncrementYt?: number;
+    maxDailyRewardYt?: number;
+    dailyCapStartYt?: number;
+    dailyCapMaxYt?: number;
+  }) =>
+    request<{ config: any }>('/admin/yt-coin/config', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
 
   // Independent Offerwall.GG wall and YER rewards
   getOfferwallGgUrl: () => request<{ offerWallUrl: string; userId: string }>('/offerwall-gg/url'),

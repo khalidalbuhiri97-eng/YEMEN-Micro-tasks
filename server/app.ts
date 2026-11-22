@@ -4258,6 +4258,51 @@ app.get('/api/admin/yt-coin/summary', adminMiddleware, async (req: Authenticated
   }
 });
 
+app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+
+    const toUnits = (raw: unknown, label: string, minUnits: number): number | null => {
+      if (raw === undefined || raw === null || raw === '') return null;
+      const num = Number(raw);
+      if (!Number.isFinite(num) || num < 0) {
+        throw new Error(`قيمة "${label}" غير صالحة.`);
+      }
+      if (Math.abs(num * 2 - Math.round(num * 2)) > 1e-6) {
+        throw new Error(`قيمة "${label}" يجب أن تكون من مضاعفات 0.5 YT (خانة عشرية واحدة مثل 0.5 أو 1.5 أو 20).`);
+      }
+      const units = Math.round(num * 2);
+      if (units < minUnits) {
+        throw new Error(`قيمة "${label}" أقل من الحد الأدنى المسموح.`);
+      }
+      return units;
+    };
+
+    const miningEnabled =
+      typeof body.miningEnabled === 'boolean' ? body.miningEnabled : null;
+    const baseRewardUnits = toUnits(body.baseRewardYt, 'مكافأة اليوم الأول', 1);
+    const dailyIncrementUnits = toUnits(body.dailyIncrementYt, 'الزيادة اليومية', 0);
+    const maxDailyRewardUnits = toUnits(body.maxDailyRewardYt, 'مكافأة اليوم 20 وما بعده', 1);
+    const dailyCapStartUnits = toUnits(body.dailyCapStartYt, 'السقف اليومي الابتدائي', 1);
+    const dailyCapMaxUnits = toUnits(body.dailyCapMaxYt, 'الحد الأقصى للسقف اليومي', 1);
+
+    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('admin_update_yt_coin_config', {
+      p_mining_enabled: miningEnabled,
+      p_base_reward_units: baseRewardUnits,
+      p_daily_increment_units: dailyIncrementUnits,
+      p_max_daily_reward_units: maxDailyRewardUnits,
+      p_daily_cap_start_units: dailyCapStartUnits,
+      p_daily_cap_max_units: dailyCapMaxUnits,
+    });
+    if (error) throw error;
+    return res.json({ config: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_CONFIG_UPDATE', apiRoute: '/api/admin/yt-coin/config' });
+    return res.status(400).json({ error: err?.message || 'تعذر تحديث إعدادات تعدين YT Coin.' });
+  }
+});
+
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
 app.get('/api/offerwall-gg/url', authMiddleware, offerwallGgHandlers.getOfferWallUrl);

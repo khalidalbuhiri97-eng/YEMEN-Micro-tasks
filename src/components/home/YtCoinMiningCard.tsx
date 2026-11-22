@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Loader2,
   Sparkles,
+  ArrowRight,
   ArrowUpRight,
   Wallet,
   BarChart3,
@@ -21,7 +22,6 @@ import {
   Award,
   Zap,
   Calendar,
-  Send,
   QrCode,
   Hammer,
   Home,
@@ -33,15 +33,9 @@ import {
   X,
   RotateCcw,
   AlertTriangle,
-  Hand,
   Hourglass,
-  ArrowUpRightFromSquare,
-  Globe,
-  KeyRound,
-  Lock,
   ExternalLink,
   Layers,
-  ShieldAlert,
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
@@ -83,14 +77,17 @@ interface NormalizedHistoryItem {
   claimDate: string | null;
   streakDay: number | null;
   reference: string | null;
-  type: 'mine' | 'task' | 'send' | 'system';
-  txHash?: string;
+  type: 'mine' | 'task' | 'send' | 'system' | string;
+  txHash: string;
 }
 
 interface NormalizedYtCoinSummary {
   balanceYt: number | null;
   totalMinedYt: number | null;
   todayRewardYt: number | null;
+  baseRewardYt: number;
+  dailyIncrementYt: number;
+  maxDailyRewardYt: number;
   canClaim: boolean;
   claimedToday: boolean;
   capReached: boolean;
@@ -277,6 +274,13 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     if (atomicReward !== null) todayRewardYt = atomicReward / 2;
   }
 
+  const baseRewardUnitsRaw = pickNumber(sources, ['baseRewardUnits', 'base_reward_units']);
+  const dailyIncrementUnitsRaw = pickNumber(sources, ['dailyIncrementUnits', 'daily_increment_units']);
+  const maxDailyRewardUnitsRaw = pickNumber(sources, ['maxDailyRewardUnits', 'max_daily_reward_units']);
+  const baseRewardYt = baseRewardUnitsRaw !== null ? baseRewardUnitsRaw / 2 : 0.5;
+  const dailyIncrementYt = dailyIncrementUnitsRaw !== null ? dailyIncrementUnitsRaw / 2 : 0.5;
+  const maxDailyRewardYt = maxDailyRewardUnitsRaw !== null ? maxDailyRewardUnitsRaw / 2 : 20;
+
   const lastClaimDate = pickString(sources, ['lastClaimDate', 'last_claim_date', 'claim_date']);
   const adenToday = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Aden',
@@ -347,6 +351,15 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'mined_so_far_yt',
     'poolDistributedYt',
   ]);
+  if (poolDistributedYt === null) {
+    const atomicTotalMined = pickNumber(sources, [
+      'totalMinedUnits',
+      'total_mined_units',
+      'total_distributed_units',
+      'poolDistributedUnits',
+    ]);
+    if (atomicTotalMined !== null) poolDistributedYt = atomicTotalMined / 2;
+  }
   if (poolDistributedYt === null && poolCapYt !== null && poolRemainingYt !== null) {
     poolDistributedYt = Math.max(0, poolCapYt - poolRemainingYt);
   }
@@ -404,11 +417,32 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
         eligibleFlag !== false &&
         !(dailyRemainingUnits !== null && dailyRemainingUnits <= 0);
 
-  const streakDays = pickNumber(sources, ['streak_days', 'current_streak', 'streak', 'consecutive_days', 'streakDays']);
+  const streakDays = pickNumber(sources, [
+    'streakDay',
+    'streak_day',
+    'streak_days',
+    'current_streak',
+    'streak',
+    'consecutive_days',
+    'streakDays',
+  ]);
   const totalClaims = pickNumber(sources, ['total_claims', 'claims_count', 'claim_count', 'days_claimed', 'totalClaims']);
 
   const lastClaimAt = pickString(sources, ['last_claim_at', 'last_claimed_at', 'lastClaimAt']);
-  const nextClaimAt = pickString(sources, ['next_claim_at', 'next_available_at', 'cooldown_until', 'reset_at', 'nextClaimAt']);
+  let nextClaimAt = pickString(sources, ['next_claim_at', 'next_available_at', 'cooldown_until', 'reset_at', 'nextClaimAt']);
+  if (!nextClaimAt && claimedToday) {
+    const adenNow = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Aden',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(adenNow);
+    const tomorrowMidnightUtc = new Date(`${parts}T00:00:00+03:00`).getTime() + 86400000;
+    if (Number.isFinite(tomorrowMidnightUtc)) {
+      nextClaimAt = new Date(tomorrowMidnightUtc).toISOString();
+    }
+  }
   const nextClaimInSeconds = pickNumber(sources, [
     'next_claim_in_seconds',
     'seconds_until_next_claim',
@@ -474,6 +508,9 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     balanceYt,
     totalMinedYt,
     todayRewardYt,
+    baseRewardYt,
+    dailyIncrementYt,
+    maxDailyRewardYt,
     canClaim,
     claimedToday,
     capReached,
@@ -501,12 +538,12 @@ function formatInt(value: number | null | undefined): string {
   return Math.floor(value).toLocaleString('en-US');
 }
 
-function formatYt(value: number | null, maxDecimals = 2): string {
+function formatYt(value: number | null, maxDecimals = 1): string {
   if (value === null || !Number.isFinite(value)) return '0';
-  if (value !== 0 && Math.abs(value) < 0.01) return value < 0 ? '-<0.01' : '<0.01';
+  if (value !== 0 && Math.abs(value) < 0.1) return value < 0 ? '-<0.1' : '<0.1';
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 0,
-    maximumFractionDigits: Math.min(2, Math.max(0, maxDecimals)),
+    maximumFractionDigits: Math.min(1, Math.max(0, maxDecimals)),
   }).format(value);
 }
 
@@ -534,16 +571,17 @@ function formatCountdown(secondsTotal: number): string {
 const PAGE_TITLES: Record<TabId, string> = {
   home: 'منجم عملة YT Coin الرقمية',
   tasks: 'مركز المهام والمكافآت اليومية',
-  wallet: 'محفظة YT Coin الرقمية المستقلة',
+  wallet: 'محفظة YT Coin الرقمية',
   dashboard: 'لوحة الإحصائيات ونمو المعروض',
   admin: 'لوحة الإدارة وضبط إعدادات المنجم',
 };
 
-export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void }> = ({
-  compact = false,
-  onOpen,
-}) => {
-  const { user, openAuthModal, showToast } = useAuth();
+export const YtCoinMiningCard: React.FC<{
+  compact?: boolean;
+  onOpen?: () => void;
+  onExit?: () => void;
+}> = ({ compact = false, onOpen, onExit }) => {
+  const { user, isAdmin, openAuthModal, showToast } = useAuth();
   const [rawSummary, setRawSummary] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [claiming, setClaiming] = useState<boolean>(false);
@@ -553,54 +591,54 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   const [loadedAtTs, setLoadedAtTs] = useState<number>(() => Date.now());
   const [isRefreshingSpin, setIsRefreshingSpin] = useState<boolean>(false);
 
-  // Interactive Tap & Local Session Enhancements synced with API
-  const [todayTaps, setTodayTaps] = useState<number>(0);
-    const [particles, setParticles] = useState<FloatingParticle[]>([]);
+  const [particles, setParticles] = useState<FloatingParticle[]>([]);
   const arenaRef = useRef<HTMLDivElement | null>(null);
 
-  // Admin / Override Controls
-  const [tapPower, setTapPower] = useState<number>(100);
+  // Admin-Only State & Real Supabase Configuration Controls
+  const [adminSummary, setAdminSummary] = useState<any>(null);
+  const [adminLoading, setAdminLoading] = useState<boolean>(false);
+  const [savingAdminConfig, setSavingAdminConfig] = useState<boolean>(false);
+  const [adminMiningEnabled, setAdminMiningEnabled] = useState<boolean>(true);
+  const [adminBaseRewardYt, setAdminBaseRewardYt] = useState<string>('0.5');
+  const [adminDailyIncrementYt, setAdminDailyIncrementYt] = useState<string>('0.5');
+  const [adminMaxDailyRewardYt, setAdminMaxDailyRewardYt] = useState<string>('20');
+  const [adminDailyCapStartYt, setAdminDailyCapStartYt] = useState<string>('1000');
+  const [adminDailyCapMaxYt, setAdminDailyCapMaxYt] = useState<string>('1000000');
 
-  // Standalone External Wallet Modals & States
-  const [showTransferModal, setShowTransferModal] = useState<boolean>(false);
+  // Wallet Modals & States
   const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
-  const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
   const [showResetModal, setShowResetModal] = useState<boolean>(false);
-  const [recipientAddress, setRecipientAddress] = useState<string>('');
-  const [transferAmount, setTransferAmount] = useState<string>('');
-  const [transferMemo, setTransferMemo] = useState<string>('');
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
-  const [copiedKey, setCopiedKey] = useState<boolean>(false);
 
-  // Tasks & External Ledger Transactions
+  // Tasks
   const [tasks, setTasks] = useState<LocalTaskItem[]>([
     {
       id: 1,
       title: 'تسجيل الدخول اليومي للمنجم',
-      desc: 'احصل على مكافأة الحضور اليومي المستمر',
-      reward: 150000,
+      desc: 'احصل على مكافأة الحضور اليومي المتصاعدة من 0.5 إلى 20 YT',
+      reward: 0.5,
       status: 'ready',
     },
     {
       id: 2,
-      title: 'إكمال 15 نقرة تعدين نشطة',
-      desc: 'انقر على العملة الذهبية 15 مرة لتنشيط العقدة',
-      reward: 250000,
+      title: 'تحقيق سلسلة 20 يوم تعدين متتالية',
+      desc: 'واصل التعدين اليومي لفتح مكافأة 20 YT ثابتة كل يوم',
+      reward: 20,
       status: 'progress',
-      target: 15,
+      target: 20,
     },
     {
       id: 3,
-      title: 'ربط محفظة YT Vault الخارجية',
-      desc: 'تأكيد استقلالية محفظة YT Coin عن المنصة',
-      reward: 350000,
+      title: 'توثيق عنوان محفظة YT Coin',
+      desc: 'انسخ أو شارك عنوان محفظتك على شبكة YT Mainnet',
+      reward: 1,
       status: 'ready',
     },
     {
       id: 4,
       title: 'دعوة صديق للتعدين السحابي',
-      desc: 'شارك رابط الإحالة الخاص بك واحصل على مكافأة فورية',
-      reward: 500000,
+      desc: 'شارك رابط المنصة مع أصدقائك لتوسيع مجتمع المعدّنين',
+      reward: 2,
       status: 'ready',
     },
   ]);
@@ -632,6 +670,45 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     if (!compact) void loadSummary(false);
   }, [loadSummary, compact]);
 
+  useEffect(() => {
+    if (!isAdmin && activeTab === 'admin') {
+      setActiveTab('home');
+    }
+  }, [isAdmin, activeTab]);
+
+  const loadAdminData = useCallback(async () => {
+    if (!isAdmin) return;
+    setAdminLoading(true);
+    try {
+      const res = await api.getAdminYtCoinSummary();
+      const s = res?.summary ?? null;
+      setAdminSummary(s);
+      if (s && typeof s === 'object') {
+        if (typeof s.mining_enabled === 'boolean') setAdminMiningEnabled(s.mining_enabled);
+        const toYtStr = (val: unknown, fallback: string) => {
+          const n = Number(val);
+          if (!Number.isFinite(n) || n < 0) return fallback;
+          return String(Math.round((n / 2) * 10) / 10);
+        };
+        setAdminBaseRewardYt(toYtStr(s.base_reward_units, '0.5'));
+        setAdminDailyIncrementYt(toYtStr(s.daily_increment_units, '0.5'));
+        setAdminMaxDailyRewardYt(toYtStr(s.max_daily_reward_units, '20'));
+        setAdminDailyCapStartYt(toYtStr(s.daily_cap_start_units ?? s.daily_global_cap_units, '1000'));
+        setAdminDailyCapMaxYt(toYtStr(s.daily_cap_max_units ?? s.daily_global_cap_max_units, '1000000'));
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'تعذر تحميل لوحة إدارة YT Coin', 'error');
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [isAdmin, showToast]);
+
+  useEffect(() => {
+    if (!compact && isAdmin && activeTab === 'admin') {
+      void loadAdminData();
+    }
+  }, [compact, isAdmin, activeTab, loadAdminData]);
+
   const summary = useMemo(() => (rawSummary ? normalizeSummary(rawSummary) : null), [rawSummary]);
 
   const remainingCooldownSec = useMemo(() => {
@@ -655,23 +732,29 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     return () => window.clearInterval(timer);
   }, [remainingCooldownSec > 0]);
 
-  // Internal YT Coin account identifier; this is not a public blockchain address.
   const walletAddress = useMemo(() => {
-    const rawId = String((user as any)?.id || (user as any)?.user_id || '');
-    return rawId ? `YT-ACCOUNT-${rawId}` : 'غير متاح';
+    const rawId = String((user as any)?.id || (user as any)?.user_id || '')
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toLowerCase();
+    return rawId ? `yt1${rawId}` : 'غير متصل';
   }, [user]);
 
-  const walletPublicKey = 'غير متاح — لا توجد شبكة عامة مفعّلة';
+  const shortWalletAddress = useMemo(() => {
+    if (!walletAddress.startsWith('yt1') || walletAddress.length <= 16) return walletAddress;
+    return `${walletAddress.slice(0, 8)}...${walletAddress.slice(-6)}`;
+  }, [walletAddress]);
 
-  // Effective Values combining API + Interactive Session
+  // Effective Values synced directly from Supabase RPC
   const effectiveBalance = Math.max(0, summary?.balanceYt ?? 0);
-  const effectiveUsd = 'غير محددة';
-  const effectiveClaimReward = summary?.todayRewardYt ?? 0.5;
+  const currentStreakDays = Math.max(0, summary?.streakDays ?? 0);
+  const upcomingStreakDay = currentStreakDays + 1;
+  const computedFallbackReward =
+    upcomingStreakDay >= 20
+      ? (summary?.maxDailyRewardYt ?? 20)
+      : (summary?.baseRewardYt ?? 0.5) + (upcomingStreakDay - 1) * (summary?.dailyIncrementYt ?? 0.5);
+  const effectiveClaimReward = summary?.todayRewardYt ?? computedFallbackReward;
   const effectiveDailyCap = summary?.dailyCapYt ?? 0;
-  const effectiveDailyUsed = Math.min(
-    effectiveDailyCap,
-    (summary?.dailyMinedYt ?? 0)
-  );
+  const effectiveDailyUsed = Math.min(effectiveDailyCap, summary?.dailyMinedYt ?? 0);
   const effectiveCapPercent =
     effectiveDailyCap > 0 ? Math.min(100, Number(((effectiveDailyUsed / effectiveDailyCap) * 100).toFixed(1))) : 0;
   const effectiveCapRemaining = Math.max(0, effectiveDailyCap - effectiveDailyUsed);
@@ -686,41 +769,48 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     setIsRefreshingSpin(true);
     window.setTimeout(() => setIsRefreshingSpin(false), 650);
     await loadSummary(false);
-    showToast('تم تحديث بيانات YT Coin من قاعدة البيانات بنجاح', 'info');
+    if (isAdmin && activeTab === 'admin') {
+      await loadAdminData();
+    }
+    showToast('تمت مزامنة الرصيد ومحفظة YT Coin بنجاح', 'info');
   };
 
-  const handleCoinTap = (e: React.MouseEvent<HTMLButtonElement>) => {
+  const spawnClaimParticle = (e?: React.MouseEvent<HTMLButtonElement>, text?: string) => {
+    if (!arenaRef.current) return;
+    const rect = arenaRef.current.getBoundingClientRect();
+    const x = (e?.clientX ? e.clientX - rect.left : rect.width / 2) - 28;
+    const y = (e?.clientY ? e.clientY - rect.top : rect.height / 2) - 20;
+    const id = Date.now() + Math.random();
+    setParticles((prev) => [...prev, { id, x, y, text: text || `+${formatYt(effectiveClaimReward)} YT` }]);
+    window.setTimeout(() => {
+      setParticles((prev) => prev.filter((p) => p.id !== id));
+    }, 950);
+  };
+
+  const handleCoinPress = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!user) {
       openAuthModal('login');
       return;
     }
     if (!effectiveNetworkActive) {
-      showToast('عذراً، عقد التعدين متوقف مؤقتاً للصيانة', 'error');
+      showToast('الشبكة متوقفة حالياً من لوحة الإدارة', 'error');
       return;
     }
-    const nextTaps = todayTaps + 1;
-    setTodayTaps(nextTaps);
-
-    setTasks((prev) =>
-      prev.map((t) => {
-        if (t.id === 2 && t.status === 'progress' && t.target && nextTaps >= t.target) {
-          showToast('تهانينا! أكملت مهمة الـ 15 نقرة، يمكنك استلام مكافأتك الآن', 'success');
-          return { ...t, status: 'ready' };
-        }
-        return t;
-      })
-    );
-
-    if (arenaRef.current) {
-      const rect = arenaRef.current.getBoundingClientRect();
-      const x = (e.clientX ? e.clientX - rect.left : rect.width / 2) - 20;
-      const y = (e.clientY ? e.clientY - rect.top : rect.height / 2) - 20;
-      const id = Date.now() + Math.random();
-      setParticles((prev) => [...prev, { id, x, y, text: 'نقرة' }]);
-      window.setTimeout(() => {
-        setParticles((prev) => prev.filter((p) => p.id !== id));
-      }, 950);
+    if (summary?.capReached) {
+      showToast('تم بلوغ سقف التعدين المتاح حالياً.', 'info');
+      return;
     }
+    if (summary && !summary.canClaim) {
+      showToast(
+        remainingCooldownSec > 0
+          ? `تم استلام مكافأة اليوم بالفعل — المطالبة القادمة خلال ${formatCountdown(remainingCooldownSec)}`
+          : 'تم استلام مكافأة اليوم بنجاح.',
+        'info'
+      );
+      return;
+    }
+    spawnClaimParticle(e, `+${formatYt(effectiveClaimReward)} YT`);
+    void handleClaim();
   };
 
   const handleClaim = async () => {
@@ -755,11 +845,11 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
         showToast(resultMessage || 'تم استلام مكافأة اليوم مسبقاً.', 'info');
       } else if (claimedAmount !== null) {
         showToast(
-          resultMessage || `تمت إضافة مكافأة ${formatYt(claimedAmount)} YT إلى رصيد حسابك الداخلي.`,
+          resultMessage || `تم إيداع +${formatYt(claimedAmount)} YT Coin في محفظتك بنجاح!`,
           'success'
         );
       } else {
-        showToast(resultMessage || 'تم تسجيل مكافأة التعدين في رصيد YT Coin الداخلي.', 'success');
+        showToast(resultMessage || 'تم إيداع مكافأة التعدين في محفظتك بنجاح!', 'success');
       }
       await loadSummary(true);
     } catch (err: any) {
@@ -772,40 +862,99 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   };
 
   const handleClaimTask = (_taskId: number) => {
-    showToast('مكافآت المهام الإضافية غير مرتبطة حالياً بدفتر YT Coin؛ لم يُضف أي رصيد.', 'info');
+    showToast('مكافآت المهام الإضافية قيد التفعيل؛ يمكنك تعدين مكافأتك اليومية من الرئيسية.', 'info');
   };
 
   const copyWalletAddress = () => {
+    if (!user) {
+      openAuthModal('login');
+      return;
+    }
     if (navigator.clipboard) {
       void navigator.clipboard.writeText(walletAddress);
     }
     setCopiedAddress(true);
-    showToast('تم نسخ معرّف حساب YT Coin الداخلي', 'info');
+    showToast('تم نسخ عنوان المحفظة بنجاح', 'success');
     window.setTimeout(() => setCopiedAddress(false), 2000);
   };
 
-  const copyPublicKey = () => {
-    showToast('لا يوجد مفتاح عام؛ شبكة YT Coin العامة غير مفعّلة حالياً.', 'info');
-  };
-
-  const executeTransfer = () => {
-    showToast('التحويل الخارجي غير مفعّل حالياً؛ لم يتم خصم أو تحويل أي رصيد.', 'info');
-  };
-
-  const handleSaveAdminSettings = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleSaveAdminSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    showToast('هذه الحقول للمعاينة فقط؛ إعدادات التعدين الفعلية محفوظة في Supabase.', 'info');
+    if (!isAdmin || savingAdminConfig) return;
+
+    const parseDecimalStep = (raw: string, label: string, minVal: number): number | null => {
+      const val = Number(raw);
+      if (!Number.isFinite(val) || val < minVal) {
+        showToast(`قيمة "${label}" يجب أن تكون ${minVal} YT على الأقل.`, 'error');
+        return null;
+      }
+      if (Math.abs(val * 2 - Math.round(val * 2)) > 1e-6) {
+        showToast(`"${label}" يقبل خانة عشرية واحدة من مضاعفات 0.5 YT فقط (مثل 0.5 أو 1.5 أو 20).`, 'error');
+        return null;
+      }
+      return Math.round(val * 10) / 10;
+    };
+
+    const baseRewardYt = parseDecimalStep(adminBaseRewardYt, 'مكافأة اليوم الأول', 0.5);
+    const dailyIncrementYt = parseDecimalStep(adminDailyIncrementYt, 'الزيادة اليومية', 0);
+    const maxDailyRewardYt = parseDecimalStep(adminMaxDailyRewardYt, 'مكافأة اليوم 20 وما بعده', 0.5);
+    const dailyCapStartYt = parseDecimalStep(adminDailyCapStartYt, 'السقف اليومي الابتدائي', 0.5);
+    const dailyCapMaxYt = parseDecimalStep(adminDailyCapMaxYt, 'الحد الأقصى للسقف اليومي', 0.5);
+
+    if (
+      baseRewardYt === null ||
+      dailyIncrementYt === null ||
+      maxDailyRewardYt === null ||
+      dailyCapStartYt === null ||
+      dailyCapMaxYt === null
+    ) {
+      return;
+    }
+
+    setSavingAdminConfig(true);
+    try {
+      await api.updateAdminYtCoinConfig({
+        miningEnabled: adminMiningEnabled,
+        baseRewardYt,
+        dailyIncrementYt,
+        maxDailyRewardYt,
+        dailyCapStartYt,
+        dailyCapMaxYt,
+      });
+      showToast('تم حفظ وتحديث إعدادات تعدين YT Coin في Supabase بنجاح.', 'success');
+      await Promise.all([loadAdminData(), loadSummary(true)]);
+    } catch (err: any) {
+      showToast(err?.message || 'تعذر حفظ إعدادات التعدين في قاعدة البيانات.', 'error');
+    } finally {
+      setSavingAdminConfig(false);
+    }
+  };
+
+  const handleToggleMiningEnabled = async () => {
+    if (!isAdmin || savingAdminConfig) return;
+    const nextEnabled = !adminMiningEnabled;
+    setSavingAdminConfig(true);
+    try {
+      await api.updateAdminYtCoinConfig({ miningEnabled: nextEnabled });
+      setAdminMiningEnabled(nextEnabled);
+      showToast(nextEnabled ? 'تم تفعيل شبكة التعدين بنجاح' : 'تم إيقاف شبكة التعدين مؤقتاً', 'success');
+      await Promise.all([loadAdminData(), loadSummary(true)]);
+    } catch (err: any) {
+      showToast(err?.message || 'تعذر تغيير حالة شبكة التعدين.', 'error');
+    } finally {
+      setSavingAdminConfig(false);
+    }
   };
 
   const handleResetLocalData = () => {
-    setTodayTaps(0);
-    setTapPower(100);
+    setAdminBaseRewardYt('0.5');
+    setAdminDailyIncrementYt('0.5');
+    setAdminMaxDailyRewardYt('20');
     setTasks((prev) => prev.map((t) => ({ ...t, status: t.id === 2 ? 'progress' : 'ready' })));
     setShowResetModal(false);
-    showToast('تمت إعادة ضبط تفاعلات العرض فقط؛ لم يتغير رصيد YT Coin.', 'info');
+    showToast('تمت إعادة تعيين حقول المعاينة الافتراضية (اضغط حفظ لتطبيقها على الخادم).', 'info');
   };
 
-  const pendingTasksReward = 0;
   const activeTasksCount = useMemo(() => tasks.filter((t) => t.status !== 'claimed').length, [tasks]);
 
   // Compact Banner Mode (used on Home page)
@@ -922,37 +1071,50 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
         <div>
           {/* Logo */}
           <div className="flex items-center gap-3 pb-6 border-b border-amber-500/15">
-            <div className="w-11 h-11 rounded-xl yt-coin-3d flex items-center justify-center border border-amber-300/60 shrink-0">
-              <span className="font-black text-xl text-amber-950">Y</span>
-            </div>
+            <img
+              src={YT_COIN_LOGO_SRC}
+              alt="YT Coin"
+              className="w-11 h-11 rounded-full object-cover ring-2 ring-amber-400/80 shadow-lg shrink-0 select-none bg-[#080E1B]"
+            />
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-extrabold text-lg text-white tracking-wide">YT Coin</span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  Yemen Task
-                </span>
-              </div>
+              <span className="font-extrabold text-lg text-white tracking-wide block">YT Coin</span>
               <p className="text-xs text-gray-400">منصة التعدين الرقمي المستقلة</p>
             </div>
           </div>
 
-          {/* Standalone External Wallet Quick Card */}
-          <div className="mt-5 p-4 rounded-2xl bg-gradient-to-br from-[#181F2C] to-[#111620] border border-amber-500/25 shadow-lg">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] text-gray-400">محفظة YT Vault المستقلة</span>
-              <span className="inline-flex items-center gap-1 text-[10px] text-sky-400 font-bold">
-                <Globe className="w-3 h-3" /> خارجية
+          {/* Wallet Balance Quick Card */}
+          <div
+            onClick={() => setActiveTab('wallet')}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') setActiveTab('wallet');
+            }}
+            className="mt-5 p-4 rounded-2xl bg-gradient-to-br from-[#192233] via-[#131926] to-[#0E131D] border border-amber-500/30 shadow-lg hover:border-amber-400/60 transition-all cursor-pointer"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5">
+                <Wallet className="w-3.5 h-3.5 text-amber-400" />
+                <span>الرصيد المتاح</span>
+              </span>
+              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                YT Chain
               </span>
             </div>
-            <div className="flex items-baseline justify-between">
-              <span className="text-2xl font-black text-amber-400 tracking-tight font-mono">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-2xl font-black text-white tracking-tight font-mono">
                 {formatYt(effectiveBalance)}
               </span>
-              <span className="text-xs font-bold text-amber-200/80">YT</span>
+              <span className="text-xs font-black text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-lg border border-amber-500/25">
+                YT
+              </span>
             </div>
-            <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-gray-400">
-              <span>القيمة السوقية:</span>
-              <span className="text-gray-400 font-bold">{effectiveUsd}</span>
+            <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between text-[11px]">
+              <span className="text-gray-400">إجمالي التعدين:</span>
+              <span className="text-amber-300 font-extrabold font-mono">
+                {formatYt(summary?.totalMinedYt ?? 0)} YT
+              </span>
             </div>
           </div>
 
@@ -1000,10 +1162,10 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
             >
               <div className="flex items-center gap-3.5">
                 <Wallet className="w-5 h-5 shrink-0" />
-                <span>المحفظة الخارجية</span>
+                <span>المحفظة</span>
               </div>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 border border-sky-500/30">
-                Vault
+              <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/25">
+                {formatYt(effectiveBalance)} YT
               </span>
             </button>
 
@@ -1020,72 +1182,96 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               <span>لوحتي والإحصائيات</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('admin')}
-              className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-sm font-bold transition-all cursor-pointer ${
-                activeTab === 'admin'
-                  ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
-                  : 'text-gray-400 hover:bg-white/5 hover:text-gray-200 border border-transparent'
-              }`}
-            >
-              <ShieldCheck className="w-5 h-5 shrink-0" />
-              <span>الإدارة والإعدادات</span>
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('admin')}
+                className={`w-full flex items-center gap-3.5 px-4 py-3.5 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+                  activeTab === 'admin'
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                    : 'text-gray-400 hover:bg-white/5 hover:text-gray-200 border border-transparent'
+                }`}
+              >
+                <ShieldCheck className="w-5 h-5 shrink-0" />
+                <span>لوحة الإدارة (Admin)</span>
+              </button>
+            )}
           </nav>
         </div>
 
         {/* Network Status Footer */}
-        <div className="p-3.5 rounded-xl bg-[#131822] border border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <span
-              className={`w-2.5 h-2.5 rounded-full ${
-                effectiveNetworkActive ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
-              }`}
-            />
-            <span className="text-xs font-semibold text-gray-300">
-              {effectiveNetworkActive ? 'YT Chain Mainnet' : 'الصيانة مجدولة'}
-            </span>
+        <div className="space-y-2">
+          <div className="p-3.5 rounded-xl bg-[#131822] border border-white/5 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  effectiveNetworkActive ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'
+                }`}
+              />
+              <span className="text-xs font-semibold text-gray-300">
+                {effectiveNetworkActive ? 'YT Chain Mainnet' : 'الصيانة مجدولة'}
+              </span>
+            </div>
+            <span className="text-[11px] text-amber-400/80 font-mono">v2.4</span>
           </div>
-          <span className="text-[11px] text-amber-400/80 font-mono">v2.4</span>
+
+          {onExit && (
+            <button
+              type="button"
+              onClick={onExit}
+              className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-gray-300 hover:text-white transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <span>العودة ليمن تاسك</span>
+            </button>
+          )}
         </div>
       </aside>
 
       {/* ==================== MAIN CONTENT CONTAINER ==================== */}
       <div className="flex-1 flex flex-col h-full w-full overflow-hidden relative">
         {/* Top Header */}
-        <header className="w-full px-4 md:px-8 py-3.5 bg-[#0F131C]/90 backdrop-blur-md border-b border-amber-500/15 flex items-center justify-between shrink-0 z-20">
+        <header className="w-full px-3.5 sm:px-4 md:px-8 py-3 bg-[#0F131C]/90 backdrop-blur-md border-b border-amber-500/15 flex items-center justify-between gap-2 shrink-0 z-20">
           {/* Mobile Brand */}
-          <div className="flex items-center gap-2.5 md:hidden">
-            <div className="w-9 h-9 rounded-full yt-coin-3d flex items-center justify-center border border-amber-300/70">
-              <span className="font-black text-base text-amber-950">Y</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h1 className="font-extrabold text-sm text-white">YT Coin</h1>
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600/30 text-emerald-400 border border-emerald-500/30">
-                  Yemen Task
-                </span>
-              </div>
-              <span className="text-[10px] text-gray-400 block">منصة التعدين السحابي</span>
+          <div className="flex items-center gap-2.5 md:hidden min-w-0">
+            <img
+              src={YT_COIN_LOGO_SRC}
+              alt="YT Coin"
+              className="w-9 h-9 rounded-full object-cover ring-2 ring-amber-400/80 shadow-md shrink-0 select-none bg-[#080E1B]"
+            />
+            <div className="min-w-0">
+              <h1 className="font-extrabold text-sm text-white truncate">YT Coin</h1>
+              <span className="text-[10px] text-gray-400 block truncate">منصة التعدين السحابي</span>
             </div>
           </div>
 
           {/* Desktop Current Section Title */}
-          <div className="hidden md:flex items-center gap-3">
-            <h2 className="text-xl font-extrabold text-white">{PAGE_TITLES[activeTab]}</h2>
-            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              <Zap className="w-3.5 h-3.5" /> أعداد صحيحة 100%
+          <div className="hidden md:flex items-center gap-3 min-w-0">
+            <h2 className="text-xl font-extrabold text-white truncate">{PAGE_TITLES[activeTab]}</h2>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
+              <Zap className="w-3.5 h-3.5" /> تدرج +0.5 YT حتى 20 YT يومياً
             </span>
           </div>
 
           {/* Live Balance & Quick Actions */}
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 shrink-0">
+            {onExit && (
+              <button
+                type="button"
+                onClick={onExit}
+                aria-label="العودة إلى التطبيق الأصلي يمن تاسك"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-300 hover:text-emerald-200 text-[11px] sm:text-xs font-extrabold transition-all active:scale-95 cursor-pointer"
+              >
+                <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                <span className="hidden sm:inline">العودة ليمن تاسك</span>
+                <span className="sm:hidden">يمن تاسك</span>
+              </button>
+            )}
+
             {!user ? (
               <button
                 type="button"
                 onClick={() => openAuthModal('login')}
-                className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-[#0B0E14] px-3.5 py-1.5 rounded-full text-xs font-black transition-all cursor-pointer"
+                className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-[#0B0E14] px-3 py-1.5 rounded-full text-xs font-black transition-all cursor-pointer"
               >
                 <LogIn className="w-3.5 h-3.5" />
                 <span>تسجيل الدخول</span>
@@ -1094,11 +1280,9 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               <button
                 type="button"
                 onClick={() => setActiveTab('wallet')}
-                className="flex items-center gap-2 bg-[#161C28] hover:bg-[#1E2636] border border-amber-500/30 px-3 py-1.5 rounded-full transition-all shadow-sm cursor-pointer"
+                className="flex items-center gap-2 bg-[#161C28] hover:bg-[#1E2636] border border-amber-500/30 px-2.5 sm:px-3 py-1.5 rounded-full transition-all shadow-sm cursor-pointer"
               >
-                <div className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center text-[#0B0E14] text-[11px] font-black">
-                  Y
-                </div>
+                <YtCoinLogo size="xs" />
                 <span className="font-extrabold text-sm md:text-base text-amber-400 font-mono">
                   {formatYt(effectiveBalance)}
                 </span>
@@ -1108,12 +1292,12 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
             <button
               type="button"
-              onClick={() => showToast('جميع الأنظمة تعمل بكفاءة عالية بدون كسور عشرية', 'info')}
+              onClick={() => showToast('النظام يعمل بدقة حتى خانة عشرية واحدة (0.5 YT ← 20 YT في اليوم 20)', 'info')}
               aria-label="الإشعارات"
-              className="w-9 h-9 rounded-full bg-[#161C28] border border-white/10 flex items-center justify-center text-gray-300 hover:text-amber-400 hover:border-amber-500/30 transition-all relative cursor-pointer"
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#161C28] border border-white/10 flex items-center justify-center text-gray-300 hover:text-amber-400 hover:border-amber-500/30 transition-all relative cursor-pointer"
             >
               <Bell className="w-4 h-4" />
-              <span className="w-2 h-2 rounded-full bg-amber-500 absolute top-2 right-2.5" />
+              <span className="w-2 h-2 rounded-full bg-amber-500 absolute top-1.5 right-2 sm:top-2 sm:right-2.5" />
             </button>
           </div>
         </header>
@@ -1154,21 +1338,25 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                           </h2>
                           <div className="mt-2.5 inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/35 text-amber-300 text-xs sm:text-sm font-bold">
                             <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                            <span>سقف معروض 1 مليار (أعداد صحيحة)</span>
+                            <span>نمو يومي +0.5 YT ← 20 YT في اليوم 20</span>
                           </div>
                         </div>
 
-                        <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full p-1 border-2 border-amber-400/60 bg-amber-500/10 shrink-0 flex items-center justify-center shadow-[0_0_35px_rgba(245,185,33,0.25)]">
-                          <div className="w-full h-full rounded-full yt-coin-3d flex items-center justify-center">
-                            <span className="font-black text-2xl sm:text-3xl coin-letter-y">Y</span>
-                          </div>
+                        <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full p-0.5 border-2 border-amber-400/70 bg-[#080E1B] shrink-0 overflow-hidden shadow-[0_0_30px_rgba(245,185,33,0.3)]">
+                          <img
+                            src={YT_COIN_LOGO_SRC}
+                            alt="YT Coin"
+                            className="w-full h-full rounded-full object-cover select-none"
+                          />
                         </div>
                       </div>
 
                       <p className="text-gray-300 text-xs sm:text-sm md:text-base leading-relaxed max-w-2xl">
-                        منصة تعدين مستقلة ذات سقف تصاعدي يومي تبدأ بـ{' '}
-                        <span className="text-amber-400 font-bold">1 عملة</span> وتزيد تدريجياً بدون كسور عشرية. انقر
-                        على العملة الذهبية أو طالب بمكافأتك الدورية لإيداعها مباشرة في محفظتك المستقلة.
+                        منصة تعدين مستقلة تبدأ مكافأتها اليومية بـ{' '}
+                        <span className="text-amber-400 font-bold">0.5 YT</span> وتزداد{' '}
+                        <span className="text-emerald-400 font-bold">+0.5 YT يومياً</span> مع كل دخول متتالٍ حتى تصل إلى{' '}
+                        <span className="text-amber-400 font-bold">اليوم 20</span> فتبدأ بالحصول على{' '}
+                        <span className="text-amber-300 font-extrabold">20 YT يومياً</span> باستمرار (بدقة حتى خانة عشرية واحدة).
                       </p>
                     </div>
 
@@ -1203,13 +1391,25 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     ))}
 
                     <div className="w-full flex items-center justify-between text-xs text-gray-400 mb-4">
-                      <span className="flex items-center gap-1.5 bg-white/5 px-3 py-1 rounded-full">
-                        <Hand className="w-3.5 h-3.5 text-amber-400" />
-                        النقر التفاعلي: <strong className="text-amber-400">للعرض فقط</strong>
+                      <span
+                        className={`flex items-center gap-1.5 px-3 py-1 rounded-full border ${
+                          summary?.canClaim
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                            : 'bg-white/5 border-white/10 text-gray-300'
+                        }`}
+                      >
+                        <Gem className="w-3.5 h-3.5 text-amber-400" />
+                        <span>
+                          {!user
+                            ? 'سجّل الدخول للتعدين'
+                            : summary?.canClaim
+                              ? 'اضغط على العملة لاستلام مكافأة اليوم'
+                              : 'تم تأكيد تعدين اليوم'}
+                        </span>
                       </span>
                       <span className="flex items-center gap-1.5 bg-white/5 px-3 py-1 rounded-full">
                         <Flame className="w-3.5 h-3.5 text-orange-400" />
-                        نقرات اليوم: <strong className="text-white">{formatInt(todayTaps)}</strong>
+                        السلسلة: <strong className="text-white font-mono">{formatInt(currentStreakDays)} / 20 يوم</strong>
                       </span>
                     </div>
 
@@ -1218,22 +1418,25 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
                       <button
                         type="button"
-                        onClick={handleCoinTap}
-                        aria-label="انقر للتعدين"
-                        className="relative w-40 h-40 sm:w-48 sm:h-48 rounded-full p-2.5 border-[3px] border-amber-400/80 bg-[#141923] shadow-[0_0_35px_rgba(245,185,33,0.25)] cursor-pointer focus:outline-none group transition-transform"
+                        onClick={handleCoinPress}
+                        disabled={claiming}
+                        aria-label="المطالبة بمكافأة التعدين اليومي"
+                        className="relative w-40 h-40 sm:w-48 sm:h-48 rounded-full p-1.5 border-[3px] border-amber-400/80 bg-[#080E1B] shadow-[0_0_40px_rgba(245,185,33,0.3)] cursor-pointer focus:outline-none group transition-transform active:scale-95 overflow-hidden disabled:opacity-75"
                       >
-                        <div className="w-full h-full rounded-full yt-coin-3d flex items-center justify-center p-3">
-                          <div className="w-full h-full rounded-full coin-inner-ring flex items-center justify-center">
-                            <span className="font-black text-7xl sm:text-8xl coin-letter-y select-none group-hover:scale-105 transition-transform">
-                              Y
-                            </span>
-                          </div>
-                        </div>
+                        <img
+                          src={YT_COIN_LOGO_SRC}
+                          alt="YT Coin"
+                          className="w-full h-full rounded-full object-cover select-none group-hover:scale-105 transition-transform duration-200"
+                        />
                       </button>
                     </div>
 
                     <div className="text-center mt-3 space-y-1">
-                      <p className="text-amber-400/90 font-bold text-sm sm:text-base">مكافأة المطالبة الحالية</p>
+                      <p className="text-amber-400/90 font-bold text-sm sm:text-base">
+                        {summary?.claimedToday
+                          ? `مكافأة الدخول القادم (اليوم ${upcomingStreakDay}${upcomingStreakDay >= 20 ? '+' : ''})`
+                          : `مكافأة اليوم (اليوم ${upcomingStreakDay}${upcomingStreakDay >= 20 ? '+' : ''})`}
+                      </p>
                       <div className="flex items-baseline justify-center gap-2" dir="ltr">
                         <span className="text-3xl sm:text-4xl md:text-5xl font-black text-amber-400 tracking-tight font-mono">
                           {formatYt(effectiveClaimReward)}+
@@ -1286,7 +1489,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                             ) : (
                               <>
                                 <Gem className="w-5 h-5" />
-                                <span>مطالبة بالمكافأة الآن</span>
+                                <span>مطالبة بمكافأة +{formatYt(effectiveClaimReward)} YT الآن</span>
                               </>
                             )}
                           </button>
@@ -1311,8 +1514,44 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       )}
                     </div>
 
+                    {/* Daily Streak Progression Roadmap (0.5 -> Day 20 = 20 YT) */}
+                    <div className="w-full mt-6 rounded-2xl bg-[#131926] border border-amber-500/20 p-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-bold text-amber-300 flex items-center gap-1.5">
+                          <TrendingUp className="w-4 h-4 text-amber-400" />
+                          مسار المكافأة المتتالية (اليوم 1 ← اليوم 20)
+                        </span>
+                        <span className="font-mono font-black text-emerald-400">
+                          {Math.min(currentStreakDays, 20)} / 20 يوم
+                          {currentStreakDays >= 20 ? ' (المستوى الأقصى 20 YT يومياً!)' : ''}
+                        </span>
+                      </div>
+
+                      <div className="w-full h-2 bg-[#0A0E17] rounded-full overflow-hidden border border-white/5">
+                        <div
+                          className="h-full bg-gradient-to-l from-emerald-400 via-amber-400 to-amber-500 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.round((Math.min(currentStreakDays, 20) / 20) * 100))}%` }}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                        <div className="rounded-xl bg-[#0B0F18] border border-white/5 px-2 py-2">
+                          <span className="text-gray-400 block">اليوم 1</span>
+                          <strong className="text-white font-mono">{formatYt(summary?.baseRewardYt ?? 0.5)} YT</strong>
+                        </div>
+                        <div className="rounded-xl bg-[#0B0F18] border border-white/5 px-2 py-2">
+                          <span className="text-gray-400 block">الزيادة اليومية</span>
+                          <strong className="text-emerald-400 font-mono">+{formatYt(summary?.dailyIncrementYt ?? 0.5)} YT</strong>
+                        </div>
+                        <div className="rounded-xl bg-[#0B0F18] border border-amber-500/30 px-2 py-2">
+                          <span className="text-amber-300 block">اليوم 20 وما بعده</span>
+                          <strong className="text-amber-400 font-mono">{formatYt(summary?.maxDailyRewardYt ?? 20)} YT / يوم</strong>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Daily Cap Progress Bar */}
-                    <div className="w-full mt-7 pt-5 border-t border-white/10">
+                    <div className="w-full mt-6 pt-5 border-t border-white/10">
                       <div className="flex items-center justify-between text-xs sm:text-sm font-bold mb-2">
                         <span className="text-gray-300">استهلاك السقف اليومي</span>
                         <span className="text-amber-400 font-mono" dir="ltr">
@@ -1346,9 +1585,11 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                   </div>
                   <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
                     <span className="text-xs text-gray-400">الرتبة الحالية</span>
-                    <span className="text-base sm:text-lg font-black text-amber-400 mt-1">مُعدِّن ذهبي</span>
+                    <span className="text-base sm:text-lg font-black text-amber-400 mt-1">
+                      {currentStreakDays >= 20 ? 'أسطورة اليوم 20+' : 'مُعدِّن ذهبي'}
+                    </span>
                     <span className="text-[10px] text-emerald-400 mt-1">
-                      سلسلة: {formatInt(summary?.streakDays ?? 1)} يوم
+                      سلسلة: {formatInt(currentStreakDays)} يوم متتالٍ
                     </span>
                   </div>
                   <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
@@ -1359,9 +1600,9 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     <span className="text-[10px] text-gray-400 mt-1">عملية ناجحة</span>
                   </div>
                   <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
-                    <span className="text-xs text-gray-400">حالة العقد الذكي</span>
+                    <span className="text-xs text-gray-400">دقة التعدين</span>
                     <span className="text-base sm:text-lg font-black text-emerald-400 mt-1">مُدقّق وآمن</span>
-                    <span className="text-[10px] text-gray-400 mt-1">بدون كسور عشرية</span>
+                    <span className="text-[10px] text-gray-400 mt-1">دقة حتى خانة عشرية واحدة (0.5)</span>
                   </div>
                 </div>
               </section>
@@ -1392,7 +1633,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {tasks.map((task) => {
-                    const pct = task.target ? Math.min(100, Math.round((todayTaps / task.target) * 100)) : 100;
+                    const pct = task.target ? Math.min(100, Math.round((currentStreakDays / task.target) * 100)) : 100;
                     return (
                       <div
                         key={task.id}
@@ -1401,7 +1642,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <div className="flex items-center gap-3.5 min-w-0">
                           <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400 shrink-0">
                             {task.id === 1 && <Calendar className="w-5 h-5" />}
-                            {task.id === 2 && <Hand className="w-5 h-5" />}
+                            {task.id === 2 && <Flame className="w-5 h-5" />}
                             {task.id === 3 && <Wallet className="w-5 h-5" />}
                             {task.id === 4 && <Users className="w-5 h-5" />}
                           </div>
@@ -1409,7 +1650,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                             <h4 className="font-bold text-sm text-white truncate">{task.title}</h4>
                             <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{task.desc}</p>
                             <span className="inline-block mt-1.5 text-xs font-extrabold text-amber-400 font-mono">
-                              مكافأة قيد الإعداد
+                              +{formatYt(task.reward)} YT
                             </span>
                           </div>
                         </div>
@@ -1422,7 +1663,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                           ) : task.status === 'progress' ? (
                             <div className="text-left">
                               <span className="text-xs font-bold text-amber-400 block font-mono">
-                                {todayTaps} / {task.target}
+                                {Math.min(currentStreakDays, task.target ?? 20)} / {task.target}
                               </span>
                               <div className="w-20 h-1.5 bg-white/10 rounded-full mt-1 overflow-hidden">
                                 <div className="h-full bg-amber-400" style={{ width: `${pct}%` }} />
@@ -1432,10 +1673,9 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                             <button
                               type="button"
                               onClick={() => handleClaimTask(task.id)}
-                              disabled
-                              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-black text-xs transition-all active:scale-95 shadow-md cursor-pointer"
+                              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 font-black text-xs transition-all cursor-pointer"
                             >
-                              قريباً
+                              التفاصيل
                             </button>
                           )}
                         </div>
@@ -1447,27 +1687,25 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
             )}
 
             {/* ======================================================================== */}
-            {/* 3. تبويب المحفظة الرقمية الخارجية المستقلة (STANDALONE EXTERNAL WALLET)  */}
+            {/* 3. تبويب المحفظة الرقمية الاحترافية (CRYPTO WALLET)                      */}
             {/* ======================================================================== */}
             {activeTab === 'wallet' && (
               <section className="space-y-5">
-                {/* External Standalone Portal Top Bar */}
-                <div className="rounded-2xl bg-[#090C12] border border-sky-500/30 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-[#0B0E14] font-black text-sm shadow">
-                      YT
-                    </div>
+                {/* Wallet Top Header Bar */}
+                <div className="rounded-2xl bg-[#101521] border border-amber-500/25 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <YtCoinLogo size="md" className="ring-amber-400/80" />
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs sm:text-sm font-black text-white tracking-wide">
-                          محفظة YT Coin الداخلية
+                        <span className="text-sm sm:text-base font-black text-white tracking-wide">
+                          محفظة YT Coin
                         </span>
-                        <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 border border-sky-400/30 px-2 py-0.5 text-[10px] font-bold text-sky-300">
-                          <Globe className="w-3 h-3" /> حساب داخلي ضمن Yemen Task
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                          YT Mainnet
                         </span>
                       </div>
-                      <span className="text-[10px] text-gray-400 font-mono block" dir="ltr">
-                        معرّف حساب داخلي • لا توجد شبكة بلوكشين عامة
+                      <span className="text-[11px] text-gray-400 font-mono block" dir="ltr">
+                        {shortWalletAddress}
                       </span>
                     </div>
                   </div>
@@ -1475,57 +1713,80 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                   <div className="flex items-center gap-2">
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1 text-[11px] font-bold text-emerald-400">
                       <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      متصل بالعقدة
+                      متصل
                     </span>
                     <button
                       type="button"
-                      onClick={copyPublicKey}
-                      title="بيانات التشفير والمفاتيح"
-                      className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-amber-400 transition-colors cursor-pointer"
+                      onClick={() => (user ? setShowReceiveModal(true) : openAuthModal('login'))}
+                      title="عرض رمز الاستلام QR"
+                      className="p-2 rounded-xl bg-white/5 hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/35 text-gray-200 hover:text-amber-400 transition-colors cursor-pointer"
                     >
-                      <KeyRound className="w-4 h-4" />
+                      <QrCode className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
 
-                {/* Main External Crypto Vault Card */}
-                <div className="rounded-3xl bg-gradient-to-br from-[#141C2E] via-[#0E1422] to-[#080B12] border border-amber-500/35 p-6 shadow-2xl relative overflow-hidden">
-                  <div className="absolute -top-16 -left-16 w-48 h-48 bg-amber-400/10 rounded-full blur-3xl pointer-events-none" />
-                  <div className="absolute -bottom-20 right-10 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
+                {/* Main Crypto Balance Vault Card */}
+                <div className="rounded-3xl bg-gradient-to-br from-[#192235] via-[#101625] to-[#090D16] border border-amber-500/35 p-5 sm:p-7 shadow-2xl relative overflow-hidden">
+                  <div className="absolute -top-20 -left-20 w-56 h-56 bg-amber-400/10 rounded-full blur-3xl pointer-events-none" />
+                  <div className="absolute -bottom-24 right-10 w-56 h-56 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
 
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
-                    <div className="space-y-1.5">
-                      <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400/90">
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>رصيد YT Coin الداخلي</span>
+                  <div className="relative flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+                    {/* Available Balance & Core Metrics */}
+                    <div className="space-y-4 flex-1">
+                      <div>
+                        <span className="text-xs font-bold text-gray-400 block mb-1.5">
+                          إجمالي الرصيد المتاح
+                        </span>
+                        <div className="flex items-baseline gap-3">
+                          <h2 className="text-4xl sm:text-5xl font-black text-white tracking-tight font-mono">
+                            {formatYt(effectiveBalance)}
+                          </h2>
+                          <span className="text-base sm:text-lg font-black text-amber-400 bg-amber-500/15 border border-amber-500/30 px-2.5 py-0.5 rounded-xl">
+                            YT
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-baseline gap-2.5 pt-1">
-                        <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight font-mono">
-                          {formatYt(effectiveBalance)}
-                        </h2>
-                        <span className="text-lg font-extrabold text-amber-400">YT</span>
+
+                      {/* Portfolio Sub-Stats */}
+                      <div className="grid grid-cols-3 gap-2.5 max-w-lg">
+                        <div className="rounded-2xl bg-[#0B101A]/85 border border-white/10 px-3 py-2.5">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block">إجمالي التعدين</span>
+                          <strong className="text-xs sm:text-sm font-black text-emerald-400 font-mono mt-0.5 block">
+                            {formatYt(summary?.totalMinedYt ?? 0)} YT
+                          </strong>
+                        </div>
+                        <div className="rounded-2xl bg-[#0B101A]/85 border border-white/10 px-3 py-2.5">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block">مكافأة اليوم</span>
+                          <strong className="text-xs sm:text-sm font-black text-amber-400 font-mono mt-0.5 block">
+                            +{formatYt(effectiveClaimReward)} YT
+                          </strong>
+                        </div>
+                        <div className="rounded-2xl bg-[#0B101A]/85 border border-white/10 px-3 py-2.5">
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block">السلسلة</span>
+                          <strong className="text-xs sm:text-sm font-black text-white font-mono mt-0.5 block">
+                            {formatInt(currentStreakDays)} يوم
+                          </strong>
+                        </div>
                       </div>
-                      <p className="text-xs sm:text-sm text-gray-400">
-                        القيمة السوقية: <span className="text-gray-400 font-bold">{effectiveUsd}</span>
-                      </p>
                     </div>
 
-                    {/* Public Blockchain Address Box */}
-                    <div className="bg-[#070A10]/90 border border-amber-500/25 rounded-2xl p-4 max-w-md w-full space-y-2">
+                    {/* Wallet Address Box */}
+                    <div className="bg-[#080C14]/90 border border-amber-500/25 rounded-2xl p-4 lg:w-80 xl:w-96 w-full space-y-2.5 shrink-0">
                       <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-gray-400">
-                          معرّف حساب YT Coin الداخلي
+                        <span className="text-[11px] font-bold text-gray-300">عنوان المحفظة</span>
+                        <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/25">
+                          YT-20
                         </span>
-                        <span className="text-[10px] font-mono text-sky-400">حساب داخلي</span>
                       </div>
-                      <div className="flex items-center justify-between gap-2 bg-[#0E131F] px-3 py-2 rounded-xl border border-white/5">
+                      <div className="flex items-center justify-between gap-2 bg-[#0F1522] px-3 py-2.5 rounded-xl border border-white/10">
                         <code className="text-xs text-amber-300 font-mono truncate" dir="ltr">
                           {walletAddress}
                         </code>
                         <button
                           type="button"
                           onClick={copyWalletAddress}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 text-xs font-bold transition-colors shrink-0 cursor-pointer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold transition-colors shrink-0 cursor-pointer"
                         >
                           {copiedAddress ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                           <span>{copiedAddress ? 'تم النسخ' : 'نسخ'}</span>
@@ -1534,144 +1795,160 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     </div>
                   </div>
 
-                  {/* External Wallet Primary Actions */}
-                  <div className="grid grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/10">
+                  {/* Primary Working Wallet Actions */}
+                  <div className="relative grid grid-cols-3 gap-2.5 sm:gap-3 mt-6 pt-5 border-t border-white/10">
                     <button
                       type="button"
-                      onClick={() => showToast('التحويل الخارجي غير مفعّل حالياً.', 'info')}
-                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-gradient-to-l from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#0B0E14] font-black text-xs sm:text-sm transition-all active:scale-95 shadow-lg shadow-amber-500/15 cursor-pointer"
+                      onClick={() => (user ? setShowReceiveModal(true) : openAuthModal('login'))}
+                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-gradient-to-l from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#0B0E14] font-black text-xs sm:text-sm transition-all active:scale-95 shadow-lg shadow-amber-500/20 cursor-pointer"
                     >
-                      <Send className="w-4 h-4" />
-                      <span>إرسال (قريباً)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => showToast('الاستلام عبر شبكة خارجية غير مفعّل حالياً.', 'info')}
-                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-white/10 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer"
-                    >
-                      <QrCode className="w-4 h-4 text-amber-400" />
+                      <QrCode className="w-4 h-4 shrink-0" />
                       <span>استلام / QR</span>
                     </button>
+
                     <button
                       type="button"
-                      onClick={copyPublicKey}
-                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-white/10 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer"
+                      onClick={() => {
+                        if (!user) {
+                          openAuthModal('login');
+                        } else if (summary?.canClaim) {
+                          void handleClaim();
+                        } else {
+                          setActiveTab('home');
+                        }
+                      }}
+                      disabled={claiming}
+                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-amber-500/30 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer disabled:opacity-60"
                     >
-                      <KeyRound className="w-4 h-4 text-sky-400" />
-                      <span>مفاتيح الأمان</span>
+                      <Gem className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>{summary?.canClaim ? 'مطالبة اليوم' : 'التعدين'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleRefreshData()}
+                      disabled={loading}
+                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-white/10 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer disabled:opacity-60"
+                    >
+                      <RefreshCw className={`w-4 h-4 text-emerald-400 shrink-0 ${isRefreshingSpin || loading ? 'animate-spin' : ''}`} />
+                      <span>تحديث الرصيد</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Independence Notice Banner */}
-                <div className="rounded-2xl bg-sky-950/30 border border-sky-500/25 px-4 py-3 flex items-start gap-3 text-xs text-sky-200/90 leading-relaxed">
-                  <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
-                  <p>
-                    <strong>سجل YT Coin:</strong> هذا رصيد داخلي مستقل محفوظ في Supabase، وليس عنواناً على شبكة بلوكشين عامة. جميع العمليات المعتمدة تُسجّل في دفتر YT Coin.
-                  </p>
-                </div>
-
-                {/* Assets Card */}
-                <div className="rounded-3xl bg-[#111622] border border-white/5 p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-extrabold text-gray-300 flex items-center gap-2">
+                {/* Assets Portfolio */}
+                <div className="rounded-3xl bg-[#111622] border border-white/10 p-5">
+                  <div className="flex items-center justify-between mb-3.5">
+                    <h3 className="text-sm font-extrabold text-gray-200 flex items-center gap-2">
                       <Layers className="w-4 h-4 text-amber-400" />
-                      <span>الأصول الرقمية المحفوظة</span>
+                      <span>الأصول الرقمية</span>
                     </h3>
-                    <span className="text-[11px] text-gray-500">رصيد داخلي واحد</span>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#0A0E17] border border-amber-500/20">
-                    <div className="flex items-center gap-3">
-                      <YtCoinLogo size="md" className="ring-amber-400" />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-sm text-white">YT Coin</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-bold">
-                            Internal
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-gray-400 block">رصيد YT Coin الداخلي</span>
-                      </div>
-                    </div>
-                    <div className="text-left">
-                      <span className="block font-black text-sm sm:text-base text-white font-mono">
-                        {formatYt(effectiveBalance)} YT
-                      </span>
-                      <span className="block text-[11px] text-emerald-400 font-mono">{effectiveUsd}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* On-Chain Explorer / Transactions Ledger */}
-                <div className="rounded-3xl bg-[#111622] border border-white/5 p-5 sm:p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-base sm:text-lg font-extrabold text-white flex items-center gap-2">
-                      <History className="w-5 h-5 text-amber-400" />
-                      <span>مستكشف معاملات الشبكة (Explorer)</span>
-                    </h3>
-                    <span className="text-xs text-gray-400 bg-white/5 px-3 py-1 rounded-full">
-                      {combinedTransactions.length} معاملة
+                    <span className="text-[11px] font-bold text-gray-400 bg-white/5 px-2.5 py-0.5 rounded-full">
+                      1 أصل
                     </span>
                   </div>
 
-                  <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-                    {combinedTransactions.map((tx) => {
-                      const val = tx.amountYt ?? 0;
-                      const isNegative = val < 0;
-                      const amountColor = isNegative
-                        ? 'text-rose-400'
-                        : val === 0
-                          ? 'text-gray-400'
-                          : 'text-emerald-400';
-                      const prefix = val > 0 ? '+' : '';
+                  <div className="flex items-center justify-between p-4 rounded-2xl bg-[#0A0E17] border border-amber-500/25">
+                    <div className="flex items-center gap-3.5">
+                      <YtCoinLogo size="md" className="ring-amber-400" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-sm sm:text-base text-white">YT Coin</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 font-bold border border-amber-500/25">
+                            YT Mainnet
+                          </span>
+                        </div>
+                        <span className="text-xs text-gray-400 block mt-0.5">عملة التعدين والمكافآت الرقمية</span>
+                      </div>
+                    </div>
+                    <div className="text-left">
+                      <span className="block font-black text-base sm:text-lg text-white font-mono">
+                        {formatYt(effectiveBalance)} YT
+                      </span>
+                      <span className="block text-[11px] text-emerald-400 font-mono">
+                        المكتسب: {formatYt(summary?.totalMinedYt ?? 0)} YT
+                      </span>
+                    </div>
+                  </div>
+                </div>
 
-                      return (
-                        <div
-                          key={tx.id}
-                          className="flex items-center justify-between p-3.5 rounded-2xl bg-[#0A0E17] border border-white/5 hover:border-white/10 transition-colors"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <div
-                              className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                                tx.type === 'send'
-                                  ? 'text-rose-400 bg-rose-500/10'
-                                  : tx.type === 'task'
-                                    ? 'text-sky-400 bg-sky-500/10'
-                                    : 'text-amber-400 bg-amber-500/10'
-                              }`}
-                            >
-                              {tx.type === 'send' ? (
-                                <ArrowUpRightFromSquare className="w-4 h-4" />
-                              ) : tx.type === 'task' ? (
-                                <Award className="w-4 h-4" />
-                              ) : (
-                                <Coins className="w-4 h-4" />
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <h5 className="text-xs sm:text-sm font-bold text-gray-200 truncate">{tx.label}</h5>
-                              <div className="flex flex-wrap items-center gap-2 text-[10px] text-gray-500 mt-0.5">
-                                <span>{tx.createdAt ? formatDateTime(tx.createdAt) : tx.claimDate || 'الآن'}</span>
-                                <span>•</span>
-                                <span className="font-mono text-sky-400/80 flex items-center gap-0.5" dir="ltr">
-                                  {tx.txHash || tx.reference || tx.id}
-                                  <ExternalLink className="w-2.5 h-2.5" />
-                                </span>
+                {/* Transactions Ledger */}
+                <div className="rounded-3xl bg-[#111622] border border-white/10 p-5 sm:p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-base sm:text-lg font-extrabold text-white flex items-center gap-2">
+                      <History className="w-5 h-5 text-amber-400" />
+                      <span>سجل المعاملات</span>
+                    </h3>
+                    <span className="text-xs text-gray-300 bg-white/5 px-3 py-1 rounded-full font-mono">
+                      {combinedTransactions.length} عملية
+                    </span>
+                  </div>
+
+                  {combinedTransactions.length === 0 ? (
+                    <div className="rounded-2xl bg-[#0A0E17] border border-white/5 py-10 px-4 text-center space-y-2">
+                      <Coins className="w-8 h-8 text-amber-400/60 mx-auto" />
+                      <p className="text-sm font-bold text-gray-300">لا توجد معاملات مسجلة بعد</p>
+                      <p className="text-xs text-gray-500">
+                        ستظهر هنا جميع إيداعات التعدين اليومي فور استلام أول مكافأة.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                      {combinedTransactions.map((tx) => {
+                        const val = tx.amountYt ?? 0;
+                        const isNegative = val < 0;
+                        const amountColor = isNegative
+                          ? 'text-rose-400'
+                          : val === 0
+                            ? 'text-gray-400'
+                            : 'text-emerald-400';
+                        const prefix = val > 0 ? '+' : '';
+
+                        return (
+                          <div
+                            key={tx.id}
+                            className="flex items-center justify-between p-3.5 rounded-2xl bg-[#0A0E17] border border-white/5 hover:border-white/10 transition-colors"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                                  tx.type === 'send'
+                                    ? 'text-rose-400 bg-rose-500/10'
+                                    : tx.type === 'task'
+                                      ? 'text-sky-400 bg-sky-500/10'
+                                      : 'text-amber-400 bg-amber-500/10'
+                                }`}
+                              >
+                                {tx.type === 'task' ? (
+                                  <Award className="w-4 h-4" />
+                                ) : (
+                                  <Coins className="w-4 h-4" />
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <h5 className="text-xs sm:text-sm font-bold text-gray-200 truncate">{tx.label}</h5>
+                                <div className="flex flex-wrap items-center gap-2 text-[10px] text-gray-500 mt-0.5">
+                                  <span>{tx.createdAt ? formatDateTime(tx.createdAt) : tx.claimDate || 'الآن'}</span>
+                                  <span>•</span>
+                                  <span className="font-mono text-amber-400/80 flex items-center gap-0.5" dir="ltr">
+                                    {tx.txHash || tx.reference || tx.id}
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </span>
+                                </div>
                               </div>
                             </div>
+                            <div
+                              className={`text-left font-black text-xs sm:text-sm font-mono shrink-0 ${amountColor}`}
+                              dir="ltr"
+                            >
+                              {prefix}
+                              {formatYt(val)} YT
+                            </div>
                           </div>
-                          <div
-                            className={`text-left font-black text-xs sm:text-sm font-mono shrink-0 ${amountColor}`}
-                            dir="ltr"
-                          >
-                            {prefix}
-                            {formatYt(val)} YT
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </section>
             )}
@@ -1688,7 +1965,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <Coins className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-xl font-black text-white font-mono">1,000,000,000</div>
-                    <div className="text-[11px] text-amber-400 mt-1">الوحدة الداخلية الواحدة = 0.5 YT</div>
+                    <div className="text-[11px] text-amber-400 mt-1">سقف ثابت: 1 مليار YT Coin</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
@@ -1708,7 +1985,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <TrendingUp className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-xl font-black text-white font-mono">{formatYt(effectiveDailyCap)}</div>
-                    <div className="text-[11px] text-emerald-400 mt-1">كل وحدة داخلية تساوي 0.5 YT</div>
+                    <div className="text-[11px] text-emerald-400 mt-1">دقة التعدين: حتى 0.5 YT</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
@@ -1831,129 +2108,228 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               </section>
             )}
 
-            {/* ========================================== */}
-            {/* 5. تبويب الإدارة والإعدادات (ADMIN TAB)     */}
-            {/* ========================================== */}
-            {activeTab === 'admin' && (
+            {/* ================================================== */}
+            {/* 5. تبويب الإدارة والإعدادات (ADMIN-ONLY TAB)       */}
+            {/* ================================================== */}
+            {activeTab === 'admin' && isAdmin && (
               <section className="space-y-5">
+                {/* Live Admin KPIs */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-2xl bg-[#131822] border border-amber-500/25 p-4">
+                    <span className="text-[11px] text-gray-400 block">رصيد خزينة التعدين</span>
+                    <strong className="text-lg sm:text-xl font-black text-amber-400 font-mono mt-1 block">
+                      {adminLoading && !adminSummary
+                        ? '...'
+                        : `${formatYt((Number(adminSummary?.rewards_treasury_balance_units ?? 0)) / 2)} YT`}
+                    </strong>
+                  </div>
+                  <div className="rounded-2xl bg-[#131822] border border-emerald-500/25 p-4">
+                    <span className="text-[11px] text-gray-400 block">إجمالي المُعدَّن فعلياً</span>
+                    <strong className="text-lg sm:text-xl font-black text-emerald-400 font-mono mt-1 block">
+                      {adminLoading && !adminSummary
+                        ? '...'
+                        : `${formatYt((Number(adminSummary?.total_mined_units ?? 0)) / 2)} YT`}
+                    </strong>
+                  </div>
+                  <div className="rounded-2xl bg-[#131822] border border-white/10 p-4">
+                    <span className="text-[11px] text-gray-400 block">مُعدَّن اليوم</span>
+                    <strong className="text-lg sm:text-xl font-black text-white font-mono mt-1 block">
+                      {adminLoading && !adminSummary
+                        ? '...'
+                        : `${formatYt((Number(adminSummary?.today_mined_units ?? 0)) / 2)} YT`}
+                    </strong>
+                  </div>
+                  <div className="rounded-2xl bg-[#131822] border border-white/10 p-4">
+                    <span className="text-[11px] text-gray-400 block">المعدّنون / المطالبات</span>
+                    <strong className="text-lg sm:text-xl font-black text-sky-400 font-mono mt-1 block">
+                      {adminLoading && !adminSummary
+                        ? '...'
+                        : `${formatInt(adminSummary?.active_miners_count)} / ${formatInt(adminSummary?.total_claims)}`}
+                    </strong>
+                  </div>
+                </div>
+
+                {/* Admin Configuration Form (0.5-YT decimal support) */}
                 <form
-                  onSubmit={handleSaveAdminSettings}
+                  onSubmit={(e) => void handleSaveAdminSettings(e)}
                   className="rounded-3xl bg-[#131822] border border-amber-500/25 p-5 sm:p-6"
                 >
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                      <Sliders className="w-5 h-5" />
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                        <Sliders className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg sm:text-xl font-black text-white">لوحة تحكم الإدارة (للمدير فقط)</h2>
+                        <p className="text-xs text-gray-400">
+                          إدارة قواعد التعدين والسقف اليومي بدقة حتى خانة عشرية واحدة (مضاعفات 0.5 YT).
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <h2 className="text-lg sm:text-xl font-black text-white">لوحة الإدارة وضبط معاملات المنجم</h2>
-                      <p className="text-xs text-gray-400">
-                        تحكم مباشر في محاكاة السقف اليومي وقيمة المطالبة وحالة الشبكة
-                      </p>
-                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void loadAdminData()}
+                      disabled={adminLoading}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-amber-400 text-xs font-bold cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${adminLoading ? 'animate-spin' : ''}`} />
+                      <span>تحديث المؤشرات</span>
+                    </button>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-6">
-                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
                       <label className="text-xs font-bold text-gray-300 block">
-                        مكافأة المطالبة الحالية (عدد صحيح YT)
+                        مكافأة اليوم الأول (YT — خانة عشرية واحدة مثل 0.5)
                       </label>
-                      <div className="flex gap-2">
-                        <input
-                          name="claimInput"
-                          type="number"
-                          min={1}
-                          step={1}
-                          defaultValue={effectiveClaimReward}
-                          className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-amber-400"
-                        />
-                        <button
-                          type="submit"
-                          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-extrabold text-xs shrink-0 cursor-pointer"
-                        >
-                          حفظ
-                        </button>
-                      </div>
+                      <input
+                        name="baseRewardYt"
+                        type="number"
+                        min={0.5}
+                        step={0.5}
+                        value={adminBaseRewardYt}
+                        onChange={(e) => setAdminBaseRewardYt(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
                     </div>
 
-                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-3">
-                      <label className="text-xs font-bold text-gray-300 block">السقف التصاعدي اليومي (YT)</label>
-                      <div className="flex gap-2">
-                        <input
-                          name="capInput"
-                          type="number"
-                          min={1000}
-                          step={1}
-                          defaultValue={effectiveDailyCap}
-                          className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-amber-400"
-                        />
-                        <button
-                          type="submit"
-                          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-extrabold text-xs shrink-0 cursor-pointer"
-                        >
-                          تطبيق
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-3">
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
                       <label className="text-xs font-bold text-gray-300 block">
-                        مكافأة النقر المباشر على العملة (YT)
+                        الزيادة التراكمية لكل يوم متتالٍ (YT — مثل 0.5)
                       </label>
-                      <div className="flex gap-2">
-                        <input
-                          name="tapInput"
-                          type="number"
-                          min={1}
-                          step={1}
-                          defaultValue={tapPower}
-                          className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-amber-400"
-                        />
-                        <button
-                          type="submit"
-                          className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-extrabold text-xs shrink-0 cursor-pointer"
-                        >
-                          تعديل
-                        </button>
-                      </div>
+                      <input
+                        name="dailyIncrementYt"
+                        type="number"
+                        min={0}
+                        step={0.5}
+                        value={adminDailyIncrementYt}
+                        onChange={(e) => setAdminDailyIncrementYt(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
                     </div>
 
-                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 flex items-center justify-between">
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
+                      <label className="text-xs font-bold text-gray-300 block">
+                        مكافأة اليوم 20 وما بعده يومياً (YT)
+                      </label>
+                      <input
+                        name="maxDailyRewardYt"
+                        type="number"
+                        min={0.5}
+                        step={0.5}
+                        value={adminMaxDailyRewardYt}
+                        onChange={(e) => setAdminMaxDailyRewardYt(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
+                      <label className="text-xs font-bold text-gray-300 block">
+                        السقف اليومي الابتدائي للمنصة (YT)
+                      </label>
+                      <input
+                        name="dailyCapStartYt"
+                        type="number"
+                        min={0.5}
+                        step={0.5}
+                        value={adminDailyCapStartYt}
+                        onChange={(e) => setAdminDailyCapStartYt(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
+                      <label className="text-xs font-bold text-gray-300 block">
+                        الحد الأقصى للسقف اليومي للمنصة (YT)
+                      </label>
+                      <input
+                        name="dailyCapMaxYt"
+                        type="number"
+                        min={0.5}
+                        step={0.5}
+                        value={adminDailyCapMaxYt}
+                        onChange={(e) => setAdminDailyCapMaxYt(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 flex items-center justify-between gap-3">
                       <div>
-                        <span className="text-xs font-bold text-gray-200 block">حالة عقد التعدين الذكي</span>
-                        <span className="text-[11px] text-gray-400">تفعيل أو إيقاف التعدين مؤقتاً</span>
+                        <span className="text-xs font-bold text-gray-200 block">حالة التعدين في المنصة</span>
+                        <span className="text-[11px] text-gray-400">تفعيل أو إيقاف مطالبات التعدين فوراً</span>
                       </div>
                       <button
                         type="button"
-                        onClick={() => showToast('حالة التعدين تُقرأ من Supabase ولا يمكن تغييرها من معاينة الواجهة.', 'info')}
-                        className={`px-4 py-2 rounded-xl font-bold text-xs cursor-pointer ${
-                          effectiveNetworkActive
+                        disabled={savingAdminConfig}
+                        onClick={() => void handleToggleMiningEnabled()}
+                        className={`px-4 py-2 rounded-xl font-bold text-xs cursor-pointer disabled:opacity-60 ${
+                          adminMiningEnabled
                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
                             : 'bg-rose-500/20 text-rose-400 border border-rose-500/40'
                         }`}
                       >
-                        {effectiveNetworkActive ? 'نشط (Active)' : 'متوقف (Paused)'}
+                        {adminMiningEnabled ? 'نشط (Active)' : 'متوقف (Paused)'}
                       </button>
                     </div>
                   </div>
 
-                  {/* Reset Area */}
-                  <div className="mt-6 pt-5 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                      <h4 className="text-sm font-bold text-rose-400">منطقة إعادة الضبط</h4>
-                      <p className="text-xs text-gray-400">
-                        إعادة تعيين كافة الأرصدة والمعاملات والمهام المحلية إلى الحالة الافتراضية.
-                      </p>
-                    </div>
+                  <div className="mt-6 pt-5 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
                     <button
                       type="button"
                       onClick={() => setShowResetModal(true)}
-                      className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 font-bold text-xs transition-all self-start sm:self-auto cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 font-bold text-xs transition-all cursor-pointer"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span>إعادة ضبط البيانات</span>
+                      <span>إعادة القيم الافتراضية</span>
+                    </button>
+
+                    <button
+                      type="submit"
+                      disabled={savingAdminConfig}
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-400 hover:from-amber-400 hover:to-amber-300 text-[#0B0E14] font-black text-xs sm:text-sm shadow-lg cursor-pointer disabled:opacity-60"
+                    >
+                      {savingAdminConfig ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      <span>حفظ الإعدادات في قاعدة البيانات</span>
                     </button>
                   </div>
                 </form>
+
+                {/* Recent Claims Table for Admin */}
+                {Array.isArray(adminSummary?.recent_claims) && adminSummary.recent_claims.length > 0 && (
+                  <div className="rounded-3xl bg-[#131822] border border-white/10 p-5 overflow-hidden">
+                    <h3 className="text-sm font-extrabold text-white mb-3 flex items-center gap-2">
+                      <History className="w-4 h-4 text-amber-400" />
+                      <span>أحدث مطالبات التعدين للمستخدمين</span>
+                    </h3>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-right text-xs">
+                        <thead className="text-gray-400 border-b border-white/10">
+                          <tr>
+                            <th className="py-2 px-3">المستخدم</th>
+                            <th className="py-2 px-3">اليوم المتتالي</th>
+                            <th className="py-2 px-3">المكافأة</th>
+                            <th className="py-2 px-3">التاريخ</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {adminSummary.recent_claims.slice(0, 15).map((claim: any) => (
+                            <tr key={String(claim.id)}>
+                              <td className="py-2.5 px-3 font-bold text-gray-200">
+                                {claim.full_name || String(claim.user_id || '').slice(0, 8)}
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-sky-400">اليوم {claim.streak_day ?? 1}</td>
+                              <td className="py-2.5 px-3 font-mono font-black text-amber-400">
+                                +{formatYt(Number(claim.amount_units ?? claim.reward_units ?? 0) / 2)} YT
+                              </td>
+                              <td className="py-2.5 px-3 text-gray-400">{formatDateTime(claim.created_at || claim.claim_date)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
               </section>
             )}
           </div>
@@ -2010,115 +2386,22 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
             <span className="text-[11px]">لوحتي</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setActiveTab('admin')}
-            className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all cursor-pointer ${
-              activeTab === 'admin' ? 'text-amber-600 font-extrabold' : 'text-slate-500 hover:text-slate-800 font-bold'
-            }`}
-          >
-            <ShieldCheck className="w-5 h-5 mb-0.5" />
-            <span className="text-[11px]">الإدارة</span>
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('admin')}
+              className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all cursor-pointer ${
+                activeTab === 'admin' ? 'text-amber-600 font-extrabold' : 'text-slate-500 hover:text-slate-800 font-bold'
+              }`}
+            >
+              <ShieldCheck className="w-5 h-5 mb-0.5" />
+              <span className="text-[11px]">الإدارة</span>
+            </button>
+          )}
         </nav>
       </div>
 
-      {/* ==================== STANDALONE WALLET & SYSTEM MODALS ==================== */}
-      {/* External Transfer Modal */}
-      {showTransferModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#121826] border border-amber-500/35 rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <Send className="w-5 h-5 text-amber-400" />
-                <h3 className="text-base sm:text-lg font-black text-white">تحويل خارجي via YT Vault</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowTransferModal(false)}
-                className="text-gray-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">عنوان محفظة خارجية (غير مدعوم حالياً)</label>
-                <input
-                  type="text"
-                  dir="ltr"
-                  value={recipientAddress}
-                  onChange={(e) => setRecipientAddress(e.target.value)}
-                  placeholder="التحويل الخارجي غير متاح حالياً"
-                  className="w-full bg-[#0A0E17] border border-white/15 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-amber-300 font-mono focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div>
-                <div className="flex justify-between text-xs text-gray-400 mb-1">
-                  <span>الكمية المرسلة (عدد صحيح YT)</span>
-                  <span>
-                    الرصيد الحر: <strong className="text-amber-400 font-mono">{formatYt(effectiveBalance)}</strong> YT
-                  </span>
-                </div>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={transferAmount}
-                    onChange={(e) => setTransferAmount(e.target.value)}
-                    placeholder="0"
-                    className="w-full bg-[#0A0E17] border border-white/15 rounded-xl px-3.5 py-2.5 text-sm text-white font-bold font-mono focus:outline-none focus:border-amber-400"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setTransferAmount(String(Math.floor(effectiveBalance)))}
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] font-black text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded cursor-pointer"
-                  >
-                    MAX
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs text-gray-400 block mb-1">ملاحظة المعاملة (اختياري)</label>
-                <input
-                  type="text"
-                  value={transferMemo}
-                  onChange={(e) => setTransferMemo(e.target.value)}
-                  placeholder="مثال: دفعة مقابل خدمة..."
-                  className="w-full bg-[#0A0E17] border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div className="rounded-xl bg-white/5 px-3 py-2 flex items-center justify-between text-[11px] text-gray-400">
-                <span>رسوم الشبكة (Network Gas Fee):</span>
-                <span className="text-emerald-400 font-bold">0 YT (مجاني)</span>
-              </div>
-            </div>
-
-            <div className="flex gap-2.5 pt-2">
-              <button
-                type="button"
-                onClick={executeTransfer}
-                className="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-black text-sm cursor-pointer"
-              >
-                التحويل غير متاح حالياً
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowTransferModal(false)}
-                className="px-5 py-3 rounded-xl bg-white/10 text-gray-300 font-bold text-sm cursor-pointer"
-              >
-                إلغاء
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* ==================== WALLET & SYSTEM MODALS ==================== */}
       {/* Receive QR Modal */}
       {showReceiveModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2153,7 +2436,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               </svg>
             </div>
             <p className="text-xs text-gray-400">
-              أرسل عملات <strong>YT Coin</strong> فقط إلى هذا العنوان على شبكة <strong>YT Mainnet</strong>.
+              عنوان محفظة <strong>YT Coin</strong> على شبكة <strong>YT Mainnet</strong>:
             </p>
             <div
               className="bg-[#0A0E17] p-3 rounded-xl border border-white/10 font-mono text-xs text-amber-400 break-all"
@@ -2175,67 +2458,6 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
         </div>
       )}
 
-      {/* Security & Cryptographic Keys Modal */}
-      {showKeyModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#121826] border border-sky-500/35 rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-white/10 pb-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-5 h-5 text-sky-400" />
-                <h3 className="text-base sm:text-lg font-black text-white">بيانات التشفير والمحفظة المستقلة</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowKeyModal(false)}
-                className="text-gray-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-3 text-xs">
-              <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 flex items-start gap-2.5 text-amber-200">
-                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <p>
-                  هذه المحفظة معزولة تشفيرياً ومستقلة تماماً عن حسابات العملات المحلية داخل المنصة.
-                </p>
-              </div>
-
-              <div>
-                <span className="text-gray-400 block mb-1">العنوان العام (معرّف داخلي):</span>
-                <div className="bg-[#0A0E17] p-2.5 rounded-xl border border-white/10 font-mono text-amber-300 break-all" dir="ltr">
-                  {walletAddress}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-gray-400">المفتاح العام (Public Key Hex):</span>
-                  <button
-                    type="button"
-                    onClick={copyPublicKey}
-                    className="text-sky-400 hover:underline font-bold cursor-pointer"
-                  >
-                    {copiedKey ? 'تم النسخ' : 'نسخ المفتاح'}
-                  </button>
-                </div>
-                <div className="bg-[#0A0E17] p-2.5 rounded-xl border border-white/10 font-mono text-[11px] text-gray-300 break-all" dir="ltr">
-                  {walletPublicKey}
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setShowKeyModal(false)}
-              className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-sm cursor-pointer"
-            >
-              إغلاق
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Reset Confirm Modal */}
       {showResetModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2243,8 +2465,8 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
             <div className="w-12 h-12 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto">
               <AlertTriangle className="w-6 h-6" />
             </div>
-            <h3 className="text-lg font-black text-white">تأكيد إعادة ضبط البيانات؟</h3>
-            <p className="text-xs text-gray-400">سيتم مسح رصيدك المحلي وسجل المعاملات المؤقت والبدء من جديد.</p>
+            <h3 className="text-lg font-black text-white">استعادة القيم الافتراضية للحقول؟</h3>
+            <p className="text-xs text-gray-400">سيتم إرجاع قيم الحقول إلى الافتراضي (0.5 YT ثم 20 YT في اليوم 20) دون المساس بأي أرصدة محفوظة.</p>
             <div className="flex gap-2.5">
               <button
                 type="button"
