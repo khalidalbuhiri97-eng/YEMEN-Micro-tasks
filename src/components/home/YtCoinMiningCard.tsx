@@ -559,10 +559,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   const arenaRef = useRef<HTMLDivElement | null>(null);
 
   // Admin / Override Controls
-  const [overrideClaimReward, setOverrideClaimReward] = useState<number | null>(null);
-  const [overrideDailyCap, setOverrideDailyCap] = useState<number | null>(null);
   const [tapPower, setTapPower] = useState<number>(100);
-  const [networkActiveOverride, setNetworkActiveOverride] = useState<boolean | null>(null);
 
   // Standalone External Wallet Modals & States
   const [showTransferModal, setShowTransferModal] = useState<boolean>(false);
@@ -802,10 +799,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
   const handleResetLocalData = () => {
     setTodayTaps(0);
-    setOverrideClaimReward(null);
-    setOverrideDailyCap(null);
     setTapPower(100);
-    setNetworkActiveOverride(null);
     setTasks((prev) => prev.map((t) => ({ ...t, status: t.id === 2 ? 'progress' : 'ready' })));
     setShowResetModal(false);
     showToast('تمت إعادة ضبط تفاعلات العرض فقط؛ لم يتغير رصيد YT Coin.', 'info');
@@ -1930,11 +1924,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       </div>
                       <button
                         type="button"
-                        onClick={() => {
-                          const next = !effectiveNetworkActive;
-                          setNetworkActiveOverride(next);
-                          showToast(next ? 'تم تفعيل شبكة التعدين' : 'تم إيقاف شبكة التعدين مؤقتاً', 'info');
-                        }}
+                        onClick={() => showToast('حالة التعدين تُقرأ من Supabase ولا يمكن تغييرها من معاينة الواجهة.', 'info')}
                         className={`px-4 py-2 rounded-xl font-bold text-xs cursor-pointer ${
                           effectiveNetworkActive
                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
@@ -2060,7 +2050,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                   dir="ltr"
                   value={recipientAddress}
                   onChange={(e) => setRecipientAddress(e.target.value)}
-                  placeholder="yt1q9a41c881b409d33e817c2a9f..."
+                  placeholder="التحويل الخارجي غير متاح حالياً"
                   className="w-full bg-[#0A0E17] border border-white/15 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-amber-300 font-mono focus:outline-none focus:border-amber-400"
                 />
               </div>
