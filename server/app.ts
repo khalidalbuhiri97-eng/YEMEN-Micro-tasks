@@ -27,7 +27,7 @@ import {
 } from '../shared/money.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
-const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.com').trim().replace(/\/$/, '');
+const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.vip').trim().replace(/\/$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
 export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -267,8 +267,8 @@ const app = express();
 
 // Hardened CORS & Preflight handling (allowlist official domain, local dev, and preview origins)
 const STATIC_ALLOWED_ORIGINS = new Set<string>([
-  'https://yemen-microtasks.com',
-  'https://www.yemen-microtasks.com',
+  'https://yemen-microtasks.vip',
+  'https://www.yemen-microtasks.vip',
   AUTH_REDIRECT_URL,
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -282,8 +282,8 @@ function isAllowedCorsOrigin(origin: string, reqHost?: string): boolean {
     const hostname = parsed.hostname.toLowerCase();
     if (
       parsed.protocol === 'https:' &&
-      (hostname === 'yemen-microtasks.com' ||
-        hostname.endsWith('.yemen-microtasks.com') ||
+      (hostname === 'yemen-microtasks.vip' ||
+        hostname.endsWith('.yemen-microtasks.vip') ||
         hostname.endsWith('.run.app') ||
         hostname.endsWith('.vercel.app'))
     ) {
@@ -1727,7 +1727,7 @@ app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, r
     res.json({
       ...stats,
       code,
-      shareUrl: code ? `https://yemen-microtasks.com/?ref=${encodeURIComponent(code)}` : 'https://yemen-microtasks.com/',
+      shareUrl: code ? `https://yemen-microtasks.vip/?ref=${encodeURIComponent(code)}` : 'https://yemen-microtasks.vip/',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل جلب بيانات الإحالة.' });
@@ -2684,6 +2684,95 @@ app.post('/api/admin/users/:id/status', adminMiddleware, async (req: Authenticat
     res.json({ success: true });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Admin: Resend Verification Link for user
+app.post('/api/admin/users/:id/resend-verification', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const adminClient = getSupabaseAdminClient();
+    const { data: authUser, error: getErr } = await adminClient.auth.admin.getUserById(req.params.id);
+    if (getErr || !authUser?.user?.email) {
+      return res.status(404).json({ error: 'المستخدم غير موجود أو لا يملك بريداً إلكترونياً.' });
+    }
+    const email = authUser.user.email;
+    const { error: resendErr } = await adminClient.auth.resend({
+      type: 'signup',
+      email,
+      options: {
+        emailRedirectTo: `${AUTH_REDIRECT_URL}/`,
+      },
+    });
+    if (resendErr) throw resendErr;
+
+    res.json({ success: true, message: `تم إرسال رابط التفعيل إلى ${email} بنجاح.` });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل إرسال رابط التفعيل.' });
+  }
+});
+
+// Admin: Generate Password Reset Link for user
+app.post('/api/admin/users/:id/reset-password', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const adminClient = getSupabaseAdminClient();
+    const { data: authUser, error: getErr } = await adminClient.auth.admin.getUserById(req.params.id);
+    if (getErr || !authUser?.user?.email) {
+      return res.status(404).json({ error: 'المستخدم غير موجود أو لا يملك بريداً إلكترونياً.' });
+    }
+    const email = authUser.user.email;
+    const { data: linkData, error: linkErr } = await adminClient.auth.admin.generateLink({
+      type: 'recovery',
+      email,
+      options: {
+        redirectTo: `${AUTH_REDIRECT_URL}/`,
+      },
+    });
+    if (linkErr) throw linkErr;
+
+    res.json({
+      success: true,
+      message: `تم إنشاء رابط استعادة كلمة المرور للمستخدم ${email}.`,
+      actionLink: linkData?.properties?.action_link || null,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل توليد رابط الاستعادة.' });
+  }
+});
+
+// Admin: Permanent User Deletion with Strict Financial Ledger Protection
+app.delete('/api/admin/users/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const targetUserId = req.params.id;
+    if (targetUserId === req.user.id) {
+      return res.status(400).json({ error: 'لا يمكنك حذف حسابك الإداري الخاص.' });
+    }
+
+    const adminClient = getSupabaseAdminClient();
+
+    // 1. Financial protection check: ensure user has zero active balance
+    const wallet = await supabaseDb.getWallet(targetUserId).catch(() => null);
+    if (wallet && (Number(wallet.availableBalance || 0) > 0 || Number(wallet.pendingBalance || 0) > 0)) {
+      return res.status(400).json({
+        error: 'لا يمكن حذف حساب لديه رصيد مالي نشط أو معلق. يرجى تسوية رصيده أولاً.',
+      });
+    }
+
+    // 2. Delete user from Supabase Auth (cascades or archives profile while preserving financial ledger tables)
+    const { error: deleteAuthErr } = await adminClient.auth.admin.deleteUser(targetUserId);
+    if (deleteAuthErr) {
+      throw deleteAuthErr;
+    }
+
+    // 3. Log audit event in system_error_logs
+    await logSupabaseError({
+      err: new Error(`Admin ${req.user.id} permanently deleted user ${targetUserId}`),
+      operation: 'ADMIN_DELETE_USER_AUDIT',
+      apiRoute: `/api/admin/users/${targetUserId}`,
+    });
+
+    res.json({ success: true, message: 'تم حذف حساب المستخدم بنجاح مع الحفاظ على السجلات المالية للتدقيق.' });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'فشل حذف المستخدم.' });
   }
 });
 

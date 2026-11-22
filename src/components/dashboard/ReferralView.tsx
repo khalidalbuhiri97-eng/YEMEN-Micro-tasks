@@ -72,7 +72,7 @@ export const ReferralView: React.FC = () => {
   const activeBonus = referrals?.referralBonus ?? fallbackBonus;
   const shareUrl =
     referrals?.shareUrl ||
-    (activeCode ? `https://yemen-microtasks.com/?ref=${encodeURIComponent(activeCode)}` : 'https://yemen-microtasks.com/');
+    (activeCode ? `https://yemen-microtasks.vip/?ref=${encodeURIComponent(activeCode)}` : 'https://yemen-microtasks.vip/');
 
   const handleCopyLink = () => {
     if (!activeCode) {

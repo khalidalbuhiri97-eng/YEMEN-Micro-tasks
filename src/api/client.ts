@@ -898,5 +898,13 @@ export const api = {
         body: JSON.stringify(payload),
       }
     ),
+
+  // Admin User Management (Resend verification, password reset, permanent delete with financial protection)
+  adminResendVerification: (userId: string) =>
+    request<{ success: boolean; message?: string }>(`/admin/users/${encodeURIComponent(userId)}/resend-verification`, { method: 'POST' }),
+  adminResetPassword: (userId: string) =>
+    request<{ success: boolean; message?: string; actionLink?: string }>(`/admin/users/${encodeURIComponent(userId)}/reset-password`, { method: 'POST' }),
+  adminDeleteUser: (userId: string) =>
+    request<{ success: boolean; message?: string }>(`/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
 };
 

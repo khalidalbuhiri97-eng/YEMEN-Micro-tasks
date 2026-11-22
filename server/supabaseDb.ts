@@ -159,7 +159,7 @@ export function computeReferralSummary(params: {
 
   return {
     code,
-    shareUrl: code ? `https://yemen-microtasks.com/?ref=${encodeURIComponent(code)}` : 'https://yemen-microtasks.com/',
+    shareUrl: code ? `https://yemen-microtasks.vip/?ref=${encodeURIComponent(code)}` : 'https://yemen-microtasks.vip/',
     referralBonus: Math.max(0, Number(params.referralBonus ?? 0)),
     totalReferred: referredUsers.length,
     qualifiedReferralsCount,
@@ -5104,7 +5104,7 @@ export const supabaseDb = {
         const ownCode = String(rpcSummary.code || generateReferralCode(userId));
         return {
           code: ownCode,
-          shareUrl: ownCode ? `https://yemen-microtasks.com/?ref=${encodeURIComponent(ownCode)}` : 'https://yemen-microtasks.com/',
+          shareUrl: ownCode ? `https://yemen-microtasks.vip/?ref=${encodeURIComponent(ownCode)}` : 'https://yemen-microtasks.vip/',
           referralBonus: Number(rpcSummary.referralBonus ?? settings.referralBonus),
           totalReferred: Number(rpcSummary.totalReferred || 0),
           qualifiedReferralsCount: Number(rpcSummary.qualifiedReferralsCount || 0),

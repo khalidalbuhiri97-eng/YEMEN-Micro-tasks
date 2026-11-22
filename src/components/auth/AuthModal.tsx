@@ -5,12 +5,12 @@ import { supabase } from '../../api/supabase.ts';
 import { GeoLocationSelector, type GeoSingleValue } from '../common/GeoLocationSelector.tsx';
 import { X, Lock, Phone, User, Mail, ArrowRight, Shield, Eye, EyeOff, Building2, Send } from 'lucide-react';
 
-const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.com';
+const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.vip';
 
 function resolveAuthRedirectOrigin(): string {
   if (typeof window === 'undefined') return CANONICAL_SITE_ORIGIN;
   const host = window.location.hostname.toLowerCase();
-  if (host === 'yemen-microtasks.com' || host === 'www.yemen-microtasks.com') {
+  if (host === 'yemen-microtasks.vip' || host === 'www.yemen-microtasks.vip') {
     return CANONICAL_SITE_ORIGIN;
   }
   return window.location.origin;

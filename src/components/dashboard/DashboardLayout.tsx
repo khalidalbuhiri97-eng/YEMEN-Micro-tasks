@@ -7,6 +7,7 @@ import { WalletView } from './WalletView.tsx';
 import { WithdrawView } from './WithdrawView.tsx';
 import { ReferralView } from './ReferralView.tsx';
 import { SupportView } from './SupportView.tsx';
+import { SettingsView } from './SettingsView.tsx';
 import { AdvertiserPortal } from '../advertiser/AdvertiserPortal.tsx';
 import { EmailVerificationBanner } from '../common/EmailVerificationBanner.tsx';
 import {
@@ -18,6 +19,7 @@ import {
   Users,
   HelpCircle,
   Megaphone,
+  Settings,
 } from 'lucide-react';
 import { formatYer } from '../../../shared/money.ts';
 
@@ -58,6 +60,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
           { id: 'wallet', label: 'المحفظة وسجل الحركات', icon: Wallet },
           { id: 'withdraw', label: 'سحب الأرباح نقداً', icon: Banknote },
           { id: 'referrals', label: 'دعوة الأصدقاء والإحالة', icon: Users },
+          { id: 'settings', label: 'إعدادات الحساب', icon: Settings },
           { id: 'support', label: 'مركز الدعم والمساعدة', icon: HelpCircle },
         ];
 
@@ -181,6 +184,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
             <WithdrawView onGoToWallet={() => setSubTab('wallet')} />
           )}
           {subTab === 'referrals' && <ReferralView />}
+          {subTab === 'settings' && <SettingsView />}
           {subTab === 'support' && <SupportView />}
         </main>
       </div>
