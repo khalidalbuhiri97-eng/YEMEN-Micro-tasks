@@ -56,13 +56,20 @@ function pickArray(sources: Array<Record<string, any> | null>, keys: string[]): 
   return [];
 }
 
-function formatNum(value: number | null, maxDecimals = 4): string {
+function formatNum(value: number | null, maxDecimals = 2): string {
   if (value === null || !Number.isFinite(value)) return '—';
-  const hasFraction = Math.abs(value - Math.trunc(value)) > 1e-9;
+  if (value !== 0 && Math.abs(value) < 0.01) return value < 0 ? '-<0.01' : '<0.01';
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 0,
-    maximumFractionDigits: hasFraction ? maxDecimals : 0,
+    maximumFractionDigits: Math.min(2, Math.max(0, maxDecimals)),
   }).format(value);
+}
+
+function pickYtUnits(sources: Array<Record<string, any> | null>, ytKeys: string[], unitKeys: string[]): number | null {
+  const direct = pickNumber(sources, ytKeys);
+  if (direct !== null) return direct;
+  const units = pickNumber(sources, unitKeys);
+  return units === null ? null : units / 1_000_000;
 }
 
 function formatDateTime(iso: string | null): string {
@@ -151,11 +158,12 @@ export const YtCoinAdminView: React.FC = () => {
       legacyTreasury,
     ];
 
-    const mainTreasuryYt = pickNumber(
+    const mainTreasuryYt = pickYtUnits(
       [legacyTreasury, root],
-      ['balance_yt', 'treasury_balance_yt', 'legacy_treasury_balance_yt', 'backing_treasury_yt']
+      ['balance_yt', 'treasury_balance_yt', 'legacy_treasury_balance_yt', 'backing_treasury_yt'],
+      ['balance_units', 'balanceUnits', 'treasury_balance_units']
     );
-    const rewardsPoolRemainingYt = pickNumber(
+    const rewardsPoolRemainingYt = pickYtUnits(
       [rewardsTreasury, root, miningStats],
       [
         'rewards_treasury_balance_yt',
@@ -164,23 +172,24 @@ export const YtCoinAdminView: React.FC = () => {
         'pool_remaining_yt',
         'remaining_yt',
         'balance_yt',
-      ]
+      ],
+      ['balance_units', 'balanceUnits', 'rewards_treasury_balance_units', 'pool_remaining_units']
     );
-    const miningCapYt = pickNumber(sources, [
+    const miningCapYt = pickYtUnits(sources, [
       'mining_cap_yt',
       'pool_cap_yt',
       'total_mining_cap_yt',
       'allocated_yt',
       'max_mining_supply_yt',
-    ]);
-    const totalMinedYt = pickNumber(sources, [
+    ], ['daily_global_cap_units', 'daily_cap_units', 'allocated_units', 'max_daily_reward_units']);
+    const totalMinedYt = pickYtUnits(sources, [
       'total_mined_yt',
       'total_distributed_yt',
       'distributed_yt',
       'circulating_supply_yt',
       'total_user_balances_yt',
       'user_balances_total_yt',
-    ]);
+    ], ['total_mined_units', 'total_distributed_units', 'circulating_supply_units', 'total_user_balances_units']);
     const backingYer = pickNumber(
       [legacyTreasury, root],
       ['backing_yer', 'total_backing_yer']
@@ -206,7 +215,7 @@ export const YtCoinAdminView: React.FC = () => {
       'total_claims_count',
       'claims_count',
     ]);
-    const todayMinedYt = pickNumber(sources, ['today_mined_yt', 'mined_today_yt']);
+    const todayMinedYt = pickYtUnits(sources, ['today_mined_yt', 'mined_today_yt'], ['today_mined_units', 'mined_today_units']);
     const updatedAt = pickString(sources, ['updated_at', 'generated_at', 'as_of']);
 
     const treasuries = pickArray([root], [
@@ -237,12 +246,16 @@ export const YtCoinAdminView: React.FC = () => {
     for (const [k, v] of Object.entries(root)) {
       if (v === null || v === undefined || typeof v === 'object') continue;
       let displayVal = String(v);
+      let displayLabel = METRIC_LABELS[k] || k;
       if (typeof v === 'boolean') displayVal = v ? 'نعم' : 'لا';
-      else if (typeof v === 'number') displayVal = formatNum(v);
+      else if (typeof v === 'number' && (k.endsWith('_units') || k.endsWith('Units'))) {
+        displayVal = formatNum(v / 1_000_000);
+        displayLabel = METRIC_LABELS[k.replace(/_units$|Units$/, '_yt')] || k.replace(/_units$|Units$/, ' (YT)');
+      } else if (typeof v === 'number') displayVal = formatNum(v);
       else if (k.endsWith('_at')) displayVal = formatDateTime(v);
       scalarEntries.push({
         key: k,
-        label: METRIC_LABELS[k] || k,
+        label: displayLabel,
         value: displayVal,
       });
     }
@@ -448,7 +461,7 @@ export const YtCoinAdminView: React.FC = () => {
                         </td>
                         <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-amber-700 dark:text-amber-400">
                           {formatNum(
-                            pickNumber([t], ['balance_yt', 'available_yt', 'balance']) ??
+                            pickYtUnits([t], ['balance_yt', 'available_yt'], ['balance_units', 'balanceUnits']) ??
                               (t.balance_atomic != null ? Number(t.balance_atomic) / 1_000_000 : null)
                           )}{' '}
                           YT
@@ -497,7 +510,7 @@ export const YtCoinAdminView: React.FC = () => {
                           </td>
                           <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-emerald-700 dark:text-emerald-400">
                             {formatNum(
-                              pickNumber([row], ['amount_yt', 'reward_yt', 'claimed_yt', 'amount'])
+                              pickYtUnits([row], ['amount_yt', 'reward_yt', 'claimed_yt', 'amount'], ['amount_units', 'amountUnits', 'reward_units', 'rewardUnits'])
                             )}{' '}
                             YT
                           </td>
