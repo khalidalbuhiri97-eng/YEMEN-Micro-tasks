@@ -42,7 +42,7 @@ interface ClixWallSummary {
 
 export const OfferWallView: React.FC = () => {
   const { user, openAuthModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'hub' | 'wall' | 'partner' | 'history'>('hub');
+  const [activeTab, setActiveTab] = useState<'hub' | 'wall' | 'partner' | 'history' | 'gg-wall' | 'gg-history'>('hub');
   const [offerWallPartners, setOfferWallPartners] = useState<AdPartner[]>([]);
   const [selectedPartner, setSelectedPartner] = useState<AdPartner | null>(null);
   const [offerWallUrl, setOfferWallUrl] = useState<string>('');
@@ -56,6 +56,10 @@ export const OfferWallView: React.FC = () => {
   });
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [ggUrl, setGgUrl] = useState<string>('');
+  const [ggRewards, setGgRewards] = useState<Array<{ id: string; transaction_id: string; status: 'credited' | 'reversed'; offer_name?: string | null; currency_amount: number; created_at: string }>>([]);
+  const [ggLoading, setGgLoading] = useState<boolean>(false);
+  const [ggError, setGgError] = useState<string | null>(null);
 
   const fetchOfferWallData = useCallback(async () => {
     if (!user) {
@@ -104,6 +108,24 @@ export const OfferWallView: React.FC = () => {
   useEffect(() => {
     fetchOfferWallData();
   }, [fetchOfferWallData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user) return;
+    setGgLoading(true);
+    Promise.all([api.getOfferwallGgUrl(), api.getOfferwallGgRewards()])
+      .then(([urlResult, rewardResult]) => {
+        if (cancelled) return;
+        setGgUrl(urlResult.offerWallUrl);
+        setGgRewards(rewardResult.rewards || []);
+        setGgError(null);
+      })
+      .catch((err: any) => {
+        if (!cancelled) setGgError(err?.message || 'تعذر تحميل Offerwall.GG. تحقق من إعداد التكامل.');
+      })
+      .finally(() => { if (!cancelled) setGgLoading(false); });
+    return () => { cancelled = true; };
+  }, [user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -235,6 +257,12 @@ export const OfferWallView: React.FC = () => {
         >
           <RefreshCw className="inline w-4 h-4 ml-1" /> سجل مكافآت ClixWall ({rewards.length})
         </button>
+        <button
+          onClick={() => setActiveTab('gg-history')}
+          className={`rounded-xl px-4 py-2 text-sm font-bold transition-colors ${activeTab === 'gg-history' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
+        >
+          <RefreshCw className="inline w-4 h-4 ml-1" /> سجل Offerwall.GG ({ggRewards.length})
+        </button>
         {activeTab !== 'hub' && (
           <button
             onClick={() => { setSelectedPartner(null); setActiveTab('hub'); }}
@@ -268,6 +296,21 @@ export const OfferWallView: React.FC = () => {
               </div>
               <span className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">افتح حائط ClixWall المخصص لحسابك وتابع مكافآتك وسجل التحويلات.</span>
               <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400">فتح حائط ClixWall ←</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('gg-wall')}
+              className="min-h-[190px] rounded-2xl border border-cyan-200 dark:border-cyan-900/60 bg-gradient-to-br from-cyan-50 via-white to-blue-50 dark:from-cyan-950/40 dark:via-slate-900 dark:to-slate-900 p-5 text-right shadow-sm hover:shadow-md hover:border-cyan-400 transition-all flex flex-col justify-between"
+            >
+              <div className="flex items-center gap-3">
+                <span className="w-12 h-12 rounded-xl bg-white dark:bg-slate-800 border border-cyan-100 dark:border-cyan-900 flex items-center justify-center"><Layers className="w-7 h-7 text-cyan-600" /></span>
+                <span>
+                  <strong className="block text-base font-extrabold text-slate-900 dark:text-white">Offerwall.GG</strong>
+                  <span className="text-[11px] text-cyan-700 dark:text-cyan-400 font-semibold">{ggError ? 'يتطلب إكمال إعداد الخادم' : 'مكافآت مباشرة بالريال اليمني'}</span>
+                </span>
+              </div>
+              <span className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">عروض واستبيانات ومهام من Offerwall.GG، وتُضاف المكافآت المؤكدة إلى محفظتك بالريال.</span>
+              <span className="text-xs font-extrabold text-cyan-700 dark:text-cyan-400">فتح Offerwall.GG ←</span>
             </button>
             {offerWallPartners.map((partner) => (
               <button
@@ -391,6 +434,57 @@ export const OfferWallView: React.FC = () => {
             )}
           </div>
         </div>
+      )}
+
+      {activeTab === 'gg-wall' && (
+        <section className="space-y-3">
+          <div className="rounded-2xl border border-cyan-200 dark:border-cyan-900/60 bg-white dark:bg-slate-900 p-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">Offerwall.GG</h2>
+              <p className="text-[11px] text-slate-500">حائط مستقل ومكافآت بالريال اليمني</p>
+            </div>
+            {ggUrl && <a href={ggUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-cyan-700 px-3 py-2 text-[11px] font-bold text-white">فتح خارجي <ExternalLink className="w-3 h-3" /></a>}
+          </div>
+          {ggLoading ? (
+            <div className="rounded-xl bg-white dark:bg-slate-900 p-12 text-center text-sm text-slate-500">جاري تحميل حائط Offerwall.GG...</div>
+          ) : ggError || !ggUrl ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-6 text-center text-sm text-amber-800 dark:text-amber-300">{ggError || 'لم يصل رابط الحائط من الخادم بعد.'}</div>
+          ) : (
+            <iframe src={ggUrl} title="Offerwall.GG offers" width="100%" height="800" allow="clipboard-write" referrerPolicy="strict-origin-when-cross-origin" className="block w-full h-[800px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white" />
+          )}
+        </section>
+      )}
+
+      {activeTab === 'gg-history' && (
+        <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+            <div>
+              <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">سجل مكافآت Offerwall.GG</h2>
+              <p className="text-xs text-slate-500 mt-1">المكافآت الصافية المسجلة في دفتر الأستاذ</p>
+            </div>
+            <button onClick={() => { setGgLoading(true); Promise.all([api.getOfferwallGgUrl(), api.getOfferwallGgRewards()]).then(([u,r]) => { setGgUrl(u.offerWallUrl); setGgRewards(r.rewards || []); setGgError(null); }).catch((e:any) => setGgError(e?.message || 'تعذر التحديث')).finally(() => setGgLoading(false)); }} className="p-2 rounded-lg text-slate-500 hover:text-cyan-600"><RefreshCw className="w-4 h-4" /></button>
+          </div>
+          {ggRewards.length === 0 ? (
+            <div className="p-12 text-center text-sm text-slate-500">لا توجد مكافآت Offerwall.GG مسجلة حتى الآن.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-right text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-800 text-xs text-slate-500"><tr><th className="p-3">رقم العملية</th><th className="p-3">العرض</th><th className="p-3">المبلغ (ر.ي)</th><th className="p-3">الحالة</th><th className="p-3">التاريخ</th></tr></thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {ggRewards.map((reward) => (
+                    <tr key={reward.id}>
+                      <td className="p-3 font-mono text-xs">{reward.transaction_id}</td>
+                      <td className="p-3">{reward.offer_name || 'عرض Offerwall.GG'}</td>
+                      <td className={`p-3 font-bold ${reward.status === 'credited' ? 'text-emerald-600' : 'text-rose-600'}`}>{fmtYer(reward.currency_amount)}</td>
+                      <td className="p-3">{reward.status === 'credited' ? 'مضاف للمحفظة' : 'مسترجع'}</td>
+                      <td className="p-3 text-xs text-slate-500">{new Date(reward.created_at).toLocaleString('ar-YE')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
 
       {activeTab === 'history' && (
