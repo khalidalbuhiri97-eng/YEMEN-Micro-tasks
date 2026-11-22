@@ -812,17 +812,12 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     setOverrideDailyCap(null);
     setTapPower(100);
     setNetworkActiveOverride(null);
-    setTasks((prev) =>
-      prev.map((t) => ({
-        ...t,
-        status: t.id === 2 ? 'progress' : 'ready',
-      }))
-    );
+    setTasks((prev) => prev.map((t) => ({ ...t, status: t.id === 2 ? 'progress' : 'ready' })));
     setShowResetModal(false);
     showToast('تمت إعادة ضبط تفاعلات العرض فقط؛ لم يتغير رصيد YT Coin.', 'info');
   };
 
-  const pendingTasksReward = useMemo(() => 0, []);
+  const pendingTasksReward = 0;
   const activeTasksCount = useMemo(() => tasks.filter((t) => t.status !== 'claimed').length, [tasks]);
 
   // Compact Banner Mode (used on Home page)
@@ -1653,7 +1648,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowKeyModal(true)}
+                      onClick={copyPublicKey}
                       className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-white/10 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer"
                     >
                       <KeyRound className="w-4 h-4 text-sky-400" />
@@ -2147,7 +2142,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-gray-400 block mb-1">عنوان محفظة المستلم على الشبكة</label>
+                <label className="text-xs text-gray-400 block mb-1">عنوان محفظة خارجية (غير مدعوم حالياً)</label>
                 <input
                   type="text"
                   dir="ltr"
