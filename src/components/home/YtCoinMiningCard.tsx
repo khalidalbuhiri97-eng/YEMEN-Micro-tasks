@@ -213,6 +213,11 @@ function formatYtUnits(value: number | null | undefined): string {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(yt);
 }
 
+function formatCount(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '0';
+  return new Intl.NumberFormat('en-US').format(Math.floor(value));
+}
+
 function formatDateTime(iso: string | null): string {
   if (!iso) return '—';
   const parsed = new Date(iso);
@@ -612,7 +617,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <div className="space-y-1">
                           <span className="text-xs font-bold text-slate-400">سلسلة التعدين المتتالية</span>
                           <div className="font-mono text-lg font-black text-amber-200">
-                            {formatYtUnits(summary.streakDays)} <span className="text-xs text-amber-400">يوم</span>
+                            {formatCount(summary.streakDays)} <span className="text-xs text-amber-400">يوم</span>
                           </div>
                           <p className="text-[10px] text-slate-400">
                             🔥 مكافأة التزام يومية متصاعدة
