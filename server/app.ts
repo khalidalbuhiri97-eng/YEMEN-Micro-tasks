@@ -505,6 +505,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       id: authUserId,
       full_name: fullName.trim(),
       phone: cleanPhone,
+      email: cleanEmail,
       city: resolvedCity,
       ...(geoValidated?.country ? { country_id: geoValidated.country.id } : {}),
       ...(geoValidated?.division ? { administrative_division_id: geoValidated.division.id } : {}),
