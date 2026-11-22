@@ -19,6 +19,20 @@ function readField(req: Request, key: string): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
 }
 
+// Offerwall.GG supports canonical field names and common callback aliases.
+// Accept both so a placement configured with the documented short macros
+// (user/amount/tx/sig) is processed exactly like the canonical form.
+function readAliasedField(req: Request, keys: string[]): string {
+  for (const key of keys) {
+    const value = (req.body && req.body[key] !== undefined) ? req.body[key] : req.query[key];
+    if (typeof value === 'string' || typeof value === 'number') {
+      const normalized = String(value).trim();
+      if (normalized !== '') return normalized;
+    }
+  }
+  return '';
+}
+
 function decimalAmount(value: string): boolean {
   return /^-?\d{1,18}(?:\.\d{1,6})?$/.test(value) && Number.isFinite(Number(value));
 }
@@ -87,12 +101,12 @@ export function createOfferwallGgHandlers(deps: {
       const secret = process.env[SECRET_ENV];
       if (!secret) return res.status(503).send('CONFIGURATION_ERROR');
 
-      userId = readField(req, 'userId');
-      transactionId = readField(req, 'transactionId');
-      const amount = readField(req, 'currencyAmount');
-      const signature = readField(req, 'signature');
-      const status = readField(req, 'status').toLowerCase();
-      const test = readField(req, 'test');
+      userId = readAliasedField(req, ['userId', 'user_id', 'subid', 'user']);
+      transactionId = readAliasedField(req, ['transactionId', 'transaction_id', 'txid', 'trans_id', 'tx']);
+      const amount = readAliasedField(req, ['currencyAmount', 'currency_amount', 'amount', 'points', 'reward']);
+      const signature = readAliasedField(req, ['signature', 'sig', 'hash']);
+      const status = readAliasedField(req, ['status']).toLowerCase();
+      const test = readAliasedField(req, ['test']);
 
       if (test === '1' || test.toLowerCase() === 'true') return res.status(200).send('OK');
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId)) {
@@ -110,16 +124,16 @@ export function createOfferwallGgHandlers(deps: {
         .update(`${userId}:${transactionId}:${amount}`, 'utf8').digest('hex');
       if (!safeEqualHex(expected, signature)) return res.status(403).send('FORBIDDEN');
 
-      const currencyName = readField(req, 'currencyName').toUpperCase();
+      const currencyName = readAliasedField(req, ['currencyName', 'currency_name']).toUpperCase();
       if (currencyName !== 'YER') return res.status(400).send('UNSUPPORTED_CURRENCY');
 
-      const payoutUsdRaw = readField(req, 'payoutUsd');
+      const payoutUsdRaw = readAliasedField(req, ['payoutUsd', 'payout_usd', 'payout']);
       const payoutUsd = decimalAmount(payoutUsdRaw) ? Number(payoutUsdRaw) : null;
       const payload = cleanPayload({
-        userId, transactionId, offerId: readField(req, 'offerId'),
-        offerName: readField(req, 'offerName'), goalId: readField(req, 'goalId'),
+        userId, transactionId, offerId: readAliasedField(req, ['offerId', 'offer_id', 'oid']),
+        offerName: readAliasedField(req, ['offerName', 'offer_name', 'name']), goalId: readAliasedField(req, ['goalId', 'goal_id']),
         currencyAmount: amount, currencyName, payoutUsd: payoutUsdRaw,
-        status, test, timestamp: readField(req, 'timestamp'),
+        status, test, timestamp: readAliasedField(req, ['timestamp', 'ts']),
       });
 
       const client = deps.getAdminClient();
@@ -129,9 +143,9 @@ export function createOfferwallGgHandlers(deps: {
         p_status: status,
         p_currency_amount: amount,
         p_currency_name: currencyName,
-        p_offer_id: readField(req, 'offerId') || null,
-        p_offer_name: readField(req, 'offerName') || null,
-        p_goal_id: readField(req, 'goalId') || null,
+        p_offer_id: readAliasedField(req, ['offerId', 'offer_id', 'oid']) || null,
+        p_offer_name: readAliasedField(req, ['offerName', 'offer_name', 'name']) || null,
+        p_goal_id: readAliasedField(req, ['goalId', 'goal_id']) || null,
         p_payout_usd: payoutUsd,
         p_payload: payload,
       });
@@ -142,7 +156,7 @@ export function createOfferwallGgHandlers(deps: {
           await deps.onRewardCredited({
             userId,
             amountYer: String(data.amount_yer ?? amount),
-            offerName: readField(req, 'offerName') || 'عرض Offerwall.GG',
+            offerName: readAliasedField(req, ['offerName', 'offer_name', 'name']) || 'عرض Offerwall.GG',
           });
         } catch { /* Notification failure must not trigger a provider retry or duplicate a ledger credit. */ }
       }
