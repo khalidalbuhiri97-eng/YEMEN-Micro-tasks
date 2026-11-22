@@ -1,6 +1,5 @@
 import React from 'react';
 import { ShieldCheck, Phone, Mail, MapPin } from 'lucide-react';
-import { AndroidApkDownloadButton } from '../pwa/PWAInstallButton.tsx';
 
 interface FooterProps {
   onNavigate: (tab: string) => void;
@@ -29,9 +28,6 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-medium text-[11px]">
               <ShieldCheck className="w-4 h-4 shrink-0" />
               <span>دفعات حقيقية وسريعة بالريال اليمني (YER)</span>
-            </div>
-            <div className="pt-2">
-              <AndroidApkDownloadButton variant="full" />
             </div>
           </div>
 

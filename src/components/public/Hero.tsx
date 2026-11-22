@@ -10,7 +10,6 @@ import { api } from '../../api/client.ts';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 import { HomeAdWindow } from '../ads/HomeAdWindow.tsx';
 import { ClixWallHomeCard } from '../home/ClixWallHomeCard.tsx';
-import { AndroidApkDownloadButton } from '../pwa/PWAInstallButton.tsx';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
 
 interface HeroProps {
@@ -73,12 +72,14 @@ export const Hero: React.FC<HeroProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10 items-center">
           {/* Main headline */}
           <div className="lg:col-span-6 flex flex-col justify-center">
-            <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-black text-slate-950 dark:text-white leading-[1.24] tracking-tight mb-6 [text-wrap:balance]">
-              حَوّل وقتك إلى{' '}
-              <span className="bg-gradient-to-l from-emerald-600 via-teal-600 to-amber-500 dark:from-emerald-400 dark:via-teal-300 dark:to-amber-300 bg-clip-text text-transparent">
-                أرباح يومية فورية
+            <h1 className="text-[19px] sm:text-2xl lg:text-3xl font-black text-slate-950 dark:text-white leading-[1.35] tracking-tight mb-4">
+              <span className="block">
+                حَوّل وقتك إلى{' '}
+                <span className="bg-gradient-to-l from-emerald-600 via-teal-600 to-amber-500 dark:from-emerald-400 dark:via-teal-300 dark:to-amber-300 bg-clip-text text-transparent">
+                  أرباح يومية فورية
+                </span>
               </span>
-              <span className="block mt-1.5 text-slate-800 dark:text-slate-100">
+              <span className="block mt-1 text-slate-800 dark:text-slate-100">
                 بالريال اليمني وسحب مباشر
               </span>
             </h1>
@@ -101,8 +102,6 @@ export const Hero: React.FC<HeroProps> = ({
                 <span>عروض ClixWall</span>
                 <span className="text-xs text-amber-400 font-mono font-extrabold">USD</span>
               </button>
-
-              <AndroidApkDownloadButton />
             </div>
 
             <div className="flex flex-wrap items-center gap-y-2 gap-x-5 text-[11px] sm:text-xs text-slate-600 dark:text-slate-400">

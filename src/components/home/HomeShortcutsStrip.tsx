@@ -12,9 +12,11 @@ import {
   CircleDollarSign,
   Clock3,
   Tv,
+  Download,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { formatYer } from '../../../shared/money.ts';
+import { useIsStandalone } from '../pwa/PWAInstallButton.tsx';
 
 interface HomeShortcutsStripProps {
   onNavigate: (tab: string) => void;
@@ -22,6 +24,7 @@ interface HomeShortcutsStripProps {
 
 export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNavigate }) => {
   const { user, wallet, isAdmin } = useAuth();
+  const isStandalone = useIsStandalone();
 
   const shortcuts = [
     {
@@ -110,16 +113,16 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
       className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 transition-colors"
     >
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5">
-        <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className={`grid ${isStandalone ? 'grid-cols-3' : 'grid-cols-4'} gap-1.5 sm:gap-2 mb-3`}>
           <button
             type="button"
             onClick={() => onNavigate('wallet')}
-            className="min-w-0 rounded-xl border border-emerald-100 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 px-2 py-2 text-right"
+            className="min-w-0 rounded-xl border border-emerald-100 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 px-1.5 sm:px-2 py-2 text-right"
           >
-            <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
-              <CircleDollarSign className="w-3 h-3 shrink-0" /> الرصيد المتاح
+            <span className="flex items-center gap-1 text-[9px] sm:text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 truncate">
+              <CircleDollarSign className="w-3 h-3 shrink-0" /> <span className="truncate">الرصيد المتاح</span>
             </span>
-            <strong className="block mt-1 text-xs sm:text-sm font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
+            <strong className="block mt-1 text-[11px] sm:text-sm font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
               {user ? money(wallet?.availableBalance) : 'سجّل الدخول'}
             </strong>
           </button>
@@ -127,12 +130,12 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
           <button
             type="button"
             onClick={() => onNavigate('wallet')}
-            className="min-w-0 rounded-xl border border-amber-100 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 px-2 py-2 text-right"
+            className="min-w-0 rounded-xl border border-amber-100 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/30 px-1.5 sm:px-2 py-2 text-right"
           >
-            <span className="flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
-              <Sparkles className="w-3 h-3 shrink-0" /> إجمالي الأرباح
+            <span className="flex items-center gap-1 text-[9px] sm:text-[10px] font-semibold text-amber-700 dark:text-amber-300 truncate">
+              <Sparkles className="w-3 h-3 shrink-0" /> <span className="truncate">إجمالي الأرباح</span>
             </span>
-            <strong className="block mt-1 text-xs sm:text-sm font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
+            <strong className="block mt-1 text-[11px] sm:text-sm font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
               {user ? money(wallet?.totalEarned) : '—'}
             </strong>
           </button>
@@ -140,15 +143,32 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
           <button
             type="button"
             onClick={() => onNavigate('wallet')}
-            className="min-w-0 rounded-xl border border-blue-100 dark:border-blue-900/60 bg-blue-50/70 dark:bg-blue-950/30 px-2 py-2 text-right"
+            className="min-w-0 rounded-xl border border-blue-100 dark:border-blue-900/60 bg-blue-50/70 dark:bg-blue-950/30 px-1.5 sm:px-2 py-2 text-right"
           >
-            <span className="flex items-center gap-1 text-[10px] font-semibold text-blue-700 dark:text-blue-300">
-              <Clock3 className="w-3 h-3 shrink-0" /> قيد المراجعة
+            <span className="flex items-center gap-1 text-[9px] sm:text-[10px] font-semibold text-blue-700 dark:text-blue-300 truncate">
+              <Clock3 className="w-3 h-3 shrink-0" /> <span className="truncate">قيد المراجعة</span>
             </span>
-            <strong className="block mt-1 text-xs sm:text-sm font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
+            <strong className="block mt-1 text-[11px] sm:text-sm font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
               {user ? money(wallet?.pendingBalance) : '—'}
             </strong>
           </button>
+
+          {!isStandalone && (
+            <a
+              href="/app.apk"
+              download="Yemen-Task.apk"
+              title="تحميل التطبيق للأندرويد (APK)"
+              className="min-w-0 rounded-xl border border-emerald-500 dark:border-emerald-400/70 bg-gradient-to-br from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 px-1.5 sm:px-2.5 py-2 text-right shadow-sm hover:shadow transition-all flex flex-col justify-between active:scale-[0.98]"
+            >
+              <span className="flex items-center gap-1 text-[9.5px] sm:text-[10.5px] font-bold text-emerald-50">
+                <Download className="w-3 h-3 shrink-0" />
+                <span className="truncate">التطبيق</span>
+              </span>
+              <strong className="block mt-1 text-[11px] sm:text-sm font-extrabold text-white tracking-tight truncate">
+                تحميل APK
+              </strong>
+            </a>
+          )}
         </div>
 
         <div className="relative">
