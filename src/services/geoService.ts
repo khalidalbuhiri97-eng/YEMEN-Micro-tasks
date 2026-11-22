@@ -13,6 +13,33 @@ const levelsCache = new Map<string, CountryAdminLevel[]>();
 const divisionsCache = new Map<string, AdministrativeDivision[]>();
 const pathCache = new Map<string, { path: GeoPathItem[]; division?: AdministrativeDivision }>();
 
+const GEO_COUNTRIES_STORAGE_KEY = 'yemen-task:geo-countries:v1';
+
+/** Read only the last verified public country list so the selector can render before the network responds. */
+export function getCachedGeoCountries(includeInactive = false): CountryItem[] {
+  try {
+    const raw = localStorage.getItem(GEO_COUNTRIES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { active?: CountryItem[]; all?: CountryItem[] };
+    const list = includeInactive ? parsed.all : parsed.active;
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistGeoCountries(includeInactive: boolean, list: CountryItem[]): void {
+  try {
+    const raw = localStorage.getItem(GEO_COUNTRIES_STORAGE_KEY);
+    const current = raw ? JSON.parse(raw) : {};
+    const next = includeInactive ? { ...current, all: list } : { ...current, active: list };
+    localStorage.setItem(GEO_COUNTRIES_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // The selector remains functional without browser storage.
+  }
+}
+
+
 export function invalidateGeoClientCache(): void {
   countriesCache = null;
   allCountriesCache = null;
@@ -35,6 +62,7 @@ export async function fetchGeoCountries(includeInactive = false): Promise<{
 
   const res = await api.getGeoCountries(includeInactive);
   const list: CountryItem[] = Array.isArray(res?.countries) ? res.countries : [];
+  persistGeoCountries(includeInactive, list);
   geoTablesReadyCache = res?.geoTablesReady !== false;
 
   if (includeInactive) {
