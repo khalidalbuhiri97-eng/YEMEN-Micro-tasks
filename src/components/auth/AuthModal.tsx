@@ -92,7 +92,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
         await register({
           fullName,
           phone,
-          email: email || undefined,
+          email: email.trim().toLowerCase(),
           password,
           city: resolvedCity,
           countryId: geoSelection.countryId,
