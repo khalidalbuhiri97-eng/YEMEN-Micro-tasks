@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Loader2,
   Sparkles,
+  ArrowUpRight,
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
@@ -444,7 +445,7 @@ function formatCountdown(secondsTotal: number): string {
   return [hrs, mins, secs].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
-export const YtCoinMiningCard: React.FC = () => {
+export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void }> = ({ compact = false, onOpen }) => {
   const { user, openAuthModal, showToast } = useAuth();
   const [rawSummary, setRawSummary] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -477,8 +478,8 @@ export const YtCoinMiningCard: React.FC = () => {
   );
 
   useEffect(() => {
-    void loadSummary(false);
-  }, [loadSummary]);
+    if (!compact) void loadSummary(false);
+  }, [loadSummary, compact]);
 
   const summary = useMemo(
     () => (rawSummary ? normalizeSummary(rawSummary) : null),
@@ -561,6 +562,34 @@ export const YtCoinMiningCard: React.FC = () => {
     if (distributed === null) return null;
     return Math.min(100, Math.max(0, (distributed / summary.poolCapYt) * 100));
   }, [summary]);
+
+  if (compact) {
+    return (
+      <section aria-label="YT Coin" className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 pb-1">
+        <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.5fr)] gap-2.5">
+          <button
+            type="button"
+            onClick={onOpen}
+            className="group min-h-[112px] rounded-2xl border border-amber-300/70 dark:border-amber-500/30 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 text-white p-3 flex flex-col items-center justify-center gap-2 shadow-md shadow-amber-900/10 active:scale-[0.98] transition-transform"
+            aria-label="فتح صفحة YT Coin والتعدين"
+          >
+            <YtCoinLogo size="lg" className="ring-amber-300 shadow-lg shadow-amber-400/20" />
+            <span className="text-xs font-extrabold tracking-wide">YT Coin</span>
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-200">
+              تفاصيل التعدين <ArrowUpRight className="w-3 h-3" />
+            </span>
+          </button>
+          <div
+            aria-label="مساحة إعلانية مخصصة"
+            className="min-h-[112px] rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50 flex flex-col items-center justify-center gap-1.5 text-center px-2"
+          >
+            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">مساحة إعلانية</span>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">YT Coin</span>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section
