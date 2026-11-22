@@ -20,8 +20,29 @@ function checkIsStandalone(): boolean {
   if (typeof window === 'undefined') return false;
   return (
     window.matchMedia('(display-mode: standalone)').matches ||
-    (window.navigator as unknown as { standalone?: boolean }).standalone === true
+    (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
+    (typeof document !== 'undefined' && document.referrer.startsWith('android-app://'))
   );
+}
+
+export function useIsStandalone(): boolean {
+  const [isStandalone, setIsStandalone] = useState<boolean>(() => checkIsStandalone());
+
+  useEffect(() => {
+    setIsStandalone(checkIsStandalone());
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    const handleChange = () => setIsStandalone(checkIsStandalone());
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleChange);
+    }
+    return () => {
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener('change', handleChange);
+      }
+    };
+  }, []);
+
+  return isStandalone;
 }
 
 /**
@@ -292,5 +313,22 @@ export const PWAInstallTopBanner: React.FC = () => {
         onNativeInstall={triggerInstall}
       />
     </>
+  );
+};
+
+export const AndroidApkDownloadButton: React.FC<{ className?: string }> = ({ className = '' }) => {
+  const isStandalone = useIsStandalone();
+
+  if (isStandalone) return null;
+
+  return (
+    <a
+      href="/app.apk"
+      download="Yemen-Task.apk"
+      className={`inline-flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-gradient-to-l from-emerald-600 via-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-sm shadow-md shadow-emerald-600/20 hover:shadow-lg border border-emerald-400/40 transition-all shrink-0 cursor-pointer active:scale-[0.98] ${className}`}
+    >
+      <Download className="w-4 h-4 shrink-0" />
+      <span>تحميل تطبيق الأندرويد (APK)</span>
+    </a>
   );
 };

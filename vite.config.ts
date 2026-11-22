@@ -64,9 +64,53 @@ export default defineConfig(() => {
           clientsClaim: true,
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           ignoreURLParametersMatching: [/^v$/, /^source$/],
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          navigateFallbackDenylist: [/^\/api\//],
+          globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2}'],
+          globIgnores: ['**/*.html', '**/*.apk', '.well-known/**'],
+          navigateFallback: null,
           runtimeCaching: [
+            {
+              urlPattern: ({ url }) =>
+                url.pathname.startsWith('/.well-known/') || /\.apk$/i.test(url.pathname),
+              handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: ({ request, url }) =>
+                (request.mode === 'navigate' || request.destination === 'document') &&
+                !url.pathname.startsWith('/api/') &&
+                !url.pathname.startsWith('/.well-known/') &&
+                !/\.apk$/i.test(url.pathname),
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'html-pages-network-first',
+                networkTimeoutSeconds: 4,
+                expiration: {
+                  maxEntries: 20,
+                  maxAgeSeconds: 60 * 60 * 24,
+                },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              urlPattern: ({ url }) =>
+                /^\/api\/(auth|wallet|admin|withdrawals|yt-coin)(\/|$)/i.test(url.pathname),
+              handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: ({ request, url }) =>
+                request.method === 'GET' &&
+                (url.pathname.startsWith('/api/') || url.pathname.endsWith('.json')) &&
+                !url.pathname.startsWith('/.well-known/'),
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'api-data-network-first',
+                networkTimeoutSeconds: 5,
+                expiration: {
+                  maxEntries: 60,
+                  maxAgeSeconds: 60 * 60 * 12,
+                },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',

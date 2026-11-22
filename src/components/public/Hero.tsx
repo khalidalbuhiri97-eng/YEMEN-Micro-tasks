@@ -10,6 +10,7 @@ import { api } from '../../api/client.ts';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 import { HomeAdWindow } from '../ads/HomeAdWindow.tsx';
 import { ClixWallHomeCard } from '../home/ClixWallHomeCard.tsx';
+import { AndroidApkDownloadButton } from '../pwa/PWAInstallButton.tsx';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
 
 interface HeroProps {
@@ -96,6 +97,8 @@ export const Hero: React.FC<HeroProps> = ({
                 <span>عروض ClixWall</span>
                 <span className="text-xs text-amber-400 font-mono font-extrabold">USD</span>
               </button>
+
+              <AndroidApkDownloadButton />
             </div>
 
             <div className="flex flex-wrap items-center gap-y-2 gap-x-5 text-[11px] sm:text-xs text-slate-600 dark:text-slate-400">

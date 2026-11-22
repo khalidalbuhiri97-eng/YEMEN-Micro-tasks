@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.yemen_microtasks.twa",
+      "sha256_cert_fingerprints": [
+        "FA:70:44:F0:C3:A1:21:E0:76:03:49:59:4F:41:22:55:2D:1B:D2:4F:CD:36:77:37:9E:BB:8F:34:93:8A:B4:76"
+      ]
+    }
+  }
+]
