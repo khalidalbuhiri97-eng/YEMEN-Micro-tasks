@@ -1012,7 +1012,7 @@ export const supabaseDb = {
     try {
       let { data: profileData, error: profileErr } = await db
         .from('profiles')
-        .select('id, full_name, phone, city, area_name, country_id, administrative_division_id, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
+        .select('id, full_name, phone, email, city, area_name, country_id, administrative_division_id, avatar_url, account_status, referral_code, referred_by, company_name, contact_person, created_at, updated_at')
         .eq('id', id)
         .maybeSingle();
 
@@ -1067,7 +1067,7 @@ export const supabaseDb = {
 
       const userRole: UserRole = roleData?.role === 'admin' ? 'admin' : roleData?.role === 'advertiser' ? 'advertiser' : 'user';
 
-      let userEmail = '';
+      let userEmail = String((profileData as any).email || '').trim();
       try {
         const adminClient = getSupabaseAdminClient();
         const { data: authUserData, error: authErr } = await adminClient.auth.admin.getUserById(id);
@@ -1148,11 +1148,28 @@ export const supabaseDb = {
         }
       }
 
+      const rawPhone = identifier.trim();
+      const digits = rawPhone.replace(/\\D/g, '');
+      const localYemen = digits.startsWith('00967')
+        ? digits.slice(5)
+        : digits.startsWith('967')
+        ? digits.slice(3)
+        : digits;
+      const phoneCandidates = Array.from(new Set([
+        rawPhone,
+        digits,
+        localYemen,
+        `0${localYemen}`,
+        `967${localYemen}`,
+        `+${'967'}${localYemen}`,
+        `00967${localYemen}`,
+      ].filter(Boolean)));
+
       const { data, error } = await db
         .from('profiles')
-        .select('id')
-        .eq('phone', identifier.trim())
-        .maybeSingle();
+        .select('id, phone')
+        .in('phone', phoneCandidates)
+        .limit(3);
 
       if (error) {
         await logSupabaseError({
@@ -1164,8 +1181,13 @@ export const supabaseDb = {
         throw error;
       }
 
-      if (!data) return null;
-      return this.findUserById(data.id);
+      if (!data || data.length === 0) return null;
+      if (data.length > 1) {
+        const exactMatch = data.find((row: any) => row.phone === rawPhone);
+        if (exactMatch) return this.findUserById(exactMatch.id);
+        throw new Error('رقم الهاتف يطابق أكثر من حساب؛ يرجى إدخال الرقم المسجل بدقته.');
+      }
+      return this.findUserById(data[0].id);
     } catch (err: any) {
       console.error('[Supabase FIND_USER_BY_PHONE_OR_EMAIL]', err.message);
       throw new Error(`فشل البحث عن المستخدم في Supabase: ${err.message}`);
