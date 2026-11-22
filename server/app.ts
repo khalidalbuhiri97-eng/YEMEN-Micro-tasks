@@ -27,6 +27,7 @@ import {
 } from '../shared/money.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
+const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://www.yemen-microtasks.com').trim().replace(/\/$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
 export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -440,6 +441,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       email: cleanEmail,
       password: password,
       options: {
+        emailRedirectTo: `${AUTH_REDIRECT_URL}/`,
         data: {
           full_name: fullName.trim(),
           phone: cleanPhone,
