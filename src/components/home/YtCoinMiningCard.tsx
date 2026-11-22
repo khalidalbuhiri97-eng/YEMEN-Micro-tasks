@@ -453,7 +453,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   const combinedTransactions = useMemo(() => {
     const apiList = summary?.history ?? [];
     return apiList;
-  }, [localTx, summary?.history]);
+  }, [summary?.history]);
 
   const handleRefreshData = async () => {
     setIsRefreshingSpin(true);
@@ -827,7 +827,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
           <div className="hidden md:flex items-center gap-3">
             <h2 className="text-xl font-extrabold text-white">{PAGE_TITLES[activeTab]}</h2>
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              <Zap className="w-3.5 h-3.5" /> أعداد صحيحة 100%
+              <Zap className="w-3.5 h-3.5" /> وحدة واحدة = 0.5 YT
             </span>
           </div>
 
@@ -852,7 +852,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                   Y
                 </div>
                 <span className="font-extrabold text-sm md:text-base text-amber-400 font-mono">
-                  {formatInt(effectiveBalance)}
+                  {formatYt(effectiveBalance)}
                 </span>
                 <span className="text-[11px] text-gray-400 font-semibold hidden sm:inline">YT</span>
               </button>
@@ -860,7 +860,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
             <button
               type="button"
-              onClick={() => showToast('جميع الأنظمة تعمل بكفاءة عالية بدون كسور عشرية', 'info')}
+              onClick={() => showToast('جميع الأنظمة تعمل بكفاءة عالية بوحدات نصف العملة', 'info')}
               aria-label="الإشعارات"
               className="w-9 h-9 rounded-full bg-[#161C28] border border-white/10 flex items-center justify-center text-gray-300 hover:text-amber-400 hover:border-amber-500/30 transition-all relative cursor-pointer"
             >
@@ -978,7 +978,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <button
                         type="button"
                         onClick={handleCoinTap}
-                        aria-label="انقر للتعدين"
+                        aria-label="تفاعل بصري مع العملة"
                         className="relative w-40 h-40 sm:w-48 sm:h-48 rounded-full p-2.5 border-[3px] border-amber-400/80 bg-[#141923] shadow-[0_0_35px_rgba(245,185,33,0.25)] cursor-pointer focus:outline-none group transition-transform"
                       >
                         <div className="w-full h-full rounded-full yt-coin-3d flex items-center justify-center p-3">
@@ -1140,11 +1140,11 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <span>مركز المهام والمكافآت اليومية</span>
                     </h2>
                     <p className="text-xs sm:text-sm text-gray-400 mt-1">
-                      أكمل المهام البسيطة واحصل على عملات YT Coin إضافية تضاف فوراً إلى محفظتك.
+                      استعرض المهام المقترحة؛ لن تُضاف أي مكافأة إلا بعد ربط المهمة بنظام YT Coin الفعلي.
                     </p>
                   </div>
                   <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 text-center shrink-0">
-                    <span className="text-xs text-gray-300 block">مكافآت متاحة للاستلام</span>
+                    <span className="text-xs text-gray-300 block">مكافآت المهام</span>
                     <span className="text-xl font-black text-amber-400 font-mono">
                       {غير مفعّلة
                     </span>
@@ -1233,7 +1233,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
                     {/* Wallet Address Box */}
                     <div className="bg-[#0B0E14]/80 border border-white/10 rounded-2xl p-3.5 max-w-xs w-full">
-                      <span className="text-[11px] text-gray-400 block mb-1">عنوان محفظة YT الخاصة بك</span>
+                      <span className="text-[11px] text-gray-400 block mb-1">معرّف حساب YT Coin الداخلي</span>
                       <div className="flex items-center justify-between gap-2">
                         <code className="text-xs text-amber-300 font-mono truncate">{walletAddress}</code>
                         <button
@@ -1355,7 +1355,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <Coins className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-xl font-black text-white font-mono">1,000,000,000</div>
-                    <div className="text-[11px] text-amber-400 mt-1">YT Coin (أعداد صحيحة)</div>
+                    <div className="text-[11px] text-amber-400 mt-1">كل وحدة داخلية = 0.5 YT</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
@@ -1374,7 +1374,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <span>السقف التصاعدي لليوم</span>
                       <TrendingUp className="w-4 h-4 text-amber-400" />
                     </div>
-                    <div className="text-xl font-black text-white font-mono">{formatInt(effectiveDailyCap)}</div>
+                    <div className="text-xl font-black text-white font-mono">{formatYt(effectiveDailyCap)}</div>
                     <div className="text-[11px] text-emerald-400 mt-1">نمو تصاعدي بدون كسور عشرية</div>
                   </div>
 
@@ -1564,7 +1564,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
                     <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-3">
                       <label className="text-xs font-bold text-gray-300 block">
-                        مكافأة النقر المباشر على العملة (YT)
+                        النقر على العملة
                       </label>
                       <div className="flex gap-2">
                         <input
@@ -1572,7 +1572,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                           type="number"
                           min={1}
                           step={1}
-                          defaultValue={tapPower}
+                          value={0}\n                          readOnly
                           className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm focus:outline-none focus:border-amber-400"
                         />
                         <button
@@ -1612,7 +1612,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     <div>
                       <h4 className="text-sm font-bold text-rose-400">منطقة إعادة الضبط</h4>
                       <p className="text-xs text-gray-400">
-                        إعادة تعيين كافة الأرصدة والمعاملات والمهام المحلية إلى الحالة الافتراضية.
+                        إعادة ضبط عدّاد التفاعلات المرئية فقط؛ لا يؤثر ذلك على أرصدة YT Coin في Supabase.
                       </p>
                     </div>
                     <button
@@ -1773,25 +1773,9 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               </button>
             </div>
             <div className="w-44 h-44 mx-auto bg-white p-3 rounded-2xl flex items-center justify-center">
-              <svg viewBox="0 0 100 100" className="w-full h-full fill-[#0B0E14]">
-                <rect x="10" y="10" width="25" height="25" rx="3" />
-                <rect x="15" y="15" width="15" height="15" fill="white" />
-                <rect x="18" y="18" width="9" height="9" />
-                <rect x="65" y="10" width="25" height="25" rx="3" />
-                <rect x="70" y="15" width="15" height="15" fill="white" />
-                <rect x="73" y="18" width="9" height="9" />
-                <rect x="10" y="65" width="25" height="25" rx="3" />
-                <rect x="15" y="70" width="15" height="15" fill="white" />
-                <rect x="18" y="73" width="9" height="9" />
-                <rect x="42" y="12" width="14" height="14" />
-                <rect x="42" y="42" width="16" height="16" fill="#D49415" />
-                <rect x="65" y="45" width="22" height="10" />
-                <rect x="12" y="45" width="20" height="10" />
-                <rect x="45" y="68" width="12" height="20" />
-                <rect x="68" y="68" width="20" height="20" />
-              </svg>
-            </div>
-            <p className="text-xs text-gray-400">امسح الرمز أو انسخ معرّف حسابك الداخلي لاستلام العملات بدون رسوم.</p>
+              <div className="text-center text-xs font-bold text-slate-800">لا يوجد استقبال خارجي حالياً</div>
+           </div>
+            <p className="text-xs text-gray-400">المعرّف التالي للتعريف بالحساب داخل المنصة فقط، ولا يدعم استقبال تحويلات خارجية.</p>
             <div className="bg-[#0D1119] p-3 rounded-xl border border-white/10 font-mono text-xs text-amber-400 break-all">
               {walletAddress}
             </div>
@@ -1803,7 +1787,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               }}
               className="w-full py-3 rounded-xl bg-amber-500 text-[#0B0E14] font-black text-sm cursor-pointer"
             >
-              نسخ العنوان
+              نسخ المعرّف
             </button>
           </div>
         </div>
