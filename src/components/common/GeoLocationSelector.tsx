@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Globe2, MapPin, Plus, RotateCcw, X } from 'lucide-react';
 import {
   fetchGeoCountries,
+  getCachedGeoCountries,
   fetchGeoCountryLevels,
   fetchGeoDivisionPath,
   fetchGeoDivisions,
@@ -65,11 +66,11 @@ type GeoLocationSelectorProps =
     };
 
 export const GeoLocationSelector: React.FC<GeoLocationSelectorProps> = (props) => {
-  const [countries, setCountries] = useState<CountryItem[]>([]);
+  const [countries, setCountries] = useState<CountryItem[]>(() => getCachedGeoCountries(false));
   const [levels, setLevels] = useState<CountryAdminLevel[]>([]);
   const [optionsByLevel, setOptionsByLevel] = useState<Record<number, AdministrativeDivision[]>>({});
   const [selectedIdsByLevel, setSelectedIdsByLevel] = useState<Record<number, string>>({});
-  const [isLoadingCountries, setIsLoadingCountries] = useState(true);
+  const [isLoadingCountries, setIsLoadingCountries] = useState(() => getCachedGeoCountries(false).length === 0);
   const [isLoadingDivisions, setIsLoadingDivisions] = useState(false);
 
   const activeCountryId = props.countryId || '';
