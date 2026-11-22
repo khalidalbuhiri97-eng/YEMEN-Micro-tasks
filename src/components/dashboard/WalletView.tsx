@@ -40,7 +40,7 @@ function formatYtCoinUnits(value: unknown): string {
   if (value === null || value === undefined || value === '') return '0';
   const units = Number(value);
   if (!Number.isFinite(units)) return '0';
-  const yt = units / 1_000_000;
+  const yt = units / 2;
   if (yt !== 0 && Math.abs(yt) < 0.01) return yt < 0 ? '-<0.01' : '<0.01';
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(yt);
 }
