@@ -701,11 +701,6 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
       showToast('عذراً، عقد التعدين متوقف مؤقتاً للصيانة', 'error');
       return;
     }
-    if (effectiveDailyUsed + tapPower > effectiveDailyCap) {
-      showToast('تم الوصول إلى السقف التصاعدي اليومي!', 'error');
-      return;
-    }
-
     const gain = 1;
     const nextTaps = todayTaps + 1;
     setTodayTaps(nextTaps);
@@ -818,88 +813,6 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   };
 
   const pendingTasksReward = 0;
-  const activeTasksCount = useMemo(() => tasks.filter((t) => t.status !== 'claimed').length, [tasks]);
-
-  // Compact Banner Mode (used on Home page)
-  if (compact) {
-    return (
-      <section aria-label="YT Coin" className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 pb-1">
-        <button
-          type="button"
-          onClick={onOpen}
-          aria-label="فتح صفحة تعدين عملة YT Coin اليومية"
-          className="group relative w-full overflow-hidden rounded-2xl border border-amber-400/45 dark:border-amber-500/35 bg-gradient-to-l from-slate-950 via-emerald-950 to-slate-900 text-white px-4 py-3.5 sm:px-6 sm:py-4 shadow-lg shadow-emerald-950/15 hover:border-amber-300/80 transition-all active:scale-[0.99] cursor-pointer text-right"
-        >
-    const amt = Math.floor(Number(transferAmount));
-    if (!addr || addr.length < 8) {
-      showToast('يرجى إدخال عنوان محفظة YT Coin خارجي صحيح', 'error');
-      return;
-    }
-    if (!amt || amt <= 0) {
-      showToast('يرجى إدخال كمية صحيحة أكبر من صفر', 'error');
-      return;
-    }
-    if (amt > effectiveBalance) {
-      showToast('رصيد محفظة YT Vault غير كافٍ لإتمام التحويل', 'error');
-      return;
-    }
-
-    const txId = `TX-${Math.floor(1000 + Math.random() * 9000)}`;
-    setBonusBalance((prev) => prev - amt);
-    setLocalTx((prev) => [
-      {
-        id: txId,
-        amountYt: -amt,
-        label: `تحويل خارجي إلى ${addr.slice(0, 10)}...${transferMemo ? ` (${transferMemo})` : ''}`,
-        createdAt: new Date().toISOString(),
-        claimDate: 'اليوم',
-        streakDay: null,
-        reference: txId,
-        type: 'send',
-        txHash: txId,
-      },
-      ...prev,
-    ]);
-    setShowTransferModal(false);
-    setTransferAmount('');
-    setRecipientAddress('');
-    setTransferMemo('');
-    showToast(`تم بث المعاملة وتحويل ${formatInt(amt)} YT Coin على الشبكة!`, 'success');
-  };
-
-  const handleSaveAdminSettings = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const newClaim = Math.max(1, Math.floor(Number(formData.get('claimInput') || effectiveClaimReward)));
-    const newCap = Math.max(1000, Math.floor(Number(formData.get('capInput') || effectiveDailyCap)));
-    const newTap = Math.max(1, Math.floor(Number(formData.get('tapInput') || tapPower)));
-
-    setOverrideClaimReward(newClaim);
-    setOverrideDailyCap(newCap);
-    setTapPower(newTap);
-    showToast('هذه الحقول للمعاينة فقط؛ إعدادات التعدين الفعلية محفوظة في Supabase.', 'info');
-  };
-
-  const handleResetLocalData = () => {
-        setTodayTaps(0);
-    setOverrideClaimReward(null);
-    setOverrideDailyCap(null);
-    setTapPower(100);
-    setNetworkActiveOverride(null);
-        setTasks((prev) =>
-      prev.map((t) => ({
-        ...t,
-        status: t.id === 2 ? 'progress' : 'ready',
-      }))
-    );
-    setShowResetModal(false);
-    showToast('تمت إعادة ضبط البيانات المحلية بنجاح', 'info');
-  };
-
-  const pendingTasksReward = useMemo(
-    () => tasks.reduce((acc, t) => (t.status !== 'claimed' ? acc + t.reward : acc), 0),
-    [tasks]
-  );
   const activeTasksCount = useMemo(() => tasks.filter((t) => t.status !== 'claimed').length, [tasks]);
 
   // Compact Banner Mode (used on Home page)
