@@ -199,16 +199,6 @@ function translateEventLabel(raw: string | null): string {
   return raw;
 }
 
-function generatePseudoHash(seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const hex = Math.abs(hash).toString(16).padStart(8, '0');
-  return `0x${hex}a9f4...e82c${hex.slice(0, 4)}`;
-}
-
 function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   const root = asRecord(raw) || {};
   const sources: Array<Record<string, any> | null> = [
@@ -565,8 +555,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
   // Interactive Tap & Local Session Enhancements synced with API
   const [todayTaps, setTodayTaps] = useState<number>(0);
-  const [bonusBalance, setBonusBalance] = useState<number>(0);
-  const [particles, setParticles] = useState<FloatingParticle[]>([]);
+    const [particles, setParticles] = useState<FloatingParticle[]>([]);
   const arenaRef = useRef<HTMLDivElement | null>(null);
 
   // Admin / Override Controls
@@ -619,8 +608,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     },
   ]);
 
-  const [localTx, setLocalTx] = useState<NormalizedHistoryItem[]>([]);
-
+  
   const loadSummary = useCallback(
     async (silent = false) => {
       if (!user) {
@@ -670,20 +658,19 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     return () => window.clearInterval(timer);
   }, [remainingCooldownSec > 0]);
 
-  // Independent Crypto Wallet Public Address & Recovery Fingerprint
+  // Internal YT Coin account identifier; this is not a public blockchain address.
   const walletAddress = useMemo(() => {
-    const rawId = String((user as any)?.id || (user as any)?.user_id || 'YT7x92B4D881C3E991F0A8E');
-    const clean = rawId.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    return `yt1q${clean.toLowerCase().slice(0, 12)}8x92b4d881c3e991f0a8e`;
+    const rawId = String((user as any)?.id || (user as any)?.user_id || '');
+    return rawId ? `YT-ACCOUNT-${rawId}` : 'غير متاح';
   }, [user]);
 
-  const walletPublicKey = useMemo(() => 'غير متاح — لا توجد شبكة عامة مفعّلة', []);
+  const walletPublicKey = 'غير متاح — لا توجد شبكة عامة مفعّلة';
 
   // Effective Values combining API + Interactive Session
   const effectiveBalance = Math.max(0, summary?.balanceYt ?? 0);
   const effectiveUsd = 'غير محددة';
   const effectiveClaimReward = summary?.todayRewardYt ?? 0.5;
-  const effectiveDailyCap = summary?.dailyCapYt ?? 1000;
+  const effectiveDailyCap = summary?.dailyCapYt ?? 0;
   const effectiveDailyUsed = Math.min(
     effectiveDailyCap,
     (summary?.dailyMinedYt ?? 0)
@@ -696,7 +683,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   const combinedTransactions = useMemo(() => {
     const apiList = summary?.history ?? [];
     return apiList;
-  }, [localTx, summary?.history]);
+  }, [summary?.history]);
 
   const handleRefreshData = async () => {
     setIsRefreshingSpin(true);
@@ -793,7 +780,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     }
   };
 
-  const handleClaimTask = (taskId: number) => {
+  const handleClaimTask = (_taskId: number) => {
     showToast('مكافآت المهام الإضافية غير مرتبطة حالياً بدفتر YT Coin؛ لم يُضف أي رصيد.', 'info');
   };
 
@@ -807,18 +794,47 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   };
 
   const copyPublicKey = () => {
-    if (navigator.clipboard) {
-      void navigator.clipboard.writeText(walletPublicKey);
-    }
-    setCopiedKey(true);
-    showToast('تم نسخ المفتاح العام للمحفظة', 'info');
-    window.setTimeout(() => setCopiedKey(false), 2000);
+    showToast('لا يوجد مفتاح عام؛ شبكة YT Coin العامة غير مفعّلة حالياً.', 'info');
   };
 
   const executeTransfer = () => {
-    showToast('تحويلات YT Coin الخارجية غير مفعّلة على شبكة فعلية؛ لم يتم خصم أو تحويل أي رصيد.', 'info');
-    return;
-    const addr = recipientAddress.trim();
+    showToast('التحويل الخارجي غير مفعّل حالياً؛ لم يتم خصم أو تحويل أي رصيد.', 'info');
+  };
+
+  const handleSaveAdminSettings = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    showToast('هذه الحقول للمعاينة فقط؛ إعدادات التعدين الفعلية محفوظة في Supabase.', 'info');
+  };
+
+  const handleResetLocalData = () => {
+    setTodayTaps(0);
+    setOverrideClaimReward(null);
+    setOverrideDailyCap(null);
+    setTapPower(100);
+    setNetworkActiveOverride(null);
+    setTasks((prev) =>
+      prev.map((t) => ({
+        ...t,
+        status: t.id === 2 ? 'progress' : 'ready',
+      }))
+    );
+    setShowResetModal(false);
+    showToast('تمت إعادة ضبط تفاعلات العرض فقط؛ لم يتغير رصيد YT Coin.', 'info');
+  };
+
+  const pendingTasksReward = useMemo(() => 0, []);
+  const activeTasksCount = useMemo(() => tasks.filter((t) => t.status !== 'claimed').length, [tasks]);
+
+  // Compact Banner Mode (used on Home page)
+  if (compact) {
+    return (
+      <section aria-label="YT Coin" className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 pb-1">
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label="فتح صفحة تعدين عملة YT Coin اليومية"
+          className="group relative w-full overflow-hidden rounded-2xl border border-amber-400/45 dark:border-amber-500/35 bg-gradient-to-l from-slate-950 via-emerald-950 to-slate-900 text-white px-4 py-3.5 sm:px-6 sm:py-4 shadow-lg shadow-emerald-950/15 hover:border-amber-300/80 transition-all active:scale-[0.99] cursor-pointer text-right"
+        >
     const amt = Math.floor(Number(transferAmount));
     if (!addr || addr.length < 8) {
       showToast('يرجى إدخال عنوان محفظة YT Coin خارجي صحيح', 'error');
@@ -845,7 +861,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
         streakDay: null,
         reference: txId,
         type: 'send',
-        txHash: generatePseudoHash(txId + addr),
+        txHash: txId,
       },
       ...prev,
     ]);
@@ -870,14 +886,12 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   };
 
   const handleResetLocalData = () => {
-    setBonusBalance(0);
-    setTodayTaps(0);
+        setTodayTaps(0);
     setOverrideClaimReward(null);
     setOverrideDailyCap(null);
     setTapPower(100);
     setNetworkActiveOverride(null);
-    setLocalTx([]);
-    setTasks((prev) =>
+        setTasks((prev) =>
       prev.map((t) => ({
         ...t,
         status: t.id === 2 ? 'progress' : 'ready',
@@ -1342,9 +1356,9 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                           <button
                             type="button"
                             onClick={() => void handleClaim()}
-                            disabled={claiming || (summary !== null && !summary.canClaim)}
+                            disabled={claiming || summary === null || !summary.canClaim}
                             className={`w-full py-3.5 px-6 rounded-2xl font-black text-base sm:text-lg transition-all flex items-center justify-center gap-2.5 ${
-                              summary === null || summary.canClaim
+                              summary !== null && summary.canClaim
                                 ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-[#0B0E14] shadow-[0_0_35px_rgba(245,185,33,0.25)] cursor-pointer active:scale-98'
                                 : 'bg-slate-800/90 border border-slate-700 text-slate-300 opacity-80 cursor-not-allowed'
                             }`}
@@ -1545,14 +1559,14 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs sm:text-sm font-black text-white tracking-wide">
-                          YT Vault Web3 Wallet
+                          محفظة YT Coin الداخلية
                         </span>
                         <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 border border-sky-400/30 px-2 py-0.5 text-[10px] font-bold text-sky-300">
-                          <Globe className="w-3 h-3" /> بوابة مستقلة خارج التطبيق
+                          <Globe className="w-3 h-3" /> حساب داخلي ضمن Yemen Task
                         </span>
                       </div>
                       <span className="text-[10px] text-gray-400 font-mono block" dir="ltr">
-                        vault.ytcoin.network • Chain ID: 2026
+                        معرّف حساب داخلي • لا توجد شبكة بلوكشين عامة
                       </span>
                     </div>
                   </div>
@@ -1564,7 +1578,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     </span>
                     <button
                       type="button"
-                      onClick={() => setShowKeyModal(true)}
+                      onClick={copyPublicKey}
                       title="بيانات التشفير والمفاتيح"
                       className="p-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 hover:text-amber-400 transition-colors cursor-pointer"
                     >
@@ -1582,7 +1596,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     <div className="space-y-1.5">
                       <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-400/90">
                         <Lock className="w-3.5 h-3.5" />
-                        <span>الرصيد الحر في المحفظة الرقمية المستقلة</span>
+                        <span>رصيد YT Coin الداخلي</span>
                       </div>
                       <div className="flex items-baseline gap-2.5 pt-1">
                         <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight font-mono">
@@ -1623,15 +1637,15 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                   <div className="grid grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/10">
                     <button
                       type="button"
-                      onClick={() => setShowTransferModal(true)}
+                      onClick={() => showToast('التحويل الخارجي غير مفعّل حالياً.', 'info')}
                       className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-gradient-to-l from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#0B0E14] font-black text-xs sm:text-sm transition-all active:scale-95 shadow-lg shadow-amber-500/15 cursor-pointer"
                     >
                       <Send className="w-4 h-4" />
-                      <span>إرسال عملات</span>
+                      <span>إرسال (قريباً)</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => setShowReceiveModal(true)}
+                      onClick={() => showToast('الاستلام عبر شبكة خارجية غير مفعّل حالياً.', 'info')}
                       className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-4 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-white/10 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer"
                     >
                       <QrCode className="w-4 h-4 text-amber-400" />
@@ -1663,7 +1677,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <Layers className="w-4 h-4 text-amber-400" />
                       <span>الأصول الرقمية المحفوظة</span>
                     </h3>
-                    <span className="text-[11px] text-gray-500">أصل واحد نشط</span>
+                    <span className="text-[11px] text-gray-500">رصيد داخلي واحد</span>
                   </div>
 
                   <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#0A0E17] border border-amber-500/20">
@@ -1673,10 +1687,10 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <div className="flex items-center gap-2">
                           <span className="font-black text-sm text-white">YT Coin</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-bold">
-                            Native
+                            Internal
                           </span>
                         </div>
-                        <span className="text-[11px] text-gray-400 block">عملة شبكة YT الرقمية</span>
+                        <span className="text-[11px] text-gray-400 block">رصيد YT Coin الداخلي</span>
                       </div>
                     </div>
                     <div className="text-left">
@@ -1769,11 +1783,11 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="rounded-2xl bg-[#131822] border border-amber-500/20 p-4">
                     <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
-                      <span>سقف المعروض الكلي</span>
+                      <span>إجمالي المعروض المعتمد</span>
                       <Coins className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-xl font-black text-white font-mono">1,000,000,000</div>
-                    <div className="text-[11px] text-amber-400 mt-1">YT Coin (أعداد صحيحة)</div>
+                    <div className="text-[11px] text-amber-400 mt-1">الوحدة الداخلية الواحدة = 0.5 YT</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
@@ -1793,7 +1807,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                       <TrendingUp className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-xl font-black text-white font-mono">{formatYt(effectiveDailyCap)}</div>
-                    <div className="text-[11px] text-emerald-400 mt-1">نمو تصاعدي بدون كسور عشرية</div>
+                    <div className="text-[11px] text-emerald-400 mt-1">كل وحدة داخلية تساوي 0.5 YT</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
@@ -1818,7 +1832,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         منحنى السقف التصاعدي اليومي للتعدين
                       </h3>
                       <p className="text-xs text-gray-400">
-                        تطور سقف التعدين اليومي من 1 عملة صعوداً بدون كسور عشرية
+                        تطور سقف التعدين اليومي وفق إعدادات Supabase
                       </p>
                     </div>
                     <span className="text-xs font-bold px-3 py-1 rounded-full bg-amber-500/15 text-amber-400 self-start">
@@ -1882,7 +1896,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
 
                 {/* Tokenomics Distribution */}
                 <div className="rounded-3xl bg-[#131822] border border-white/5 p-5 sm:p-6">
-                  <h3 className="text-base font-extrabold text-white mb-4">توزيع سقف الـ 1 مليار عملة (Tokenomics)</h3>
+                  <h3 className="text-base font-extrabold text-white mb-4">توزيع المعروض المعتمد (Tokenomics)</h3>
                   <div className="space-y-3 text-xs sm:text-sm">
                     <div>
                       <div className="flex justify-between mb-1">
@@ -2194,7 +2208,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                 onClick={executeTransfer}
                 className="flex-1 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-black text-sm cursor-pointer"
               >
-                توقيع وبث المعاملة
+                التحويل غير متاح حالياً
               </button>
               <button
                 type="button"
@@ -2291,7 +2305,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               </div>
 
               <div>
-                <span className="text-gray-400 block mb-1">العنوان العام (Public Address):</span>
+                <span className="text-gray-400 block mb-1">العنوان العام (معرّف داخلي):</span>
                 <div className="bg-[#0A0E17] p-2.5 rounded-xl border border-white/10 font-mono text-amber-300 break-all" dir="ltr">
                   {walletAddress}
                 </div>
