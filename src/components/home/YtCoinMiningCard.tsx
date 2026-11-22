@@ -14,6 +14,7 @@ type MiningSummary = {
   eligible?: boolean;
   eligibilityMessage?: string | null;
   dailyCapRemainingUnits?: number;
+  dailyCapUnits?: number;
   history?: Array<{ id: string; eventType: string; amountUnits: number; createdAt: string }>;
 };
 
@@ -68,6 +69,7 @@ export const YtCoinMiningCard: React.FC = () => {
   const enabled = Boolean(summary?.miningEnabled && summary?.dailyCapConfigured);
   const eligible = Boolean(summary?.eligible);
   const capRemainingUnits = Number(summary?.dailyCapRemainingUnits ?? 0);
+  const dailyCapUnits = Number(summary?.dailyCapUnits ?? 0);
   const nextRewardUnits = Number(summary?.nextRewardUnits ?? 0);
   const capReached = capRemainingUnits < nextRewardUnits;
   const recentHistory = (summary?.history || []).filter((item) => item.eventType === 'mining_reward').slice(0, 5);
@@ -130,10 +132,10 @@ export const YtCoinMiningCard: React.FC = () => {
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/75 dark:bg-slate-800/60 p-3 space-y-2">
                 <div className="flex items-center justify-between gap-3 text-[11px]">
                   <span className="font-semibold text-slate-600 dark:text-slate-300">المتبقي من سقف التعدين اليومي للمنصة</span>
-                  <strong className="font-mono text-emerald-700 dark:text-emerald-300">{toCoin(capRemainingUnits)} / 10,000 YT</strong>
+                  <strong className="font-mono text-emerald-700 dark:text-emerald-300">{toCoin(capRemainingUnits)} / {toCoin(dailyCapUnits)} YT</strong>
                 </div>
-                <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden" role="progressbar" aria-label="المتبقي من سقف التعدين اليومي" aria-valuemin={0} aria-valuemax={10000} aria-valuenow={Math.max(0, Math.min(10000, capRemainingUnits / 1_000_000))}>
-                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.max(0, Math.min(100, capRemainingUnits / 100_000_000))}%` }} />
+                <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden" role="progressbar" aria-label="المتبقي من سقف التعدين اليومي" aria-valuemin={0} aria-valuemax={dailyCapUnits / 1_000_000} aria-valuenow={Math.max(0, Math.min(dailyCapUnits / 1_000_000, capRemainingUnits / 1_000_000))}>
+                  <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${dailyCapUnits > 0 ? Math.max(0, Math.min(100, (capRemainingUnits / dailyCapUnits) * 100)) : 0}%` }} />
                 </div>
               </div>
               <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/75 dark:bg-slate-800/60 p-3">
