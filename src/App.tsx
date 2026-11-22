@@ -28,7 +28,7 @@ import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react
 
 function MainApp() {
   const { user, isAdmin } = useAuth();
-  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin'>('home');
+  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin'>('home');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   
@@ -105,7 +105,7 @@ function MainApp() {
         {currentTab === 'home' && (
           <main>
             <HomeShortcutsStrip onNavigate={(tab) => setCurrentTab(tab as any)} />
-            <YtCoinMiningCard />
+            <YtCoinMiningCard compact onOpen={() => setCurrentTab('ytcoin')} />
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
@@ -128,6 +128,12 @@ function MainApp() {
             <YemenPayoutsSection />
             <TrustAndFaqSection />
           </main>
+        )}
+
+        {currentTab === 'ytcoin' && (
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <YtCoinMiningCard />
+          </div>
         )}
 
         {currentTab === 'tasks' && (
