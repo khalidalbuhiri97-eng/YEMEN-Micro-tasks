@@ -5,27 +5,40 @@ import {
   CheckCircle2,
   RefreshCw,
   History,
-  ChevronDown,
-  ChevronUp,
   LogIn,
   ShieldCheck,
   AlertCircle,
   Loader2,
   Sparkles,
   ArrowUpRight,
+  Wallet,
+  BarChart3,
+  ListChecks,
+  Pickaxe,
+  Copy,
+  Check,
+  Coins,
+  TrendingUp,
+  Award,
+  Zap,
+  Calendar,
+  Info,
+  ArrowDownLeft,
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 
 const YT_COIN_LOGO_SRC = '/assets/yt-coin-logo.jpg';
 
-type CoinSize = 'xs' | 'sm' | 'md' | 'lg';
+type CoinSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+type ActiveTab = 'mine' | 'wallet' | 'stats' | 'tasks';
 
 const COIN_SIZE_CLASSES: Record<CoinSize, string> = {
   xs: 'w-5 h-5 ring-1',
   sm: 'w-6 h-6 ring-[1.5px]',
   md: 'w-9 h-9 ring-2',
   lg: 'w-12 h-12 sm:w-14 sm:h-14 ring-2',
+  xl: 'w-24 h-24 sm:w-28 sm:h-28 ring-4',
 };
 
 const YtCoinLogo: React.FC<{ size?: CoinSize; className?: string }> = ({
@@ -33,7 +46,7 @@ const YtCoinLogo: React.FC<{ size?: CoinSize; className?: string }> = ({
   className = '',
 }) => (
   <span
-    className={`inline-flex items-center justify-center rounded-full aspect-square shrink-0 overflow-hidden bg-slate-950 ring-amber-400/80 dark:ring-amber-400/70 shadow-sm ${COIN_SIZE_CLASSES[size]} ${className}`}
+    className={`inline-flex items-center justify-center rounded-full aspect-square shrink-0 overflow-hidden bg-slate-950 ring-amber-400/80 shadow-sm ${COIN_SIZE_CLASSES[size]} ${className}`}
   >
     <img
       src={YT_COIN_LOGO_SRC}
@@ -71,6 +84,9 @@ interface NormalizedYtCoinSummary {
   poolRemainingYt: number | null;
   poolCapYt: number | null;
   poolDistributedYt: number | null;
+  dailyCapYt: number | null;
+  dailyMinedYt: number | null;
+  dailyRemainingYt: number | null;
   userCapYt: number | null;
   userRemainingCapYt: number | null;
   statusMessage: string | null;
@@ -176,7 +192,6 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'balanceYt',
   ]);
   if (balanceYt === null) {
-    // Supabase RPC returns internal integer units in camelCase.
     const atomicBalance = pickNumber(sources, ['balanceUnits', 'balance_units', 'balance_atomic', 'atomic_balance']);
     if (atomicBalance !== null) balanceYt = atomicBalance / 1_000_000;
   }
@@ -191,7 +206,13 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'totalMinedYt',
   ]);
   if (totalMinedYt === null) {
-    const atomicMined = pickNumber(sources, ['lifetimeEarnedUnits', 'lifetime_earned_units', 'total_mined_units', 'total_mined_atomic', 'lifetime_mined_atomic']);
+    const atomicMined = pickNumber(sources, [
+      'lifetimeEarnedUnits',
+      'lifetime_earned_units',
+      'total_mined_units',
+      'total_mined_atomic',
+      'lifetime_mined_atomic',
+    ]);
     if (atomicMined !== null) totalMinedYt = atomicMined / 1_000_000;
   }
 
@@ -209,18 +230,30 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'dailyRewardYt',
   ]);
   if (todayRewardYt === null) {
-    const atomicReward = pickNumber(sources, ['nextRewardUnits', 'next_reward_units', 'rewardUnits', 'reward_units', 'today_reward_atomic', 'daily_reward_atomic', 'reward_atomic']);
+    const atomicReward = pickNumber(sources, [
+      'nextRewardUnits',
+      'next_reward_units',
+      'rewardUnits',
+      'reward_units',
+      'today_reward_atomic',
+      'daily_reward_atomic',
+      'reward_atomic',
+    ]);
     if (atomicReward !== null) todayRewardYt = atomicReward / 1_000_000;
   }
 
   const lastClaimDate = pickString(sources, ['lastClaimDate', 'last_claim_date', 'claim_date']);
-  const adenToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Aden', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  const claimedTodayFlag = pickBoolean(sources, [
-    'claimed_today',
-    'already_claimed_today',
-    'has_claimed_today',
-    'claimedToday',
-  ]) ?? (lastClaimDate === adenToday);
+  const adenToday = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Aden',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+
+  const claimedTodayFlag =
+    pickBoolean(sources, ['claimed_today', 'already_claimed_today', 'has_claimed_today', 'claimedToday']) ??
+    (lastClaimDate === adenToday);
+
   const capReachedFlag = pickBoolean(sources, [
     'cap_reached',
     'mining_cap_reached',
@@ -229,13 +262,7 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'user_cap_reached',
     'capReached',
   ]);
-  const miningEnabledFlag = pickBoolean(sources, [
-    'mining_enabled',
-    'is_enabled',
-    'enabled',
-    'active',
-    'is_active',
-  ]);
+  const miningEnabledFlag = pickBoolean(sources, ['mining_enabled', 'is_enabled', 'enabled', 'active', 'is_active']);
   const canClaimExplicit = pickBoolean(sources, [
     'can_claim_today',
     'can_claim',
@@ -246,7 +273,7 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'canClaimToday',
   ]);
 
-  const poolRemainingYt = pickNumber(sources, [
+  let poolRemainingYt = pickNumber(sources, [
     'pool_remaining_yt',
     'rewards_treasury_balance_yt',
     'rewards_pool_remaining_yt',
@@ -256,7 +283,12 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'remaining_yt',
     'poolRemainingYt',
   ]);
-  const poolCapYt = pickNumber(sources, [
+  if (poolRemainingYt === null) {
+    const atomicPoolRem = pickNumber(sources, ['poolRemainingUnits', 'pool_remaining_units']);
+    if (atomicPoolRem !== null) poolRemainingYt = atomicPoolRem / 1_000_000;
+  }
+
+  let poolCapYt = pickNumber(sources, [
     'mining_cap_yt',
     'pool_cap_yt',
     'pool_total_yt',
@@ -266,6 +298,11 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'max_mining_supply_yt',
     'poolCapYt',
   ]);
+  if (poolCapYt === null) {
+    const atomicPoolCap = pickNumber(sources, ['maxSupplyUnits', 'max_supply_units', 'poolCapUnits']);
+    if (atomicPoolCap !== null) poolCapYt = atomicPoolCap / 1_000_000;
+  }
+
   let poolDistributedYt = pickNumber(sources, [
     'pool_distributed_yt',
     'total_distributed_yt',
@@ -277,6 +314,28 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   ]);
   if (poolDistributedYt === null && poolCapYt !== null && poolRemainingYt !== null) {
     poolDistributedYt = Math.max(0, poolCapYt - poolRemainingYt);
+  }
+
+  let dailyCapYt = pickNumber(sources, ['daily_cap_yt', 'dailyCapYt']);
+  if (dailyCapYt === null) {
+    const atomicDailyCap = pickNumber(sources, ['dailyCapUnits', 'daily_cap_units']);
+    if (atomicDailyCap !== null) dailyCapYt = atomicDailyCap / 1_000_000;
+  }
+
+  let dailyMinedYt = pickNumber(sources, ['daily_mined_yt', 'mined_today_yt', 'dailyMinedYt']);
+  if (dailyMinedYt === null) {
+    const atomicDailyMined = pickNumber(sources, ['minedTodayUnits', 'mined_today_units', 'dailyMinedUnits']);
+    if (atomicDailyMined !== null) dailyMinedYt = atomicDailyMined / 1_000_000;
+  }
+
+  let dailyRemainingYt = pickNumber(sources, ['daily_remaining_yt', 'dailyRemainingYt']);
+  const dailyRemainingUnits = pickNumber(sources, [
+    'dailyCapRemainingUnits',
+    'daily_cap_remaining_units',
+    'daily_remaining_units',
+  ]);
+  if (dailyRemainingYt === null && dailyRemainingUnits !== null) {
+    dailyRemainingYt = dailyRemainingUnits / 1_000_000;
   }
 
   const userCapYt = pickNumber(sources, [
@@ -295,52 +354,33 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   const capReached =
     capReachedFlag === true ||
     (poolRemainingYt !== null && poolRemainingYt <= 0) ||
-    (userRemainingCapYt !== null && userRemainingCapYt <= 0);
+    (userRemainingCapYt !== null && userRemainingCapYt <= 0) ||
+    (dailyRemainingUnits !== null && dailyRemainingUnits <= 0);
+
   const miningEnabled = miningEnabledFlag !== false;
   const claimedToday = claimedTodayFlag === true;
   const eligibleFlag = pickBoolean(sources, ['eligible', 'is_eligible']);
-  const dailyRemainingUnits = pickNumber(sources, ['dailyCapRemainingUnits', 'daily_cap_remaining_units', 'daily_remaining_units']);
   const canClaim =
     canClaimExplicit !== null
       ? canClaimExplicit && !capReached && miningEnabled
-      : !claimedToday && !capReached && miningEnabled && eligibleFlag !== false && !(dailyRemainingUnits !== null && dailyRemainingUnits <= 0);
+      : !claimedToday &&
+        !capReached &&
+        miningEnabled &&
+        eligibleFlag !== false &&
+        !(dailyRemainingUnits !== null && dailyRemainingUnits <= 0);
 
-  const streakDays = pickNumber(sources, [
-    'streak_days',
-    'current_streak',
-    'streak',
-    'consecutive_days',
-    'streakDays',
-  ]);
-  const totalClaims = pickNumber(sources, [
-    'total_claims',
-    'claims_count',
-    'claim_count',
-    'days_claimed',
-    'totalClaims',
-  ]);
+  const streakDays = pickNumber(sources, ['streak_days', 'current_streak', 'streak', 'consecutive_days', 'streakDays']);
+  const totalClaims = pickNumber(sources, ['total_claims', 'claims_count', 'claim_count', 'days_claimed', 'totalClaims']);
 
   const lastClaimAt = pickString(sources, ['last_claim_at', 'last_claimed_at', 'lastClaimAt']);
-  const nextClaimAt = pickString(sources, [
-    'next_claim_at',
-    'next_available_at',
-    'cooldown_until',
-    'reset_at',
-    'nextClaimAt',
-  ]);
+  const nextClaimAt = pickString(sources, ['next_claim_at', 'next_available_at', 'cooldown_until', 'reset_at', 'nextClaimAt']);
   const nextClaimInSeconds = pickNumber(sources, [
     'next_claim_in_seconds',
     'seconds_until_next_claim',
     'cooldown_seconds',
     'remaining_seconds',
   ]);
-  const statusMessage = pickString(sources, [
-    'status_message',
-    'reason',
-    'blocked_reason',
-    'notice',
-    'message',
-  ]);
+  const statusMessage = pickString(sources, ['status_message', 'reason', 'blocked_reason', 'notice', 'message']);
 
   const rawHistory = pickArray(sources, [
     'recent_rewards',
@@ -360,14 +400,7 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     .map((entry, idx) => {
       const rec = asRecord(entry);
       if (!rec) return null;
-      let amountYt = pickNumber([rec], [
-        'amount_yt',
-        'reward_yt',
-        'claimed_yt',
-        'delta_yt',
-        'amount',
-        'reward',
-      ]);
+      let amountYt = pickNumber([rec], ['amount_yt', 'reward_yt', 'claimed_yt', 'delta_yt', 'amount', 'reward']);
       if (amountYt === null) {
         const atomic = pickNumber([rec], ['amountUnits', 'amount_units', 'atomic_units', 'amount_atomic', 'reward_atomic']);
         if (atomic !== null) amountYt = atomic / 1_000_000;
@@ -414,6 +447,9 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     poolRemainingYt,
     poolCapYt,
     poolDistributedYt,
+    dailyCapYt,
+    dailyMinedYt,
+    dailyRemainingYt,
     userCapYt,
     userRemainingCapYt,
     statusMessage,
@@ -451,13 +487,18 @@ function formatCountdown(secondsTotal: number): string {
   return [hrs, mins, secs].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
-export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void }> = ({ compact = false, onOpen }) => {
+export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void }> = ({
+  compact = false,
+  onOpen,
+}) => {
   const { user, openAuthModal, showToast } = useAuth();
   const [rawSummary, setRawSummary] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [claiming, setClaiming] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('mine');
+  const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
+  const [coinPulse, setCoinPulse] = useState<boolean>(false);
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
   const [loadedAtTs, setLoadedAtTs] = useState<number>(() => Date.now());
 
@@ -487,10 +528,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     if (!compact) void loadSummary(false);
   }, [loadSummary, compact]);
 
-  const summary = useMemo(
-    () => (rawSummary ? normalizeSummary(rawSummary) : null),
-    [rawSummary]
-  );
+  const summary = useMemo(() => (rawSummary ? normalizeSummary(rawSummary) : null), [rawSummary]);
 
   const remainingCooldownSec = useMemo(() => {
     if (!summary || summary.canClaim) return 0;
@@ -513,24 +551,35 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     return () => window.clearInterval(timer);
   }, [remainingCooldownSec > 0]);
 
+  const walletAddress = useMemo(() => {
+    const rawId = String((user as any)?.id || (user as any)?.user_id || 'YT-GUEST-0000');
+    const clean = rawId.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    return `YT-${clean.slice(0, 6)}-${clean.slice(-6) || 'YEMEN'}`;
+  }, [user]);
+
+  const handleCopyAddress = () => {
+    if (navigator.clipboard) {
+      void navigator.clipboard.writeText(walletAddress);
+      setCopiedAddress(true);
+      showToast('تم نسخ عنوان محفظة YT Coin بنجاح.', 'success');
+      window.setTimeout(() => setCopiedAddress(false), 2000);
+    }
+  };
+
   const handleClaim = async () => {
     if (!user) {
       openAuthModal('login');
       return;
     }
     if (claiming) return;
+    setCoinPulse(true);
+    window.setTimeout(() => setCoinPulse(false), 450);
     setClaiming(true);
     setError(null);
     try {
       const res = await api.claimDailyYtCoin();
       const result = asRecord(res?.result);
-      let claimedAmount = pickNumber([result], [
-        'reward_yt',
-        'claimed_yt',
-        'amount_yt',
-        'credited_yt',
-        'reward',
-      ]);
+      let claimedAmount = pickNumber([result], ['reward_yt', 'claimed_yt', 'amount_yt', 'credited_yt', 'reward']);
       if (claimedAmount === null) {
         const claimedUnits = pickNumber([result], ['amount_units', 'amountUnits', 'reward_units', 'rewardUnits']);
         if (claimedUnits !== null) claimedAmount = claimedUnits / 1_000_000;
@@ -545,10 +594,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
       if (rejected) {
         showToast(resultMessage || 'تم استلام مكافأة اليوم مسبقاً.', 'info');
       } else if (claimedAmount !== null) {
-        showToast(
-          resultMessage || `تم استلام +${formatYt(claimedAmount)} YT Coin بنجاح.`,
-          'success'
-        );
+        showToast(resultMessage || `تم استلام +${formatYt(claimedAmount)} YT Coin بنجاح.`, 'success');
       } else {
         showToast(resultMessage || 'تم استلام مكافأة التعدين اليومي بنجاح.', 'success');
       }
@@ -572,6 +618,17 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
           : null;
     if (distributed === null) return null;
     return Math.min(100, Math.max(0, (distributed / summary.poolCapYt) * 100));
+  }, [summary]);
+
+  const dailyProgressPct = useMemo(() => {
+    if (!summary || summary.dailyCapYt === null || summary.dailyCapYt <= 0) return 0;
+    const mined =
+      summary.dailyMinedYt !== null
+        ? summary.dailyMinedYt
+        : summary.dailyRemainingYt !== null
+          ? Math.max(0, summary.dailyCapYt - summary.dailyRemainingYt)
+          : 0;
+    return Math.min(100, Math.max(0, (mined / summary.dailyCapYt) * 100));
   }, [summary]);
 
   if (compact) {
@@ -600,9 +657,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               />
               <div className="min-w-0 space-y-0.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm sm:text-base font-black tracking-tight text-white">
-                    عملة YT Coin
-                  </span>
+                  <span className="text-sm sm:text-base font-black tracking-tight text-white">عملة YT Coin</span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/15 border border-amber-300/35 px-2.5 py-0.5 text-[10px] sm:text-[11px] font-extrabold text-amber-300">
                     <Sparkles className="w-3 h-3 shrink-0" />
                     تعدين يومي مجاني
@@ -626,328 +681,680 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   }
 
   return (
-    <section
-      aria-label="التعدين اليومي لعملة YT Coin"
-      className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-4 pb-2"
+    <div
+      dir="rtl"
+      className="min-h-[100dvh] w-full bg-[#0b0f19] text-white flex flex-col justify-between relative overflow-x-hidden selection:bg-amber-400 selection:text-slate-950"
     >
-      <div className="relative overflow-hidden rounded-2xl border border-amber-200/80 dark:border-amber-500/25 bg-gradient-to-br from-amber-50/90 via-white to-emerald-50/70 dark:from-slate-900 dark:via-slate-900 dark:to-amber-950/25 shadow-sm">
-        <div className="pointer-events-none absolute -top-20 -left-20 w-56 h-56 rounded-full bg-amber-300/20 dark:bg-amber-500/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 -right-16 w-56 h-56 rounded-full bg-emerald-300/20 dark:bg-emerald-500/10 blur-3xl" />
+      {/* Ambient Background Glows */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed -top-28 -left-24 w-80 h-80 rounded-full bg-amber-500/10 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed top-1/3 -right-24 w-72 h-72 rounded-full bg-emerald-500/10 blur-3xl"
+      />
 
-        <div className="relative p-4 sm:p-5 space-y-4">
-          {/* Header Row */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <YtCoinLogo size="lg" className="shadow-md shadow-amber-500/20" />
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight">
-                    تعدين عملة YT Coin
-                  </h2>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-300/80 dark:border-amber-500/40 bg-amber-100/80 dark:bg-amber-950/60 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 dark:text-amber-300">
-                    <Sparkles className="w-3 h-3 shrink-0" />
-                    مكافأة يومية مجانية
-                  </span>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  رصيد عملة YT Coin مستقل بالكامل عن محفظة الريال اليمني ويُحتسب وفق سقف التعدين الرسمي.
-                </p>
+      {/* Top Sticky App Bar */}
+      <header className="sticky top-0 z-30 w-full bg-[#0f1524]/90 backdrop-blur-md border-b border-amber-500/20 px-4 py-3 sm:px-6">
+        <div className="max-w-4xl mx-auto flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <YtCoinLogo size="md" className="ring-amber-400 shadow-md shadow-amber-500/20" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm sm:text-base font-black text-amber-400 tracking-tight truncate">
+                  منجم عملة YT Coin الرقمية
+                </h1>
+                <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-amber-500/15 border border-amber-400/30 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                  <Sparkles className="w-3 h-3" />
+                  سقف 1 مليار
+                </span>
               </div>
+              <p className="text-[11px] text-slate-400 truncate">
+                منصة تعدين مستقلة ذات سقف تصاعدي يومي بدون كسور عشرية
+              </p>
             </div>
+          </div>
 
+          <div className="flex items-center gap-2 shrink-0">
+            {user && (
+              <div className="hidden xs:flex items-center gap-1.5 rounded-xl bg-slate-900 border border-amber-500/30 px-3 py-1.5">
+                <span className="text-xs sm:text-sm font-black font-mono tabular-nums text-amber-400">
+                  {summary ? formatYt(summary.balanceYt) : '0'}
+                </span>
+                <span className="text-[10px] font-extrabold text-slate-400">YT</span>
+              </div>
+            )}
             {user && (
               <button
                 type="button"
                 onClick={() => void loadSummary(false)}
                 disabled={loading}
-                aria-label="تحديث بيانات YT Coin"
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 px-3 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 hover:border-amber-400 transition-colors disabled:opacity-60"
+                aria-label="تحديث البيانات"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-slate-900/90 hover:bg-slate-800 px-3 py-2 text-xs font-bold text-amber-300 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                <span>تحديث</span>
+                <span className="hidden sm:inline">تحديث البيانات</span>
               </button>
             )}
           </div>
+        </div>
+      </header>
 
-          {/* Guest View */}
-          {!user ? (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-amber-200/70 dark:border-amber-500/20 bg-white/80 dark:bg-slate-950/60 p-3.5 sm:p-4">
-              <div className="flex items-center gap-3 min-w-0">
-                <YtCoinLogo size="md" />
-                <div className="min-w-0">
-                  <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white">
-                    سجّل الدخول لاستلام مكافأتك اليومية من YT Coin
-                  </p>
-                  <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    تابع رصيدك من YT Coin وسجل مكافآت التعدين اليومي مباشرة من حسابك.
-                  </p>
-                </div>
+      {/* Main Full-Screen Content */}
+      <main className="flex-1 w-full max-w-4xl mx-auto px-4 pt-4 pb-28 sm:px-6 space-y-4">
+        {/* Guest View */}
+        {!user ? (
+          <div className="my-auto flex flex-col items-center justify-center text-center rounded-3xl border border-amber-500/25 bg-gradient-to-b from-[#131b2e] to-[#0d1322] p-6 sm:p-10 shadow-2xl space-y-5">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-full bg-amber-400/25 blur-xl animate-pulse" />
+              <YtCoinLogo size="xl" className="relative ring-amber-400 shadow-2xl shadow-amber-500/30" />
+            </div>
+            <div className="space-y-2 max-w-md">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 border border-amber-400/35 px-3 py-1 text-xs font-bold text-amber-300">
+                <Sparkles className="w-3.5 h-3.5" />
+                سقف معروض 1 مليار (أعداد صحيحة)
+              </span>
+              <h2 className="text-xl sm:text-2xl font-black text-white">
+                ابدأ تعدين عملة YT Coin مجاناً
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
+                سجّل الدخول بحسابك لاستلام مكافأتك اليومية، متابعة رصيد محفظتك الرقمية، وبناء سلسلة التعدين المستمرة.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => openAuthModal('login')}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-l from-amber-400 via-amber-500 to-yellow-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 px-8 py-3.5 text-sm font-black shadow-lg shadow-amber-500/25 transition-all cursor-pointer"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>تسجيل الدخول لبدء التعدين</span>
+            </button>
+          </div>
+        ) : loading && !summary ? (
+          <div className="space-y-4 animate-pulse pt-2">
+            <div className="h-72 rounded-3xl bg-slate-900/90 border border-slate-800" />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="h-24 rounded-2xl bg-slate-900/90 border border-slate-800" />
+              <div className="h-24 rounded-2xl bg-slate-900/90 border border-slate-800" />
+            </div>
+          </div>
+        ) : (
+          <>
+            {error && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-rose-500/40 bg-rose-950/40 px-4 py-3 text-xs text-rose-200">
+                <span className="flex items-center gap-2 font-semibold">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  {error}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void loadSummary(false)}
+                  className="rounded-xl bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 text-[11px] font-bold transition-colors cursor-pointer"
+                >
+                  إعادة المحاولة
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => openAuthModal('login')}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-l from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white px-4 py-2.5 text-xs sm:text-sm font-extrabold shadow-sm shadow-amber-500/25 transition-all shrink-0 cursor-pointer"
-              >
-                <YtCoinLogo size="xs" className="ring-white/60" />
-                <LogIn className="w-4 h-4" />
-                <span>تسجيل الدخول للتعدين</span>
-              </button>
-            </div>
-          ) : loading && !summary ? (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 animate-pulse">
-              <div className="h-20 rounded-xl bg-amber-100/60 dark:bg-slate-800/70" />
-              <div className="h-20 rounded-xl bg-amber-100/60 dark:bg-slate-800/70" />
-              <div className="h-20 rounded-xl bg-amber-100/60 dark:bg-slate-800/70" />
-            </div>
-          ) : (
-            <>
-              {error && (
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/30 px-3.5 py-2.5 text-xs text-rose-700 dark:text-rose-300">
-                  <span className="flex items-center gap-2 font-semibold">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    {error}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void loadSummary(false)}
-                    className="rounded-lg bg-rose-600 text-white px-2.5 py-1 text-[11px] font-bold hover:bg-rose-700"
-                  >
-                    إعادة المحاولة
-                  </button>
-                </div>
-              )}
+            )}
 
-              {summary && (
-                <div className="space-y-3.5">
-                  {/* Metrics + Action Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
-                    {/* Current YT Coin Balance */}
-                    <div className="rounded-xl border border-amber-200/80 dark:border-amber-500/25 bg-white/90 dark:bg-slate-950/70 p-3 flex items-center justify-between gap-2.5">
-                      <div className="min-w-0">
-                        <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                          رصيد YT Coin
+            {summary && (
+              <>
+                {/* ==================== TAB 1: MINING (الرئيسية) ==================== */}
+                {activeTab === 'mine' && (
+                  <div className="space-y-4">
+                    {/* Hero Mining Arena Card */}
+                    <div className="relative overflow-hidden rounded-3xl border border-amber-500/30 bg-gradient-to-b from-[#151e34] via-[#101728] to-[#0c111e] p-5 sm:p-7 shadow-2xl">
+                      <div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-amber-400/60 to-transparent"
+                      />
+
+                      {/* Top Info Pill & Balance */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 border border-amber-400/35 px-3 py-1 text-[11px] font-extrabold text-amber-300">
+                          <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                          سقف معروض 1 مليار (أعداد صحيحة)
                         </span>
-                        <div className="mt-1 flex items-baseline gap-1.5">
-                          <strong className="text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 dark:text-white truncate">
-                            {formatYt(summary.balanceYt)}
+                        <div className="flex items-center gap-1.5 rounded-full bg-slate-950/80 border border-slate-800 px-3 py-1 text-[11px] text-slate-300">
+                          <Flame className="w-3.5 h-3.5 text-amber-400" />
+                          <span>السلسلة:</span>
+                          <strong className="font-mono text-white">
+                            {summary.streakDays !== null ? formatYt(summary.streakDays, 0) : '0'} يوم
                           </strong>
-                          <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400">
-                            YT
+                        </div>
+                      </div>
+
+                      {/* Interactive Center Coin Stage */}
+                      <div className="flex flex-col items-center justify-center text-center py-2 space-y-4">
+                        <button
+                          type="button"
+                          onClick={handleClaim}
+                          disabled={claiming || !summary.canClaim}
+                          aria-label="تعدين عملة YT Coin"
+                          className={`group relative rounded-full p-2 transition-transform duration-300 ${
+                            summary.canClaim
+                              ? 'cursor-pointer hover:scale-105 active:scale-95'
+                              : 'cursor-default opacity-95'
+                          } ${coinPulse ? 'scale-95' : ''}`}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`absolute inset-0 rounded-full blur-2xl transition-opacity ${
+                              summary.canClaim
+                                ? 'bg-amber-400/35 group-hover:bg-amber-400/50 animate-pulse'
+                                : 'bg-amber-500/15'
+                            }`}
+                          />
+                          <YtCoinLogo
+                            size="xl"
+                            className="relative ring-amber-400 shadow-[0_0_40px_rgba(251,191,36,0.3)]"
+                          />
+                        </button>
+
+                        {/* Today's Claim Reward Highlight */}
+                        <div className="space-y-1">
+                          <span className="block text-xs sm:text-sm font-bold text-amber-300/90">
+                            مكافأة المطالبة الحالية
+                          </span>
+                          <div className="flex items-baseline justify-center gap-2" dir="ltr">
+                            <span className="text-sm sm:text-base font-extrabold text-amber-400">YT Coin</span>
+                            <strong className="text-3xl sm:text-5xl font-black font-mono tabular-nums tracking-tight text-white">
+                              {summary.todayRewardYt !== null ? `${formatYt(summary.todayRewardYt)}+` : '—'}
+                            </strong>
+                          </div>
+                        </div>
+
+                        {/* Primary Claim Action Button */}
+                        <div className="w-full max-w-md pt-1">
+                          <button
+                            type="button"
+                            onClick={handleClaim}
+                            disabled={claiming || !summary.canClaim}
+                            className={`w-full min-h-[52px] rounded-2xl px-5 py-3.5 flex items-center justify-center gap-2.5 text-sm sm:text-base font-black transition-all ${
+                              summary.canClaim
+                                ? 'bg-gradient-to-l from-amber-400 via-amber-500 to-yellow-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-lg shadow-amber-500/25 cursor-pointer active:scale-[0.99]'
+                                : 'bg-slate-800/90 border border-slate-700 text-slate-300 cursor-not-allowed'
+                            }`}
+                          >
+                            {claiming ? (
+                              <>
+                                <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+                                <span>جاري استلام المكافأة...</span>
+                              </>
+                            ) : summary.canClaim ? (
+                              <>
+                                <Pickaxe className="w-5 h-5 shrink-0" />
+                                <span>
+                                  {summary.todayRewardYt !== null
+                                    ? `استلام مكافأة اليوم (+${formatYt(summary.todayRewardYt)} YT)`
+                                    : 'استلام مكافأة التعدين اليومي'}
+                                </span>
+                              </>
+                            ) : summary.capReached ? (
+                              <>
+                                <ShieldCheck className="w-5 h-5 text-amber-400 shrink-0" />
+                                <span>تم بلوغ سقف التعدين</span>
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                                <span>
+                                  {remainingCooldownSec > 0
+                                    ? `المطالبة القادمة بعد ${formatCountdown(remainingCooldownSec)}`
+                                    : 'تم استلام مكافأة اليوم بنجاح'}
+                                </span>
+                              </>
+                            )}
+                          </button>
+
+                          {summary.statusMessage && (
+                            <p className="text-xs text-amber-300/80 text-center mt-2">{summary.statusMessage}</p>
+                          )}
+                          {!summary.statusMessage && !summary.canClaim && summary.nextClaimAt && (
+                            <p className="text-[11px] text-slate-400 text-center mt-2 flex items-center justify-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span>موعد التعدين القادم: {formatDateTime(summary.nextClaimAt)}</span>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Daily Cap Consumption Footer Inside Card */}
+                      <div className="mt-6 pt-4 border-t border-slate-800/90 space-y-2">
+                        <div className="flex items-center justify-between text-xs font-bold">
+                          <span className="text-slate-300">استهلاك السقف اليومي</span>
+                          <span className="font-mono tabular-nums text-amber-300" dir="ltr">
+                            {summary.dailyCapYt !== null
+                              ? `${formatYt(summary.dailyMinedYt ?? 0)} / ${formatYt(summary.dailyCapYt)}`
+                              : summary.poolRemainingYt !== null && summary.poolCapYt !== null
+                                ? `${formatYt(summary.poolDistributedYt ?? 0)} / ${formatYt(summary.poolCapYt)}`
+                                : 'نشط'}
                           </span>
                         </div>
-                        {summary.totalMinedYt !== null && (
-                          <span className="block text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-mono tabular-nums">
-                            إجمالي المُعدَّن: {formatYt(summary.totalMinedYt)} YT
-                          </span>
-                        )}
-                      </div>
-                      <YtCoinLogo size="md" />
-                    </div>
-
-                    {/* Today's Reward */}
-                    <div className="rounded-xl border border-emerald-200/80 dark:border-emerald-500/25 bg-white/90 dark:bg-slate-950/70 p-3 flex items-center justify-between gap-2.5">
-                      <div className="min-w-0">
-                        <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                          مكافأة اليوم
-                        </span>
-                        <div className="mt-1 flex items-baseline gap-1.5">
-                          <strong className="text-lg sm:text-xl font-black font-mono tabular-nums text-emerald-700 dark:text-emerald-400 truncate">
-                            {summary.todayRewardYt !== null ? `+${formatYt(summary.todayRewardYt)}` : '—'}
-                          </strong>
-                          <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400">
-                            YT
-                          </span>
-                        </div>
-                        <span className="block text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                          {summary.claimedToday
-                            ? 'تم استلام مكافأة اليوم'
-                            : summary.capReached
-                              ? 'تم بلوغ سقف التعدين'
-                              : 'جاهزة للمطالبة الآن'}
-                        </span>
-                      </div>
-                      <YtCoinLogo size="md" />
-                    </div>
-
-                    {/* Streak / Activity */}
-                    <div className="rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white/90 dark:bg-slate-950/70 p-3 flex items-center justify-between gap-2.5">
-                      <div className="min-w-0">
-                        <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                          سلسلة التعدين
-                        </span>
-                        <div className="mt-1 flex items-baseline gap-1.5">
-                          <strong className="text-lg sm:text-xl font-black font-mono tabular-nums text-slate-900 dark:text-white">
-                            {summary.streakDays !== null
-                              ? formatYt(summary.streakDays, 0)
-                              : summary.totalClaims !== null
-                                ? formatYt(summary.totalClaims, 0)
-                                : '0'}
-                          </strong>
-                          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                            {summary.streakDays !== null ? 'يوم متتالي' : 'مطالبة'}
-                          </span>
-                        </div>
-                        {summary.totalClaims !== null && summary.streakDays !== null && (
-                          <span className="block text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-mono tabular-nums">
-                            إجمالي المطالبات: {formatYt(summary.totalClaims, 0)}
-                          </span>
-                        )}
-                      </div>
-                      <span className="w-9 h-9 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-                        <Flame className="w-5 h-5" />
-                      </span>
-                    </div>
-
-                    {/* Daily Claim Action Button */}
-                    <div className="rounded-xl border border-amber-200/80 dark:border-amber-500/25 bg-white/90 dark:bg-slate-950/70 p-3 flex flex-col justify-center">
-                      <button
-                        type="button"
-                        onClick={handleClaim}
-                        disabled={claiming || !summary.canClaim}
-                        className={`w-full min-h-[46px] rounded-xl px-3.5 py-2.5 flex items-center justify-center gap-2 text-xs sm:text-sm font-extrabold transition-all ${
-                          summary.canClaim
-                            ? 'bg-gradient-to-l from-emerald-600 via-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md shadow-emerald-600/25 cursor-pointer'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 cursor-not-allowed'
-                        }`}
-                      >
-                        {claiming ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                            <span>جاري استلام المكافأة...</span>
-                          </>
-                        ) : summary.canClaim ? (
-                          <>
-                            <YtCoinLogo size="sm" className="ring-amber-300 shadow-none" />
-                            <span>
-                              {summary.todayRewardYt !== null
-                                ? `مطالبة +${formatYt(summary.todayRewardYt)} YT`
-                                : 'استلام مكافأة اليوم'}
-                            </span>
-                          </>
-                        ) : summary.capReached ? (
-                          <>
-                            <ShieldCheck className="w-4 h-4 shrink-0" />
-                            <span>تم بلوغ سقف التعدين</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                            <span>
-                              {remainingCooldownSec > 0
-                                ? `المطالبة القادمة ${formatCountdown(remainingCooldownSec)}`
-                                : 'تم الاستلام اليوم'}
-                            </span>
-                          </>
-                        )}
-                      </button>
-
-                      {summary.statusMessage && (
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 text-center mt-1.5 truncate">
-                          {summary.statusMessage}
-                        </p>
-                      )}
-                      {!summary.statusMessage && !summary.canClaim && summary.nextClaimAt && (
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 text-center mt-1.5 flex items-center justify-center gap-1">
-                          <Clock className="w-3 h-3 shrink-0" />
-                          <span>التالي: {formatDateTime(summary.nextClaimAt)}</span>
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Mining Cap / Pool Progress Bar (only when returned by API) */}
-                  {(summary.poolRemainingYt !== null || summary.poolCapYt !== null) && (
-                    <div className="rounded-xl border border-slate-200/70 dark:border-slate-800 bg-white/75 dark:bg-slate-950/50 px-3.5 py-2.5 space-y-1.5">
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                        <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                          <YtCoinLogo size="xs" />
-                          <span>مخزون التعدين المتاح</span>
-                        </span>
-                        <span className="font-mono tabular-nums font-bold text-slate-800 dark:text-slate-200">
-                          {summary.poolRemainingYt !== null ? `${formatYt(summary.poolRemainingYt)} YT متبقٍ` : ''}
-                          {summary.poolRemainingYt !== null && summary.poolCapYt !== null ? ' / ' : ''}
-                          {summary.poolCapYt !== null ? `سقف ${formatYt(summary.poolCapYt)} YT` : ''}
-                        </span>
-                      </div>
-                      {poolProgressPct !== null && (
-                        <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                        <div className="w-full h-2.5 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
                           <div
-                            className="h-full rounded-full bg-gradient-to-l from-amber-500 to-emerald-500 transition-all duration-500"
-                            style={{ width: `${poolProgressPct}%` }}
+                            className="h-full rounded-full bg-gradient-to-l from-amber-400 to-emerald-400 transition-all duration-500"
+                            style={{
+                              width: `${
+                                summary.dailyCapYt !== null ? dailyProgressPct : (poolProgressPct ?? 100)
+                              }%`,
+                            }}
                           />
                         </div>
-                      )}
+                      </div>
                     </div>
-                  )}
 
-                  {/* Reward History Toggle & List */}
-                  <div className="rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-950/60 overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => setShowHistory((prev) => !prev)}
-                      aria-expanded={showHistory}
-                      className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50/80 dark:hover:bg-slate-900/60 transition-colors cursor-pointer"
-                    >
-                      <span className="flex items-center gap-2">
-                        <History className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                        <span>سجل مكافآت YT Coin</span>
-                        <span className="rounded-full bg-amber-100 dark:bg-amber-950/70 text-amber-800 dark:text-amber-300 px-2 py-0.5 text-[10px] font-mono tabular-nums">
+                    {/* Quick KPI Strip */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      <div className="rounded-2xl border border-slate-800 bg-[#121829] p-3.5">
+                        <span className="block text-[11px] text-slate-400">رصيدك الحالي</span>
+                        <div className="mt-1 flex items-baseline gap-1.5">
+                          <strong className="text-lg sm:text-xl font-black font-mono tabular-nums text-white">
+                            {formatYt(summary.balanceYt)}
+                          </strong>
+                          <span className="text-xs font-bold text-amber-400">YT</span>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-800 bg-[#121829] p-3.5">
+                        <span className="block text-[11px] text-slate-400">إجمالي ما عدّنته</span>
+                        <div className="mt-1 flex items-baseline gap-1.5">
+                          <strong className="text-lg sm:text-xl font-black font-mono tabular-nums text-emerald-400">
+                            {formatYt(summary.totalMinedYt)}
+                          </strong>
+                          <span className="text-xs font-bold text-amber-400">YT</span>
+                        </div>
+                      </div>
+
+                      <div className="col-span-2 sm:col-span-1 rounded-2xl border border-slate-800 bg-[#121829] p-3.5 flex items-center justify-between">
+                        <div>
+                          <span className="block text-[11px] text-slate-400">إجمالي المطالبات</span>
+                          <strong className="mt-1 block text-lg sm:text-xl font-black font-mono tabular-nums text-white">
+                            {summary.totalClaims !== null ? formatYt(summary.totalClaims, 0) : '0'}
+                          </strong>
+                        </div>
+                        <span className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400">
+                          <Award className="w-5 h-5" />
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ==================== TAB 2: DIGITAL WALLET (المحفظة) ==================== */}
+                {activeTab === 'wallet' && (
+                  <div className="space-y-4">
+                    {/* Digital Wallet Card */}
+                    <div className="relative overflow-hidden rounded-3xl border border-amber-500/35 bg-gradient-to-br from-[#19223a] via-[#111827] to-[#0a0f1c] p-5 sm:p-6 shadow-xl space-y-5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <YtCoinLogo size="lg" className="ring-amber-400" />
+                          <div>
+                            <span className="block text-xs text-amber-300 font-bold">محفظة YT Coin الرقمية</span>
+                            <h2 className="text-base sm:text-lg font-black text-white">الرصيد المتاح</h2>
+                          </div>
+                        </div>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 border border-emerald-400/30 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          محفظة مستقلة
+                        </span>
+                      </div>
+
+                      <div className="py-2">
+                        <div className="flex items-baseline gap-2.5">
+                          <strong className="text-3xl sm:text-5xl font-black font-mono tabular-nums text-white">
+                            {formatYt(summary.balanceYt)}
+                          </strong>
+                          <span className="text-base sm:text-lg font-black text-amber-400">YT Coin</span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1.5">
+                          رصيد عملة YT Coin منفصل تماماً عن محفظة الريال اليمني ويُدار في السجل الرسمي للمنصة.
+                        </p>
+                      </div>
+
+                      {/* Wallet Address Box */}
+                      <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-3.5 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <span className="block text-[10px] font-bold text-slate-400">معرّف المحفظة الرقمي</span>
+                          <code className="block text-xs sm:text-sm font-mono font-bold text-amber-300 truncate mt-0.5">
+                            {walletAddress}
+                          </code>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCopyAddress}
+                          className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 px-3 py-2 text-xs font-bold text-amber-300 transition-colors cursor-pointer"
+                        >
+                          {copiedAddress ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                          <span>{copiedAddress ? 'تم النسخ' : 'نسخ'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Full Ledger / Transaction History */}
+                    <div className="rounded-3xl border border-slate-800 bg-[#121829] overflow-hidden">
+                      <div className="px-4 py-3.5 border-b border-slate-800 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <History className="w-4 h-4 text-amber-400" />
+                          <h3 className="text-sm font-extrabold text-white">سجل معاملات ومكافآت المحفظة</h3>
+                        </div>
+                        <span className="rounded-full bg-amber-500/15 text-amber-300 px-2.5 py-0.5 text-xs font-mono font-bold">
                           {summary.history.length}
                         </span>
-                      </span>
-                      {showHistory ? (
-                        <ChevronUp className="w-4 h-4 text-slate-400" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4 text-slate-400" />
-                      )}
-                    </button>
+                      </div>
 
-                    {showHistory && (
-                      <div className="border-t border-slate-200/70 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800/80 max-h-64 overflow-y-auto">
+                      <div className="divide-y divide-slate-800/80 max-h-[420px] overflow-y-auto">
                         {summary.history.length === 0 ? (
-                          <div className="px-4 py-5 text-center text-xs text-slate-500 dark:text-slate-400">
-                            لا توجد مكافآت تعدين مسجلة بعد. اضغط على زر المطالبة اليومي لبدء جمع YT Coin.
+                          <div className="p-8 text-center space-y-2">
+                            <Wallet className="w-8 h-8 text-slate-600 mx-auto" />
+                            <p className="text-xs text-slate-400">
+                              لا توجد عمليات مسجلة في محفظتك بعد. ابدأ التعدين اليومي لإضافة أول رصيد.
+                            </p>
                           </div>
                         ) : (
                           summary.history.map((item) => (
                             <div
                               key={item.id}
-                              className="px-3.5 py-2.5 flex items-center justify-between gap-3 hover:bg-amber-50/40 dark:hover:bg-slate-900/50 transition-colors"
+                              className="px-4 py-3 flex items-center justify-between gap-3 hover:bg-slate-800/40 transition-colors"
                             >
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <YtCoinLogo size="sm" />
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400 shrink-0">
+                                  <ArrowDownLeft className="w-4 h-4" />
+                                </span>
                                 <div className="min-w-0">
-                                  <p className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">
-                                    {item.label}
-                                  </p>
-                                  <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                                    {item.createdAt
-                                      ? formatDateTime(item.createdAt)
-                                      : item.claimDate || '—'}
+                                  <p className="text-xs sm:text-sm font-bold text-white truncate">{item.label}</p>
+                                  <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                                    {item.createdAt ? formatDateTime(item.createdAt) : item.claimDate || '—'}
                                     {item.streakDay !== null ? ` • اليوم ${item.streakDay}` : ''}
                                   </p>
                                 </div>
                               </div>
                               <div className="text-left shrink-0">
-                                <span className="inline-flex items-center gap-1 font-mono tabular-nums text-xs sm:text-sm font-extrabold text-emerald-700 dark:text-emerald-400">
+                                <span className="inline-flex items-center gap-1 font-mono tabular-nums text-xs sm:text-sm font-black text-emerald-400">
                                   {item.amountYt !== null ? `+${formatYt(item.amountYt)}` : '—'}
-                                  <span className="text-[10px] text-amber-600 dark:text-amber-400">
-                                    YT
-                                  </span>
+                                  <span className="text-[10px] text-amber-400">YT</span>
                                 </span>
                               </div>
                             </div>
                           ))
                         )}
                       </div>
-                    )}
+                    </div>
                   </div>
-                </div>
-              )}
-            </>
-          )}
+                )}
+
+                {/* ==================== TAB 3: STATISTICS & ECONOMICS (الإحصائيات) ==================== */}
+                {activeTab === 'stats' && (
+                  <div className="space-y-4">
+                    {/* Global Pool & Cap Card */}
+                    <div className="rounded-3xl border border-amber-500/30 bg-[#121829] p-5 space-y-4">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center text-amber-400">
+                          <Coins className="w-5 h-5" />
+                        </span>
+                        <div>
+                          <h2 className="text-sm sm:text-base font-black text-white">إحصائيات المعروض والسقف الكلي</h2>
+                          <p className="text-[11px] text-slate-400">بيانات التوزيع الرسمية لعملة YT Coin</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5">
+                          <span className="block text-[11px] text-slate-400">السقف الكلي للعملة</span>
+                          <strong className="mt-1 block text-base sm:text-lg font-black font-mono text-amber-400">
+                            {summary.poolCapYt !== null ? `${formatYt(summary.poolCapYt)} YT` : '1,000,000,000 YT'}
+                          </strong>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5">
+                          <span className="block text-[11px] text-slate-400">المخزون المتاح للتعدين</span>
+                          <strong className="mt-1 block text-base sm:text-lg font-black font-mono text-emerald-400">
+                            {summary.poolRemainingYt !== null ? `${formatYt(summary.poolRemainingYt)} YT` : 'متاح'}
+                          </strong>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5">
+                          <span className="block text-[11px] text-slate-400">إجمالي ما تم توزيعه</span>
+                          <strong className="mt-1 block text-base sm:text-lg font-black font-mono text-white">
+                            {summary.poolDistributedYt !== null ? `${formatYt(summary.poolDistributedYt)} YT` : '—'}
+                          </strong>
+                        </div>
+                      </div>
+
+                      {poolProgressPct !== null && (
+                        <div className="space-y-1.5 pt-1">
+                          <div className="flex justify-between text-xs font-bold">
+                            <span className="text-slate-300">نسبة التعدين العالمية</span>
+                            <span className="font-mono text-amber-400">{poolProgressPct.toFixed(2)}%</span>
+                          </div>
+                          <div className="w-full h-3 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-l from-amber-400 via-amber-500 to-emerald-500 transition-all duration-500"
+                              style={{ width: `${poolProgressPct}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Personal Mining Performance */}
+                    <div className="rounded-3xl border border-slate-800 bg-[#121829] p-5 space-y-4">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center text-emerald-400">
+                          <TrendingUp className="w-5 h-5" />
+                        </span>
+                        <div>
+                          <h3 className="text-sm sm:text-base font-black text-white">إحصائيات تعدينك الشخصي</h3>
+                          <p className="text-[11px] text-slate-400">ملخص نشاطك وسجل الالتزام اليومي</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5">
+                          <span className="block text-[11px] text-slate-400">سلسلة التعدين الحالية</span>
+                          <strong className="mt-1 block text-lg font-black font-mono text-amber-400">
+                            {summary.streakDays !== null ? `${formatYt(summary.streakDays, 0)} يوم` : '0 يوم'}
+                          </strong>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5">
+                          <span className="block text-[11px] text-slate-400">عدد المطالبات الناجحة</span>
+                          <strong className="mt-1 block text-lg font-black font-mono text-white">
+                            {summary.totalClaims !== null ? formatYt(summary.totalClaims, 0) : '0'}
+                          </strong>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5">
+                          <span className="block text-[11px] text-slate-400">مكافأة اليوم</span>
+                          <strong className="mt-1 block text-lg font-black font-mono text-emerald-400">
+                            {summary.todayRewardYt !== null ? `+${formatYt(summary.todayRewardYt)} YT` : '—'}
+                          </strong>
+                        </div>
+
+                        <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5">
+                          <span className="block text-[11px] text-slate-400">آخر عملية مطالبة</span>
+                          <strong className="mt-1 block text-xs sm:text-sm font-bold text-slate-200 truncate">
+                            {formatDateTime(summary.lastClaimAt)}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ==================== TAB 4: TASKS & BONUSES (المهام والمكافآت) ==================== */}
+                {activeTab === 'tasks' && (
+                  <div className="space-y-4">
+                    <div className="rounded-3xl border border-amber-500/30 bg-[#121829] p-5 space-y-4">
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center text-amber-400">
+                          <Zap className="w-5 h-5" />
+                        </span>
+                        <div>
+                          <h2 className="text-sm sm:text-base font-black text-white">مهام ومكافآت زيادة التعدين</h2>
+                          <p className="text-[11px] text-slate-400">أنجز المهام اليومية لتعزيز رصيدك من YT Coin</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        {/* Task 1: Daily Mining Claim */}
+                        <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center shrink-0">
+                              <Calendar className="w-5 h-5" />
+                            </span>
+                            <div className="min-w-0">
+                              <h3 className="text-xs sm:text-sm font-extrabold text-white">
+                                تسجيل الحضور والتعدين اليومي
+                              </h3>
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                {summary.todayRewardYt !== null
+                                  ? `المكافأة: +${formatYt(summary.todayRewardYt)} YT Coin`
+                                  : 'استلم مكافأتك اليومية المجانية'}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (summary.canClaim) {
+                                void handleClaim();
+                              } else {
+                                setActiveTab('mine');
+                              }
+                            }}
+                            disabled={claiming}
+                            className={`shrink-0 rounded-xl px-3.5 py-2 text-xs font-black transition-colors cursor-pointer ${
+                              summary.canClaim
+                                ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                                : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                            }`}
+                          >
+                            {summary.canClaim ? 'استلام الآن' : 'مكتمل اليوم'}
+                          </button>
+                        </div>
+
+                        {/* Task 2: Streak Bonus */}
+                        <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="w-10 h-10 rounded-xl bg-orange-500/15 text-orange-400 flex items-center justify-center shrink-0">
+                              <Flame className="w-5 h-5" />
+                            </span>
+                            <div className="min-w-0">
+                              <h3 className="text-xs sm:text-sm font-extrabold text-white">
+                                الحفاظ على سلسلة التعدين المتتالية
+                              </h3>
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                سلسلتك الحالية: {summary.streakDays !== null ? formatYt(summary.streakDays, 0) : '0'} يوم متواصل
+                              </p>
+                            </div>
+                          </div>
+                          <span className="shrink-0 rounded-xl bg-slate-900 border border-slate-700 px-3 py-1.5 text-[11px] font-bold text-amber-300">
+                            نشط تلقائياً
+                          </span>
+                        </div>
+
+                        {/* Task 3: Back to Platform Tasks */}
+                        {onOpen && (
+                          <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
+                                <ListChecks className="w-5 h-5" />
+                              </span>
+                              <div className="min-w-0">
+                                <h3 className="text-xs sm:text-sm font-extrabold text-white">مهام المنصة الإضافية</h3>
+                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                  تصفح المهام المصغرة لزيادة أرباحك ونشاط حسابك
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={onOpen}
+                              className="shrink-0 inline-flex items-center gap-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 px-3.5 py-2 text-xs font-black transition-colors cursor-pointer"
+                            >
+                              <span>انتقال</span>
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Rules Info Box */}
+                      <div className="rounded-2xl bg-amber-500/10 border border-amber-400/25 p-3.5 flex items-start gap-2.5 text-xs text-amber-200/90 leading-relaxed">
+                        <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <p>
+                          تعمل عملة YT Coin بنظام سقف تصاعدي يومي وأعداد صحيحة، ويُحدّث مؤقت المطالبة اليومية تلقائياً وفق توقيت عدن (Asia/Aden).
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </main>
+
+      {/* Fixed Bottom Navigation Bar */}
+      <nav
+        aria-label="التنقل الرئيسي لمنجم YT Coin"
+        className="fixed bottom-0 inset-x-0 z-40 bg-[#0f1524]/95 backdrop-blur-lg border-t border-amber-500/25 px-2 py-2 shadow-[0_-8px_30px_rgba(0,0,0,0.6)]"
+      >
+        <div className="max-w-4xl mx-auto grid grid-cols-4 gap-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('mine')}
+            className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${
+              activeTab === 'mine'
+                ? 'bg-amber-500/15 text-amber-400'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Pickaxe className="w-5 h-5" />
+            <span>التعدين</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('wallet')}
+            className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${
+              activeTab === 'wallet'
+                ? 'bg-amber-500/15 text-amber-400'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Wallet className="w-5 h-5" />
+            <span>المحفظة</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('stats')}
+            className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${
+              activeTab === 'stats'
+                ? 'bg-amber-500/15 text-amber-400'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <BarChart3 className="w-5 h-5" />
+            <span>الإحصائيات</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('tasks')}
+            className={`flex flex-col items-center justify-center gap-1 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${
+              activeTab === 'tasks'
+                ? 'bg-amber-500/15 text-amber-400'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <ListChecks className="w-5 h-5" />
+            <span>المهام</span>
+          </button>
         </div>
-      </div>
-    </section>
+      </nav>
+    </div>
   );
 };
