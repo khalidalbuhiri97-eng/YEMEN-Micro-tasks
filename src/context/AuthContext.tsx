@@ -9,6 +9,7 @@ import {
 } from '../api/client.ts';
 import type { UserProfile, UserWallet } from '../types/index.ts';
 import { AuthModal } from '../components/auth/AuthModal.tsx';
+import { supabase } from '../api/supabase.ts';
 import { ConfirmModal, type ConfirmModalVariant } from '../components/common/ConfirmModal.tsx';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import {
@@ -318,7 +319,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register' | 'owner'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'owner' | 'forgot' | 'reset'>('login');
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setAuthMode('reset');
+        setIsAuthOpen(true);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const openAuthModal = (mode: 'login' | 'register' | 'owner' = 'login') => {
     setAuthMode(mode);
