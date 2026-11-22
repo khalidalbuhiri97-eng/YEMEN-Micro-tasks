@@ -176,7 +176,8 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'balanceYt',
   ]);
   if (balanceYt === null) {
-    const atomicBalance = pickNumber(sources, ['balance_atomic', 'atomic_balance', 'balance_units']);
+    // Supabase RPC returns internal integer units in camelCase.
+    const atomicBalance = pickNumber(sources, ['balanceUnits', 'balance_units', 'balance_atomic', 'atomic_balance']);
     if (atomicBalance !== null) balanceYt = atomicBalance / 1_000_000;
   }
 
@@ -190,7 +191,7 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'totalMinedYt',
   ]);
   if (totalMinedYt === null) {
-    const atomicMined = pickNumber(sources, ['total_mined_atomic', 'lifetime_mined_atomic']);
+    const atomicMined = pickNumber(sources, ['lifetimeEarnedUnits', 'lifetime_earned_units', 'total_mined_units', 'total_mined_atomic', 'lifetime_mined_atomic']);
     if (atomicMined !== null) totalMinedYt = atomicMined / 1_000_000;
   }
 
@@ -208,16 +209,18 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'dailyRewardYt',
   ]);
   if (todayRewardYt === null) {
-    const atomicReward = pickNumber(sources, ['today_reward_atomic', 'daily_reward_atomic', 'reward_atomic']);
+    const atomicReward = pickNumber(sources, ['nextRewardUnits', 'next_reward_units', 'rewardUnits', 'reward_units', 'today_reward_atomic', 'daily_reward_atomic', 'reward_atomic']);
     if (atomicReward !== null) todayRewardYt = atomicReward / 1_000_000;
   }
 
+  const lastClaimDate = pickString(sources, ['lastClaimDate', 'last_claim_date', 'claim_date']);
+  const adenToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Aden', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const claimedTodayFlag = pickBoolean(sources, [
     'claimed_today',
     'already_claimed_today',
     'has_claimed_today',
     'claimedToday',
-  ]);
+  ]) ?? (lastClaimDate === adenToday);
   const capReachedFlag = pickBoolean(sources, [
     'cap_reached',
     'mining_cap_reached',
@@ -295,10 +298,12 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     (userRemainingCapYt !== null && userRemainingCapYt <= 0);
   const miningEnabled = miningEnabledFlag !== false;
   const claimedToday = claimedTodayFlag === true;
+  const eligibleFlag = pickBoolean(sources, ['eligible', 'is_eligible']);
+  const dailyRemainingUnits = pickNumber(sources, ['dailyCapRemainingUnits', 'daily_cap_remaining_units', 'daily_remaining_units']);
   const canClaim =
     canClaimExplicit !== null
       ? canClaimExplicit && !capReached && miningEnabled
-      : !claimedToday && !capReached && miningEnabled;
+      : !claimedToday && !capReached && miningEnabled && eligibleFlag !== false && !(dailyRemainingUnits !== null && dailyRemainingUnits <= 0);
 
   const streakDays = pickNumber(sources, [
     'streak_days',
@@ -364,7 +369,7 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
         'reward',
       ]);
       if (amountYt === null) {
-        const atomic = pickNumber([rec], ['atomic_units', 'amount_atomic', 'reward_atomic']);
+        const atomic = pickNumber([rec], ['amountUnits', 'amount_units', 'atomic_units', 'amount_atomic', 'reward_atomic']);
         if (atomic !== null) amountYt = atomic / 1_000_000;
       }
       const rawLabel = pickString([rec], [
@@ -374,11 +379,12 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
         'note',
         'event_label',
         'event_type',
+        'eventType',
         'type',
       ]);
-      const createdAt = pickString([rec], ['created_at', 'claimed_at', 'timestamp', 'date']);
+      const createdAt = pickString([rec], ['created_at', 'createdAt', 'claimed_at', 'timestamp', 'date']);
       const claimDate = pickString([rec], ['claim_date', 'mining_day', 'day']);
-      const streakDay = pickNumber([rec], ['streak_day', 'streak', 'day_number']);
+      const streakDay = pickNumber([rec], ['streak_day', 'streakDay', 'streak', 'day_number']);
       const reference = pickString([rec], ['reference', 'tx_ref', 'ref']);
       return {
         id: String(rec.id ?? rec.claim_id ?? rec.entry_id ?? reference ?? `yt-row-${idx}`),
@@ -415,12 +421,12 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   };
 }
 
-function formatYt(value: number | null, maxDecimals = 4): string {
+function formatYt(value: number | null, maxDecimals = 2): string {
   if (value === null || !Number.isFinite(value)) return '—';
-  const hasFraction = Math.abs(value - Math.trunc(value)) > 1e-9;
+  if (value !== 0 && Math.abs(value) < 0.01) return value < 0 ? '-<0.01' : '<0.01';
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 0,
-    maximumFractionDigits: hasFraction ? maxDecimals : 0,
+    maximumFractionDigits: Math.min(2, Math.max(0, maxDecimals)),
   }).format(value);
 }
 
@@ -518,16 +524,21 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
     try {
       const res = await api.claimDailyYtCoin();
       const result = asRecord(res?.result);
-      const claimedAmount = pickNumber([result], [
+      let claimedAmount = pickNumber([result], [
         'reward_yt',
         'claimed_yt',
         'amount_yt',
         'credited_yt',
         'reward',
       ]);
+      if (claimedAmount === null) {
+        const claimedUnits = pickNumber([result], ['amount_units', 'amountUnits', 'reward_units', 'rewardUnits']);
+        if (claimedUnits !== null) claimedAmount = claimedUnits / 1_000_000;
+      }
       const resultMessage = pickString([result], ['message', 'status_message']);
       const rejected =
         result?.ok === false ||
+        result?.success === false ||
         result?.claimed === false ||
         result?.already_claimed === true;
 
