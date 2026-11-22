@@ -12,7 +12,6 @@ import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
 import { AdPartnersManager } from './AdPartnersManager.tsx';
 import { AdminSurveysAndAssetsView } from './AdminSurveysAndAssetsView.tsx';
-import { YtCoinAdminView } from './YtCoinAdminView.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
 import { TaskBuilderFields, TaskCardLivePreview } from '../tasks/TaskBuilderFields.tsx';
 import { assertNoSensitiveSignupFields, getDefaultTaskImageUrl, getTaskKindLabel, inferTaskKindFromCategory, mapTaskKindToCategory, normalizeProofRequirements } from '../../../shared/taskMeta.ts';
@@ -49,7 +48,7 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'yt_coin' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -668,7 +667,6 @@ export const AdminDashboard: React.FC = () => {
           { id: 'taxes', label: 'إدارة الضرائب', count: null },
           { id: 'geo', label: 'الدول والتقسيمات', count: adminCountries.length || 22 },
           { id: 'ad_partners', label: 'إدارة الشركاء والإعلانات', count: null },
-          { id: 'yt_coin', label: 'خزينة وتعدين YT Coin', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
@@ -745,8 +743,6 @@ export const AdminDashboard: React.FC = () => {
 
       {/* 5C. ISOLATED AD PARTNERS MANAGER TAB */}
       {activeTab === 'ad_partners' && <AdPartnersManager />}
-
-      {activeTab === 'yt_coin' && <YtCoinAdminView />}
 
       {/* 5D. INTERACTIVE SURVEYS, ASSETS & CATEGORY ICONS TAB */}
       {activeTab === 'surveys_assets' && <AdminSurveysAndAssetsView />}

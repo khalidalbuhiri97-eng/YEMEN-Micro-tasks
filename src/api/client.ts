@@ -709,30 +709,6 @@ export const api = {
   importAdminGeoCountry: (countryId: string) =>
     request<any>(`/admin/geo/countries/${encodeURIComponent(countryId)}/import`, { method: 'POST' }),
 
-  // Independent YT Coin mining (never touches the YER wallet or financial ledger)
-  getMyYtCoinSummary: () => request<{ summary: any }>('/yt-coin/summary'),
-  claimDailyYtCoin: () => request<{ result: any }>('/yt-coin/claim', { method: 'POST' }),
-
-  getAdminYtCoinSummary: () => request<{ summary: any }>('/admin/yt-coin/summary'),
-
-  // Independent Offerwall.GG wall and YER rewards
-  getOfferwallGgUrl: () => request<{ offerWallUrl: string; userId: string }>('/offerwall-gg/url'),
-  getOfferwallGgRewards: () =>
-    request<{
-      rewards: Array<{
-        id: string;
-        transaction_id: string;
-        status: 'credited' | 'reversed';
-        offer_id?: string | null;
-        offer_name?: string | null;
-        goal_id?: string | null;
-        currency_name: string;
-        currency_amount: number;
-        created_at: string;
-      }>;
-      summary: { totalYerCredited: number; offersCount: number; reversedCount: number };
-    }>('/offerwall-gg/rewards'),
-
   // ClixWall Offer Wall & Rewards
   getClixWallOfferWallUrl: () => request<{ offerWallUrl: string; userId: string }>('/clixwall/offerwall-url'),
   getClixWallRewards: () =>

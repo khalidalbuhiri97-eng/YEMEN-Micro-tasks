@@ -5,7 +5,6 @@ import { createClient } from '@supabase/supabase-js';
 import { supabaseDb, generateWalletAddress, generateReferralCode } from './supabaseDb.js';
 import { geoService } from './geoService.js';
 import { createClixWallHandlers } from './clixwallHandlers.js';
-import { createOfferwallGgHandlers } from './offerwallGgHandlers.js';
 import {
   getPushPublicStatus,
   saveUserPushSubscription,
@@ -3950,72 +3949,8 @@ const clixwallHandlers = createClixWallHandlers({
   },
 });
 
-const offerwallGgHandlers = createOfferwallGgHandlers({
-  getAdminClient: getSupabaseAdminClient,
-  onRewardCredited: async (info) => {
-    await supabaseDb.createNotification({
-      userId: info.userId,
-      title: 'تمت إضافة مكافأة Offerwall.GG إلى محفظتك!',
-      message: `تم قيد مبلغ ${formatYer(info.amountYer)} ر.ي عن إتمام عرض "${info.offerName}".`,
-      type: 'OFFERWALL_GG_REWARD',
-      link: '/wallet',
-    });
-  },
-  onPostbackError: async (info) => {
-    await logSupabaseError({
-      err: new Error(info.reason),
-      operation: 'OFFERWALL_GG_POSTBACK',
-      sourceTable: 'offerwall_gg_postbacks',
-      sourceFunction: 'process_offerwall_gg_postback',
-      apiRoute: '/api/postbacks/offerwall-gg',
-      details: { transaction_id: info.transactionId || null, user_id: info.userId || null },
-    });
-  },
-});
-
-// YT Coin mining: user-scoped JWT RPCs; independent from YER wallets and financial ledgers.
-app.get('/api/yt-coin/summary', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
-    const userClient = getSupabaseUserClient(req.authToken);
-    const { data, error } = await userClient.rpc('get_my_yt_coin_summary');
-    if (error) throw error;
-    return res.json({ summary: data });
-  } catch (err: any) {
-    await logSupabaseError({ err, operation: 'YT_COIN_SUMMARY', apiRoute: '/api/yt-coin/summary' });
-    return res.status(400).json({ error: err?.message || 'تعذر تحميل ملخص YT Coin.' });
-  }
-});
-app.post('/api/yt-coin/claim', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
-    const userClient = getSupabaseUserClient(req.authToken);
-    const { data, error } = await userClient.rpc('claim_my_yt_coin_daily');
-    if (error) throw error;
-    return res.json({ result: data });
-  } catch (err: any) {
-    await logSupabaseError({ err, operation: 'YT_COIN_DAILY_CLAIM', apiRoute: '/api/yt-coin/claim' });
-    return res.status(400).json({ error: err?.message || 'تعذر استلام مكافأة التعدين.' });
-  }
-});
-
-app.get('/api/admin/yt-coin/summary', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
-    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('get_yt_coin_admin_summary');
-    if (error) throw error;
-    return res.json({ summary: data });
-  } catch (err: any) {
-    await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_SUMMARY', apiRoute: '/api/admin/yt-coin/summary' });
-    return res.status(400).json({ error: err?.message || 'تعذر تحميل مؤشرات YT Coin.' });
-  }
-});
-
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
-app.get('/api/offerwall-gg/url', authMiddleware, offerwallGgHandlers.getOfferWallUrl);
-app.get('/api/offerwall-gg/rewards', authMiddleware, offerwallGgHandlers.getRewards);
-app.all('/api/postbacks/offerwall-gg', offerwallGgHandlers.handlePostback);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
 app.all('/api/clixwall/postback', clixwallHandlers.handlePostback);
 

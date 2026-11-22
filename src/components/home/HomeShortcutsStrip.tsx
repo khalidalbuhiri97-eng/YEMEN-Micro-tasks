@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   CheckSquare,
   Wallet,
@@ -21,7 +21,6 @@ interface HomeShortcutsStripProps {
 
 export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNavigate }) => {
   const { user, wallet, isAdmin } = useAuth();
-  const [showAllShortcuts, setShowAllShortcuts] = useState(false);
 
   const shortcuts = [
     {
@@ -144,49 +143,29 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
           </button>
         </div>
 
-        <div className="relative">
-          <div
-            className={`flex flex-col gap-2 overflow-y-auto overscroll-contain scroll-smooth transition-[max-height] duration-300 pr-0.5 ${showAllShortcuts ? 'max-h-[620px]' : 'max-h-[184px]'}`}
-            aria-label="بطاقات التنقل الرأسية"
-          >
-            {shortcuts.map((item) => {
-              const Icon = item.icon;
-              const disabled = Boolean((item as any).comingSoon);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => item.targetTab && onNavigate(item.targetTab)}
-                  aria-label={disabled ? item.label + ' - قريباً' : item.label}
-                  className={`group w-full min-h-[54px] shrink-0 flex flex-row-reverse items-center justify-between gap-3 rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/80 dark:bg-slate-800/60 px-3 py-2 text-right transition-all ${disabled ? 'opacity-75 cursor-default' : 'hover:border-emerald-400 hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30 cursor-pointer'}`}
-                >
-                  <span className="flex min-w-0 items-center gap-3">
-                    <span className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm shrink-0 ${item.accent}`}>
-                      <Icon className="w-5 h-5" />
-                    </span>
-                    <span className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
-                      {item.label}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-2 shrink-0">
-                    {disabled && <span className="text-[10px] text-slate-400">قريباً</span>}
-                    {!disabled && <span className="text-[10px] text-slate-400">فتح</span>}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          {shortcuts.length > 3 && (
-            <button
-              type="button"
-              onClick={() => setShowAllShortcuts((value) => !value)}
-              aria-expanded={showAllShortcuts}
-              className="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
-            >
-              {showAllShortcuts ? 'إخفاء البطاقات الإضافية' : 'عرض بقية البطاقات والتمرير'}
-            </button>
-          )}
+        <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
+          {shortcuts.map((item) => {
+            const Icon = item.icon;
+            const disabled = Boolean((item as any).comingSoon);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => item.targetTab && onNavigate(item.targetTab)}
+                aria-label={disabled ? item.label + ' - قريباً' : item.label}
+                className={`group min-w-0 flex flex-col items-center justify-center gap-1.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/50 px-1.5 py-2.5 transition-all ${disabled ? 'opacity-75 cursor-default' : 'hover:-translate-y-0.5 hover:border-emerald-400 hover:bg-emerald-50/50 dark:hover:bg-emerald-950/30 cursor-pointer'}`}
+              >
+                <span className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${item.accent}`}>
+                  <Icon className="w-5 h-5" />
+                </span>
+                <span className="text-[10px] sm:text-[11px] font-bold text-slate-700 dark:text-slate-200 text-center leading-tight line-clamp-2">
+                  {item.label}
+                </span>
+                {disabled && <span className="text-[9px] text-slate-400">قريباً</span>}
+              </button>
+            );
+          })}
         </div>
       </div>
     </section>
