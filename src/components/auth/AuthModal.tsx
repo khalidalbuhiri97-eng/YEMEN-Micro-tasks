@@ -58,7 +58,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
 
     try {
       if (mode === 'forgot') {
-        const recoveryEmail = (email || identifier).trim().toLowerCase();
+        const recoveryEmail = identifier.trim().toLowerCase();
         if (!recoveryEmail || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(recoveryEmail)) {
           throw new Error('أدخل البريد الإلكتروني المسجل في حسابك.');
         }
@@ -389,7 +389,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             <>
             <div>
               نسيت كلمة المرور؟{' '}
-              <button type="button" onClick={() => { setError(''); setSuccessMessage(''); setEmail(identifier.includes('@') ? identifier : ''); setMode('forgot'); }} className="text-emerald-600 font-bold hover:underline">استعدها الآن</button>
+              <button type="button" onClick={() => { setError(''); setSuccessMessage(''); setMode('forgot'); }} className="text-emerald-600 font-bold hover:underline">استعدها الآن</button>
             </div>
             <div>
               ليس لديك حساب بعد؟{' '}
