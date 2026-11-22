@@ -8,6 +8,7 @@ import { WithdrawView } from './WithdrawView.tsx';
 import { ReferralView } from './ReferralView.tsx';
 import { SupportView } from './SupportView.tsx';
 import { AdvertiserPortal } from '../advertiser/AdvertiserPortal.tsx';
+import { EmailVerificationBanner } from '../common/EmailVerificationBanner.tsx';
 import {
   LayoutDashboard,
   CheckSquare,
@@ -152,6 +153,9 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
 
         {/* Main Content Area */}
         <main className="lg:col-span-9 min-h-[500px]">
+          {subTab !== 'withdraw' && subTab !== 'tasks' && (
+            <EmailVerificationBanner className="mb-6" />
+          )}
           {subTab === 'advertiser' && (
             <AdvertiserPortal onNavigateWallet={() => setSubTab('wallet')} />
           )}

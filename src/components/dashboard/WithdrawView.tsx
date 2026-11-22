@@ -16,6 +16,7 @@ import {
   Info,
   WifiOff,
 } from 'lucide-react';
+import { EmailVerificationBanner } from '../common/EmailVerificationBanner.tsx';
 
 interface WithdrawViewProps {
   onGoToWallet: () => void;
@@ -74,10 +75,16 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
   const netAmount = Math.max(0, subMoney(numAmount, fee));
   const availableBal = roundYer6(wallet?.availableBalance || 0);
   const isBalanceSufficient = availableBal >= numAmount && numAmount > 0;
+  const isEmailUnverified = Boolean(user && user.role !== 'admin' && user.emailVerified === false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+
+    if (isEmailUnverified) {
+      setError('يجب تأكيد بريدك الإلكتروني أولاً عبر رابط التفعيل المرسل إليك قبل تقديم طلب سحب مالي.');
+      return;
+    }
 
     if (!isOnline || isUsingOfflineSession) {
       setError('إرسال طلب السحب المالي يتطلب اتصالاً نشطاً بالإنترنت.');
@@ -244,6 +251,7 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            <EmailVerificationBanner contextLabel="قبل تقديم طلبات السحب المالي" />
             {(!isOnline || isUsingOfflineSession) && (
               <div className="p-3 text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded-xl flex items-center gap-2">
                 <WifiOff className="w-4 h-4 shrink-0" />
@@ -403,7 +411,7 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ onGoToWallet }) => {
 
             <button
               type="submit"
-              disabled={!isOnline || isUsingOfflineSession || isSubmitting || !isBalanceSufficient}
+              disabled={isEmailUnverified || !isOnline || isUsingOfflineSession || isSubmitting || !isBalanceSufficient}
               className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {isSubmitting ? (

@@ -38,6 +38,15 @@ export const Hero: React.FC<HeroProps> = ({
 
   useEffect(() => {
     let cancelled = false;
+    // Hydrate cached public stats immediately (Stale-While-Revalidate)
+    getCacheItem<typeof stats>('public_stats')
+      .then((cached) => {
+        if (!cancelled && cached?.value) {
+          setStats(cached.value);
+        }
+      })
+      .catch(() => {});
+
     api
       .getStats()
       .then((res) => {
@@ -52,12 +61,7 @@ export const Hero: React.FC<HeroProps> = ({
           saveCacheItem('public_stats', next).catch(() => {});
         }
       })
-      .catch(async () => {
-        const cached = await getCacheItem<typeof stats>('public_stats');
-        if (!cancelled && cached?.value) {
-          setStats(cached.value);
-        }
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -69,15 +73,15 @@ export const Hero: React.FC<HeroProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10 items-center">
           {/* Main headline */}
           <div className="lg:col-span-6 flex flex-col justify-center">
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-slate-900 dark:text-white leading-[1.3] tracking-tight mb-3 [text-wrap:balance]">
-              أنجز مهاماً رقمية بسيطة، واكسب بالريال اليمني وسدد احتياجاتك اليومية.
+            <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] font-black text-slate-950 dark:text-white leading-[1.24] tracking-tight mb-6 [text-wrap:balance]">
+              حَوّل وقتك إلى{' '}
+              <span className="bg-gradient-to-l from-emerald-600 via-teal-600 to-amber-500 dark:from-emerald-400 dark:via-teal-300 dark:to-amber-300 bg-clip-text text-transparent">
+                أرباح يومية فورية
+              </span>
+              <span className="block mt-1.5 text-slate-800 dark:text-slate-100">
+                بالريال اليمني وسحب مباشر
+              </span>
             </h1>
-
-            <p className="text-sm sm:text-base text-slate-600 dark:text-slate-300 leading-relaxed mb-5 max-w-2xl">
-              سوق عمل مصغر موجه للشباب في صنعاء، عدن، تعز وجميع المحافظات اليمنية. اربح مكافآت نقدية فعلية عند إنجاز المهام المعتمدة مع سحب مباشر عبر الكريمي وشبكة النجم ومحفظة جوالي.
-            </p>
-
-            {/* Keep task and offer navigation; remove the oversized signup CTA */}
             <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 mb-5">
               <button
                 type="button"

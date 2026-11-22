@@ -122,6 +122,8 @@ export interface UserProfile {
   fullName: string;
   phone: string;
   email?: string;
+  emailVerified?: boolean;
+  emailConfirmedAt?: string | null;
   avatarUrl?: string;
   role: UserRole;
   status: AccountStatus;

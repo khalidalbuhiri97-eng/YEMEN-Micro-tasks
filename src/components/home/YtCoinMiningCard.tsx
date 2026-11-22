@@ -566,27 +566,50 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
   if (compact) {
     return (
       <section aria-label="YT Coin" className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 pt-3 pb-1">
-        <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.5fr)] gap-2.5">
-          <button
-            type="button"
-            onClick={onOpen}
-            className="group min-h-[112px] rounded-2xl border border-amber-300/70 dark:border-amber-500/30 bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 text-white p-3 flex flex-col items-center justify-center gap-2 shadow-md shadow-amber-900/10 active:scale-[0.98] transition-transform"
-            aria-label="فتح صفحة YT Coin والتعدين"
-          >
-            <YtCoinLogo size="lg" className="ring-amber-300 shadow-lg shadow-amber-400/20" />
-            <span className="text-xs font-extrabold tracking-wide">YT Coin</span>
-            <span className="inline-flex items-center gap-1 text-[10px] text-amber-200">
-              تفاصيل التعدين <ArrowUpRight className="w-3 h-3" />
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label="فتح صفحة تعدين عملة YT Coin اليومية"
+          className="group relative w-full overflow-hidden rounded-2xl border border-amber-400/45 dark:border-amber-500/35 bg-gradient-to-l from-slate-950 via-emerald-950 to-slate-900 text-white px-4 py-3.5 sm:px-6 sm:py-4 shadow-lg shadow-emerald-950/15 hover:border-amber-300/80 transition-all active:scale-[0.99] cursor-pointer text-right"
+        >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -top-12 -left-10 w-44 h-44 rounded-full bg-amber-400/15 blur-2xl group-hover:bg-amber-400/25 transition-colors"
+          />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -bottom-14 right-1/4 w-44 h-44 rounded-full bg-emerald-500/15 blur-2xl"
+          />
+
+          <div className="relative flex items-center justify-between gap-3 sm:gap-5">
+            <div className="flex items-center gap-3.5 sm:gap-4 min-w-0">
+              <YtCoinLogo
+                size="lg"
+                className="ring-amber-300 shadow-lg shadow-amber-500/25 group-hover:scale-105 transition-transform"
+              />
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm sm:text-base font-black tracking-tight text-white">
+                    عملة YT Coin
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-400/15 border border-amber-300/35 px-2.5 py-0.5 text-[10px] sm:text-[11px] font-extrabold text-amber-300">
+                    <Sparkles className="w-3 h-3 shrink-0" />
+                    تعدين يومي مجاني
+                  </span>
+                </div>
+                <p className="text-[11px] sm:text-xs text-slate-300 truncate sm:whitespace-normal">
+                  اجمع مكافأتك اليومية من عملة المنصة الرسمية وتابع رصيدك وسلسلة التعدين بنقرة واحدة.
+                </p>
+              </div>
+            </div>
+
+            <span className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-l from-amber-400 to-amber-500 group-hover:from-amber-300 group-hover:to-amber-400 text-slate-950 px-3.5 py-2 sm:px-4 sm:py-2.5 text-xs font-black shadow-md shadow-amber-500/20 transition-colors">
+              <span className="hidden xs:inline">افتح التعدين</span>
+              <span className="xs:hidden">تعدين</span>
+              <ArrowUpRight className="w-4 h-4 shrink-0" />
             </span>
-          </button>
-          <div
-            aria-label="مساحة إعلانية مخصصة"
-            className="min-h-[112px] rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/70 dark:bg-slate-900/50 flex flex-col items-center justify-center gap-1.5 text-center px-2"
-          >
-            <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">مساحة إعلانية</span>
-            <span className="text-[10px] text-slate-400 dark:text-slate-500">YT Coin</span>
           </div>
-        </div>
+        </button>
       </section>
     );
   }

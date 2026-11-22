@@ -21,6 +21,7 @@ export default defineConfig(() => {
           'pwa-192x192.png',
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
+          'assets/yt-coin-logo.jpg',
           'sw-push.js',
         ],
         manifest: {
@@ -64,8 +65,8 @@ export default defineConfig(() => {
           clientsClaim: true,
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           ignoreURLParametersMatching: [/^v$/, /^source$/],
-          globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2}'],
-          globIgnores: ['**/*.html', '**/*.apk', '.well-known/**'],
+          globPatterns: ['**/*.{js,css,ico,png,jpg,jpeg,webp,svg,woff,woff2}'],
+          globIgnores: ['**/*.html', '**/*.apk', '.well-known/**', '**/aistudio/**'],
           navigateFallback: null,
           runtimeCaching: [
             {
@@ -98,6 +99,22 @@ export default defineConfig(() => {
             {
               urlPattern: ({ request, url }) =>
                 request.method === 'GET' &&
+                /^\/api\/(tasks|surveys|task-categories|task-assets|stats|settings|geo)(\/|$)/i.test(
+                  url.pathname
+                ),
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'tasks-and-data-swr',
+                expiration: {
+                  maxEntries: 80,
+                  maxAgeSeconds: 60 * 60 * 24,
+                },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              urlPattern: ({ request, url }) =>
+                request.method === 'GET' &&
                 (url.pathname.startsWith('/api/') || url.pathname.endsWith('.json')) &&
                 !url.pathname.startsWith('/.well-known/'),
               handler: 'NetworkFirst',
@@ -107,6 +124,23 @@ export default defineConfig(() => {
                 expiration: {
                   maxEntries: 60,
                   maxAgeSeconds: 60 * 60 * 12,
+                },
+                cacheableResponse: { statuses: [0, 200] },
+              },
+            },
+            {
+              urlPattern: ({ request, url }) =>
+                request.destination === 'image' &&
+                (url.pathname.startsWith('/assets/') ||
+                  url.pathname.startsWith('/pwa-') ||
+                  url.pathname.startsWith('/brand-icon') ||
+                  url.hostname.endsWith('.supabase.co')),
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'brand-and-task-images-cache',
+                expiration: {
+                  maxEntries: 120,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
                 },
                 cacheableResponse: { statuses: [0, 200] },
               },

@@ -1,8 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { api } from '../../api/client.ts';
 import { supabase } from '../../api/supabase.ts';
 import { GeoLocationSelector, type GeoSingleValue } from '../common/GeoLocationSelector.tsx';
-import { X, Lock, Phone, User, Mail, ArrowRight, Shield, Eye, EyeOff, Building2 } from 'lucide-react';
+import { X, Lock, Phone, User, Mail, ArrowRight, Shield, Eye, EyeOff, Building2, Send } from 'lucide-react';
+
+const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.com';
+
+function resolveAuthRedirectOrigin(): string {
+  if (typeof window === 'undefined') return CANONICAL_SITE_ORIGIN;
+  const host = window.location.hostname.toLowerCase();
+  if (host === 'yemen-microtasks.com' || host === 'www.yemen-microtasks.com') {
+    return CANONICAL_SITE_ORIGIN;
+  }
+  return window.location.origin;
+}
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -34,6 +46,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
   const [referralCode, setReferralCode] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [unverifiedEmailForResend, setUnverifiedEmailForResend] = useState<string | null>(null);
+  const [isResendingVerify, setIsResendingVerify] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -41,6 +55,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
     setUserType('user');
     setError('');
     setSuccessMessage('');
+    setUnverifiedEmailForResend(null);
     if (typeof window !== 'undefined') {
       const refParam = new URLSearchParams(window.location.search).get('ref');
       if (refParam && refParam.trim()) {
@@ -63,10 +78,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
           throw new Error('أدخل البريد الإلكتروني المسجل في حسابك.');
         }
         const { error: resetError } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
-          redirectTo: `${window.location.origin}/`,
+          redirectTo: `${resolveAuthRedirectOrigin()}/`,
         });
         if (resetError) throw resetError;
         setSuccessMessage('إذا كان البريد مسجلاً، فستصلك رسالة تحتوي رابطاً آمناً لإعادة تعيين كلمة المرور. تحقق من الوارد والرسائل غير المرغوب فيها.');
+        return;
       } else if (mode === 'reset') {
         if (password.length < 8) throw new Error('يجب أن تتكون كلمة المرور الجديدة من 8 أحرف على الأقل.');
         if (password !== passwordConfirm) throw new Error('تأكيد كلمة المرور غير مطابق.');
@@ -80,6 +96,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
         setIdentifier(recoveredEmail);
         setMode('login');
         setSuccessMessage('تم تغيير كلمة المرور بنجاح. سجّل الدخول الآن باستخدام كلمة المرور الجديدة.');
+        return;
       } else if (mode === 'login' || mode === 'owner') {
         await login(identifier, password);
       } else {
@@ -104,9 +121,35 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
       }
       onClose();
     } catch (err: any) {
-      setError(err.message || 'فشلت العملية، يرجى التأكد من البيانات المدخلة.');
+      const msg = err?.message || 'فشلت العملية، يرجى التأكد من البيانات المدخلة.';
+      setError(msg);
+      if (
+        msg.includes('تأكيد بريدك') ||
+        msg.toLowerCase().includes('email not confirmed') ||
+        msg.toLowerCase().includes('not confirmed')
+      ) {
+        const candidateEmail = identifier.includes('@') ? identifier.trim().toLowerCase() : email.trim().toLowerCase();
+        setUnverifiedEmailForResend(candidateEmail || null);
+      }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleResendVerificationFromModal = async () => {
+    if (!unverifiedEmailForResend || isResendingVerify) return;
+    setIsResendingVerify(true);
+    setError('');
+    try {
+      const res = await api.resendVerificationEmail(unverifiedEmailForResend);
+      setSuccessMessage(
+        res?.message || 'تم إرسال رابط التفعيل إلى بريدك الإلكتروني بنجاح. افتح الرابط ثم أعد تسجيل الدخول.'
+      );
+      setUnverifiedEmailForResend(null);
+    } catch (err: any) {
+      setError(err?.message || 'تعذر إعادة إرسال رابط التفعيل حالياً.');
+    } finally {
+      setIsResendingVerify(false);
     }
   };
 
@@ -181,8 +224,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
             </div>
           )}
           {error && (
-            <div className="p-3 text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg">
-              {error}
+            <div className="p-3 text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 rounded-lg space-y-2">
+              <p>{error}</p>
+              {unverifiedEmailForResend && (
+                <button
+                  type="button"
+                  onClick={handleResendVerificationFromModal}
+                  disabled={isResendingVerify}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition-colors disabled:opacity-60"
+                >
+                  <Send className="w-3 h-3" />
+                  <span>{isResendingVerify ? 'جاري إرسال رابط التفعيل...' : 'إعادة إرسال رابط تفعيل البريد'}</span>
+                </button>
+              )}
             </div>
           )}
 

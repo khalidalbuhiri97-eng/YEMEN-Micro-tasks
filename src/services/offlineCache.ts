@@ -23,6 +23,7 @@ export interface OfflineProfileUiSummary {
   fullName: string;
   phone: string;
   email?: string;
+  emailVerified?: boolean;
   role: 'user' | 'admin' | 'advertiser';
   status: 'active' | 'suspended' | 'under_review' | 'pending';
   referralCode: string;

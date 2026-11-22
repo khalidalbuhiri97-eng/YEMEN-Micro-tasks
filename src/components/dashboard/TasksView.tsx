@@ -31,6 +31,7 @@ import { TaskVisualCard } from '../tasks/TaskVisualCard.tsx';
 import { SmartLinkModal } from '../tasks/SmartLinkModal.tsx';
 import { SurveyRunnerModal } from '../tasks/SurveyRunnerModal.tsx';
 import { TaskExecutionModal } from '../tasks/TaskExecutionModal.tsx';
+import { EmailVerificationBanner } from '../common/EmailVerificationBanner.tsx';
 
 type QuickFilterType = 'all' | 'featured' | 'popular' | 'quick';
 type SortOptionType = 'recommended' | 'newest' | 'reward_desc' | 'quickest';
@@ -70,35 +71,44 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
   const [activeSurveyId, setActiveSurveyId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Load categories & synced favorites
+  // Load categories & synced favorites with instant IndexedDB Stale-While-Revalidate
   useEffect(() => {
+    let cancelled = false;
+    getCacheItem<TaskCategoryItem[]>('task_categories_v1')
+      .then((cached) => {
+        if (!cancelled && cached?.value?.length) setCategories(cached.value);
+      })
+      .catch(() => {});
+
+    getCacheItem<string[]>('task_favorites')
+      .then((cached) => {
+        if (!cancelled && Array.isArray(cached?.value)) setFavoriteIds(cached.value);
+      })
+      .catch(() => {});
+
     api
       .getTaskCategories()
       .then((res) => {
-        if (Array.isArray(res.categories)) {
+        if (!cancelled && Array.isArray(res.categories)) {
           setCategories(res.categories);
           saveCacheItem('task_categories_v1', res.categories).catch(() => {});
         }
       })
-      .catch(async () => {
-        const cached = await getCacheItem<TaskCategoryItem[]>('task_categories_v1').catch(() => null);
-        if (cached?.value) setCategories(cached.value);
-      });
+      .catch(() => {});
 
     api
       .getFavoriteTaskIds()
       .then((res) => {
-        if (Array.isArray(res.favoriteIds)) {
+        if (!cancelled && Array.isArray(res.favoriteIds)) {
           setFavoriteIds(res.favoriteIds);
           saveCacheItem('task_favorites', res.favoriteIds).catch(() => {});
         }
       })
-      .catch(async () => {
-        const cached = await getCacheItem<string[]>('task_favorites').catch(() => null);
-        if (cached && Array.isArray(cached.value)) {
-          setFavoriteIds(cached.value);
-        }
-      });
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const toggleFavorite = useCallback(
@@ -154,10 +164,35 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
   );
 
   const loadTasks = useCallback(async () => {
-    setIsLoading(true);
     setLoadError(null);
     const cacheKey = `tasks_list_all_${geoFilter.countryId || 'all'}`;
 
+    // Stale-While-Revalidate Step 1: Hydrate cached tasks & surveys immediately for instant paint
+    let hydratedFromCache = false;
+    try {
+      const [specificCache, fallbackAll, cachedSurveys] = await Promise.all([
+        getCacheItem<TaskItem[]>(cacheKey),
+        getCacheItem<TaskItem[]>('tasks_list_all_all'),
+        getCacheItem<SurveyItem[]>('surveys_list_v1'),
+      ]);
+      const bestTasksCache = specificCache?.value?.length ? specificCache : fallbackAll;
+      if (bestTasksCache && Array.isArray(bestTasksCache.value) && bestTasksCache.value.length > 0) {
+        setTasks(filterClientFallback(bestTasksCache.value));
+        setCacheUpdatedAt(bestTasksCache.updatedAt);
+        hydratedFromCache = true;
+      }
+      if (cachedSurveys?.value?.length) {
+        setSurveys(cachedSurveys.value);
+        hydratedFromCache = true;
+      }
+    } catch {
+      // Ignore IndexedDB read errors and proceed to network
+    }
+
+    // Only show blocking skeleton if no cached data was available
+    setIsLoading(!hydratedFromCache);
+
+    // Stale-While-Revalidate Step 2: Revalidate silently in background from server
     try {
       const [res, surveysRes] = await Promise.all([
         api.getTasks({
@@ -189,20 +224,8 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
         }
       }
     } catch (err: any) {
-      const specificCache = await getCacheItem<TaskItem[]>(cacheKey);
-      const fallbackAll =
-        specificCache?.value?.length
-          ? specificCache
-          : await getCacheItem<TaskItem[]>('tasks_list_all_all');
-      const cachedSurveys = await getCacheItem<SurveyItem[]>('surveys_list_v1').catch(() => null);
-      if (cachedSurveys?.value) {
-        setSurveys(cachedSurveys.value);
-      }
-
-      if (fallbackAll && Array.isArray(fallbackAll.value)) {
-        setTasks(filterClientFallback(fallbackAll.value));
+      if (hydratedFromCache) {
         setIsStaleOfflineCache(true);
-        setCacheUpdatedAt(fallbackAll.updatedAt);
         setLoadError(null);
       } else {
         setLoadError(
@@ -423,6 +446,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
 
   return (
     <div className="space-y-5">
+      <EmailVerificationBanner contextLabel="قبل إرسال إثباتات المهام واستلام المكافآت" />
       {/* Header & Search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

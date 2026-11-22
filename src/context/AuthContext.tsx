@@ -61,6 +61,7 @@ function toNonFinancialProfileSummary(u: UserProfile): OfflineProfileUiSummary {
     fullName: u.fullName,
     phone: u.phone,
     email: u.email,
+    emailVerified: u.emailVerified,
     role: u.role,
     status: u.status,
     referralCode: u.referralCode,
@@ -322,14 +323,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'owner' | 'forgot' | 'reset'>('login');
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'PASSWORD_RECOVERY') {
         setAuthMode('reset');
         setIsAuthOpen(true);
+        return;
+      }
+
+      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session?.access_token) {
+        const hasAuthCallbackParams =
+          typeof window !== 'undefined' &&
+          (window.location.hash.includes('access_token=') ||
+            window.location.hash.includes('type=signup') ||
+            window.location.hash.includes('type=email') ||
+            window.location.search.includes('code=') ||
+            window.location.search.includes('type=signup'));
+
+        if (hasAuthCallbackParams || !getAuthToken()) {
+          setAuthTokens(session.access_token, session.refresh_token);
+          await loadCurrentUser();
+
+          if (hasAuthCallbackParams && typeof window !== 'undefined') {
+            // Strip one-time auth callback tokens from address bar cleanly
+            const cleanUrl = `${window.location.pathname}`;
+            window.history.replaceState({}, document.title, cleanUrl);
+            if (session.user?.email_confirmed_at) {
+              showToast('تم تأكيد بريدك الإلكتروني وتفعيل حسابك بنجاح!', 'success');
+            }
+          }
+        }
       }
     });
     return () => subscription.unsubscribe();
-  }, []);
+  }, [loadCurrentUser, showToast]);
 
   const openAuthModal = (mode: 'login' | 'register' | 'owner' = 'login') => {
     setAuthMode(mode);

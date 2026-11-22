@@ -173,7 +173,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retries =
             headers: { ...headers, Authorization: `Bearer ${outcome.token}` },
           });
           const retryData = await retryResponse.json().catch(() => ({}));
-          if (retryResponse.status === 401 || retryResponse.status === 403) {
+          if (retryResponse.status === 401) {
             dispatchSessionExpiredOnce();
             throw new SessionExpiredError();
           }
@@ -240,6 +240,11 @@ export const api = {
   register: (payload: any) => request<any>('/auth/register', { method: 'POST', body: JSON.stringify(payload) }),
   login: (payload: any) => request<any>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
   getMe: () => request<any>('/auth/me'),
+  resendVerificationEmail: (email?: string) =>
+    request<{ success: boolean; message?: string }>('/auth/resend-verification', {
+      method: 'POST',
+      body: JSON.stringify(email ? { email } : {}),
+    }),
 
   // Public Stats & System Status
   getStats: () => request<any>('/stats'),

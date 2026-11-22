@@ -16,7 +16,7 @@ import {
   LayoutDashboard,
 } from 'lucide-react';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
-import { PWAInstallButton } from '../pwa/PWAInstallButton.tsx';
+import { AndroidApkDownloadButton } from '../pwa/PWAInstallButton.tsx';
 import { NotificationBell } from '../notifications/NotificationBell.tsx';
 import { formatYer } from '../../../shared/money.ts';
 
@@ -145,10 +145,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
               )}
             </nav>
 
-            {/* Zone 3: PWA Install, Notifications, Theme Toggle & User Account */}
+            {/* Zone 3: Android APK Download, Notifications, Theme Toggle & User Account */}
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <div className="hidden sm:block">
-                <PWAInstallButton compact />
+                <AndroidApkDownloadButton variant="compact" />
               </div>
 
               <NotificationBell onNavigate={onNavigate} />
@@ -493,7 +493,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
               </button>
 
               <div className="pt-1 border-t border-slate-200/70 dark:border-slate-700 flex justify-center">
-                <PWAInstallButton />
+                <AndroidApkDownloadButton variant="full" />
               </div>
             </div>
           </div>

@@ -27,7 +27,7 @@ import {
 } from '../shared/money.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
-const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://www.yemen-microtasks.com').trim().replace(/\/$/, '');
+const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.com').trim().replace(/\/$/, '');
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
 export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -265,13 +265,46 @@ export async function logSupabaseError(params: {
 
 const app = express();
 
-// CORS & Preflight handling for iframe compatibility
+// Hardened CORS & Preflight handling (allowlist official domain, local dev, and preview origins)
+const STATIC_ALLOWED_ORIGINS = new Set<string>([
+  'https://yemen-microtasks.com',
+  'https://www.yemen-microtasks.com',
+  AUTH_REDIRECT_URL,
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+]);
+
+function isAllowedCorsOrigin(origin: string, reqHost?: string): boolean {
+  if (STATIC_ALLOWED_ORIGINS.has(origin)) return true;
+  try {
+    const parsed = new URL(origin);
+    if (reqHost && parsed.host.toLowerCase() === reqHost.toLowerCase()) return true;
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      parsed.protocol === 'https:' &&
+      (hostname === 'yemen-microtasks.com' ||
+        hostname.endsWith('.yemen-microtasks.com') ||
+        hostname.endsWith('.run.app') ||
+        hostname.endsWith('.vercel.app'))
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 app.use((req: Request, res: Response, next: NextFunction) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (typeof origin === 'string' && isAllowedCorsOrigin(origin, req.headers.host)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return res.sendStatus(204);
   }
   next();
 });
@@ -329,13 +362,57 @@ export const authMiddleware = async (req: AuthenticatedRequest, res: Response, n
       return res.status(403).json({ error: 'الحساب مجمد من قبل الإدارة لمخالفة شروط الاستخدام.' });
     }
 
-    req.user = profile;
+    const emailConfirmedAt = authData.user.email_confirmed_at || null;
+    const isOwner = supabaseDb.isAuthorizedOwner(authData.user.id, authData.user.email);
+    const emailVerified = Boolean(emailConfirmedAt) || isOwner;
+
+    // Non-blocking best-effort sync of verified status into profiles table (if migration applied)
+    if (emailConfirmedAt) {
+      (async () => {
+        try {
+          const syncClient = getPrivilegedDbClient({ authToken: token } as AuthenticatedRequest);
+          await syncClient
+            .from('profiles')
+            .update({
+              email_verified: true,
+              email_verified_at: emailConfirmedAt,
+            })
+            .eq('id', authData.user.id)
+            .is('email_verified_at', null);
+        } catch {
+          // Silently ignore if profiles.email_verified columns are not yet migrated
+        }
+      })();
+    }
+
+    req.user = {
+      ...profile,
+      emailVerified,
+      emailConfirmedAt,
+    };
     req.authToken = token;
     next();
   } catch (err: any) {
     return res.status(401).json({ error: 'فشل في التحقق من جلسة المصادقة مع قاعدة البيانات.' });
   }
 };
+
+// Authoritative Server-Side Email Verification Enforcement (Real Supabase Auth email_confirmed_at)
+const requireVerifiedEmail = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'غير مصرح: يرجى تسجيل الدخول.' });
+  }
+  if (req.user.role === 'admin' || req.user.emailVerified === true) {
+    return next();
+  }
+  return res.status(403).json({
+    error: 'يجب تأكيد بريدك الإلكتروني أولاً عبر رابط التفعيل المرسل من المنصة قبل تنفيذ هذه العملية.',
+    code: 'EMAIL_NOT_VERIFIED',
+  });
+};
+
+// In-memory resend cooldown map (60 seconds per email) to prevent abuse
+const verificationResendCooldowns = new Map<string, number>();
 
 // Strict Single Administrator Middleware
 export const adminMiddleware = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
@@ -632,6 +709,8 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       locationPath: geoValidated?.locationPath || null,
       companyName: companyName?.trim() || undefined,
       contactPerson: fullName.trim(),
+      emailVerified: Boolean(supaAuth.user.email_confirmed_at),
+      emailConfirmedAt: supaAuth.user.email_confirmed_at || null,
       createdAt: profileData.created_at,
       updatedAt: profileData.updated_at,
     };
@@ -686,13 +765,20 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     });
 
     if (authErr || !authRes?.session || !authRes?.user) {
+      const rawErrMsg = String(authErr?.message || '').toLowerCase();
+      if (rawErrMsg.includes('email not confirmed') || rawErrMsg.includes('not confirmed')) {
+        return res.status(403).json({
+          error: 'يجب تأكيد بريدك الإلكتروني أولاً عبر رابط التفعيل المرسل إليك قبل تسجيل الدخول.',
+          code: 'EMAIL_NOT_VERIFIED',
+        });
+      }
       return res.status(401).json({ error: 'بيانات الدخول غير صحيحة.' });
     }
 
     totalSuccessfulOps++;
     lastSuccessfulConnectionTime = new Date().toISOString();
 
-    const profile = (await supabaseDb.findUserById(authRes.user.id)) || {
+    const baseProfile = (await supabaseDb.findUserById(authRes.user.id)) || {
       id: authRes.user.id,
       fullName: authRes.user.user_metadata?.full_name || 'مستخدم',
       phone: authRes.user.user_metadata?.phone || '',
@@ -710,9 +796,17 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
       updatedAt: authRes.user.created_at,
     };
 
-    if (profile.status === 'suspended') {
+    if (baseProfile.status === 'suspended') {
       return res.status(403).json({ error: 'تم تجميد هذا الحساب لمخالفة شروط الاستخدام.' });
     }
+
+    const emailConfirmedAt = authRes.user.email_confirmed_at || null;
+    const isOwner = supabaseDb.isAuthorizedOwner(authRes.user.id, authRes.user.email);
+    const profile = {
+      ...baseProfile,
+      emailVerified: Boolean(emailConfirmedAt) || isOwner,
+      emailConfirmedAt,
+    };
 
     const wallet = await supabaseDb.getWallet(authRes.user.id);
     return res.json({
@@ -725,6 +819,67 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[AUTH_LOGIN_ERROR]', err?.message || err);
     return res.status(401).json({ error: 'بيانات الدخول غير صحيحة أو تعذر التحقق.' });
+  }
+});
+
+// Real Supabase Auth Email Verification Resend Endpoint (60s rate limit per email)
+app.post('/api/auth/resend-verification', async (req: Request, res: Response) => {
+  try {
+    let targetEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+
+    // If caller is authenticated, prefer the verified auth token email
+    const authHeader = req.headers.authorization;
+    if (authHeader) {
+      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      if (token) {
+        const { data: authData } = await supabaseServer.auth.getUser(token);
+        if (authData?.user?.email) {
+          if (authData.user.email_confirmed_at) {
+            return res.json({
+              success: true,
+              alreadyVerified: true,
+              message: 'بريدك الإلكتروني مؤكد بالفعل.',
+            });
+          }
+          targetEmail = authData.user.email.trim().toLowerCase();
+        }
+      }
+    }
+
+    if (!targetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
+      return res.status(400).json({ error: 'يرجى إدخال بريد إلكتروني صحيح لإعادة إرسال رابط التفعيل.' });
+    }
+
+    const nowMs = Date.now();
+    const lastSentMs = verificationResendCooldowns.get(targetEmail) || 0;
+    const waitSec = Math.ceil((60_000 - (nowMs - lastSentMs)) / 1000);
+    if (waitSec > 0) {
+      return res.status(429).json({
+        error: `يرجى الانتظار ${waitSec} ثانية قبل إعادة إرسال رابط التفعيل مجدداً.`,
+      });
+    }
+
+    const { error: resendErr } = await supabaseServer.auth.resend({
+      type: 'signup',
+      email: targetEmail,
+      options: {
+        emailRedirectTo: `${AUTH_REDIRECT_URL}/`,
+      },
+    });
+
+    if (resendErr) {
+      return res.status(400).json({
+        error: resendErr.message || 'تعذر إرسال رسالة التفعيل في الوقت الحالي. حاول لاحقاً.',
+      });
+    }
+
+    verificationResendCooldowns.set(targetEmail, nowMs);
+    return res.json({
+      success: true,
+      message: 'تم إرسال رابط التفعيل الرسمي إلى بريدك الإلكتروني. تحقق من الوارد والرسائل غير المرغوب فيها.',
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'تعذر إعادة إرسال رابط التفعيل.' });
   }
 });
 
@@ -1192,8 +1347,8 @@ app.post('/api/public/advertiser-logo-url', async (req: Request, res: Response) 
   }
 });
 
-// Task Submission (creates pending submission only; zero payout until admin approval)
-app.post('/api/tasks/submit', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// Task Submission (creates pending submission only; zero payout until admin approval; requires verified email)
+app.post('/api/tasks/submit', authMiddleware, requireVerifiedEmail, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const {
       taskId,
@@ -1302,7 +1457,7 @@ app.get('/api/wallet/transfers', authMiddleware, async (req: AuthenticatedReques
   }
 });
 
-app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/api/wallet/transfer', authMiddleware, requireVerifiedEmail, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { recipientAddress, amount, note, idempotencyKey } = req.body || {};
 
@@ -1384,8 +1539,8 @@ app.post('/api/wallet/transfer', authMiddleware, async (req: AuthenticatedReques
   }
 });
 
-// Withdrawals (Double-Entry Ledger Reservation)
-app.post('/api/withdrawals/request', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+// Withdrawals (Double-Entry Ledger Reservation — requires verified email)
+app.post('/api/withdrawals/request', authMiddleware, requireVerifiedEmail, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { method, amount, beneficiaryName, phoneNumber, accountNumber, idempotencyKey } = req.body || {};
 
@@ -1572,7 +1727,7 @@ app.get('/api/referrals/my', authMiddleware, async (req: AuthenticatedRequest, r
     res.json({
       ...stats,
       code,
-      shareUrl: code ? `https://www.yemen-microtasks.com/?ref=${encodeURIComponent(code)}` : 'https://www.yemen-microtasks.com/',
+      shareUrl: code ? `https://yemen-microtasks.com/?ref=${encodeURIComponent(code)}` : 'https://yemen-microtasks.com/',
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'فشل جلب بيانات الإحالة.' });
