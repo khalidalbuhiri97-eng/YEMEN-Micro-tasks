@@ -173,7 +173,7 @@ export const YtCoinAdminView: React.FC = () => {
         'remaining_yt',
         'balance_yt',
       ],
-      ['balance_units', 'balanceUnits', 'rewards_treasury_balance_units', 'pool_remaining_units']
+      ['balance_units', 'balanceUnits', 'rewards_treasury_balance_units', 'pool_remaining_units', 'treasuryUnits']
     );
     const miningCapYt = pickYtUnits(sources, [
       'mining_cap_yt',
@@ -181,7 +181,7 @@ export const YtCoinAdminView: React.FC = () => {
       'total_mining_cap_yt',
       'allocated_yt',
       'max_mining_supply_yt',
-    ], ['daily_global_cap_units', 'daily_cap_units', 'allocated_units', 'max_daily_reward_units']);
+    ], ['daily_global_cap_units', 'daily_cap_units', 'allocated_units', 'max_daily_reward_units', 'dailyCapUnits']);
     const totalMinedYt = pickYtUnits(sources, [
       'total_mined_yt',
       'total_distributed_yt',
@@ -215,7 +215,7 @@ export const YtCoinAdminView: React.FC = () => {
       'total_claims_count',
       'claims_count',
     ]);
-    const todayMinedYt = pickYtUnits(sources, ['today_mined_yt', 'mined_today_yt'], ['today_mined_units', 'mined_today_units']);
+    const todayMinedYt = pickYtUnits(sources, ['today_mined_yt', 'mined_today_yt'], ['today_mined_units', 'mined_today_units', 'minedTodayUnits']);
     const updatedAt = pickString(sources, ['updated_at', 'generated_at', 'as_of']);
 
     const treasuries = pickArray([root], [
