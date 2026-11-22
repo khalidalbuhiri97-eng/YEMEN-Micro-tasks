@@ -154,10 +154,10 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   const miningEnabledFlag = pickBoolean(sources, ['miningEnabled', 'mining_enabled', 'enabled']);
   const canClaimExplicit = pickBoolean(sources, ['canClaim', 'can_claim']);
 
-  const dailyCapUnits = pickNumber(sources, ['dailyCapUnits', 'daily_cap_units']) || 1000000;
+  const dailyCapUnits = pickNumber(sources, ['dailyCapUnits', 'daily_cap_units']) || 1;
   const dailyCapRemainingUnits = pickNumber(sources, ['dailyCapRemainingUnits', 'daily_cap_remaining_units']) || dailyCapUnits;
   const minedTodayUnits = pickNumber(sources, ['minedTodayUnits', 'mined_today_units', 'paid_units']) || 0;
-  const maxSupplyUnits = pickNumber(sources, ['maxSupplyUnits', 'max_supply_units']) || 1000000000;
+  const maxSupplyUnits = pickNumber(sources, ['maxSupplyUnits', 'max_supply_units']) || 2000000000;
   const totalMinedUnits = pickNumber(sources, ['totalMinedUnits', 'total_mined_units']) || 0;
   const streakDays = pickNumber(sources, ['streakDay', 'streak_days', 'streak']) || 0;
   const statusMessage = pickString(sources, ['statusMessage', 'status_message', 'message']);
@@ -205,9 +205,11 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   };
 }
 
-function formatInt(value: number | null | undefined): string {
+function formatYtUnits(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '0';
-  return new Intl.NumberFormat('en-US').format(Math.floor(value));
+  const yt = value / 2;
+  if (yt !== 0 && Math.abs(yt) < 0.01) return yt < 0 ? '-<0.01' : '<0.01';
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(yt);
 }
 
 function formatDateTime(iso: string | null): string {
@@ -280,7 +282,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
       if (rejected) {
         showToast(resultMessage || 'تم استلام مكافأة اليوم مسبقاً أو بلغ السقف.', 'info');
       } else {
-        showToast(resultMessage || `تم استلام +${formatInt(claimedAmount || 1)} YT Coin بنجاح! ⛏️`, 'success');
+        showToast(resultMessage || `تم استلام +${formatYtUnits(claimedAmount || 1)} YT بنجاح! ⛏️`, 'success');
       }
       await loadSummary(true);
     } catch (err: any) {
@@ -334,11 +336,11 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
               <div className="min-w-0 space-y-0.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm sm:text-base font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-yellow-500">
-                    منجم YT Coin (1 مليار عملة)
+                    منجم YT Coin
                   </span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 border border-amber-400/40 px-2.5 py-0.5 text-[10px] font-extrabold text-amber-300">
                     <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
-                    تعدين أعداد صحيحة
+                    وحدات نصف عملة
                   </span>
                 </div>
                 <p className="text-[11px] sm:text-xs text-slate-300 truncate">
@@ -381,11 +383,11 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                   </h1>
                   <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-3 py-1 text-xs font-extrabold text-amber-300">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                    سقف معروض 1 مليار (أعداد صحيحة)
+                    وحدة العملة: 0.5 YT
                   </span>
                 </div>
                 <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
-                  منصة تعدين مستقلة ذات سقف تصاعدي يومي تبدأ بـ 1 عملة وتزيد تدريجياً بدون كسور عشرية.
+                  منصة تعدين مستقلة ذات سقف تصاعدي يومي تبدأ بـ 0.5 YT وتزيد 0.5 YT يومياً.
                 </p>
               </div>
             </div>
@@ -414,7 +416,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                     سجّل الدخول للوصول إلى منجم YT Coin وبدء التعدين
                   </h3>
                   <p className="text-xs sm:text-sm text-slate-300">
-                    انضم إلى المنجم الرقمي واجمع مكافآتك اليومية وفق سقف المعروض الحقيقي (1 مليار عملة).
+                    انضم إلى المنجم الرقمي واجمع مكافآتك اليومية وفق نظام الوحدات المعتمد.
                   </p>
                 </div>
               </div>
@@ -468,7 +470,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         </span>
                         <div className="flex items-baseline justify-center gap-1.5">
                           <strong className="text-3xl sm:text-4xl font-black font-mono tabular-nums text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-yellow-300">
-                            +{formatInt(summary.todayRewardUnits)}
+                            +{formatYtUnits(summary.todayRewardUnits)}
                           </strong>
                           <span className="text-sm font-black text-amber-400">YT Coin</span>
                         </div>
@@ -479,7 +481,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <div className="flex justify-between text-xs font-bold text-slate-300">
                           <span>استهلاك السقف اليومي:</span>
                           <span className="font-mono text-amber-300">
-                            {formatInt(summary.minedTodayUnits)} / {formatInt(summary.dailyCapUnits)} YT
+                            {formatYtUnits(summary.minedTodayUnits)} / {formatYtUnits(summary.dailyCapUnits)} YT
                           </span>
                         </div>
                         <div className="w-full h-3 rounded-full bg-slate-900 overflow-hidden p-0.5 border border-amber-500/30">
@@ -489,7 +491,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                           />
                         </div>
                         <p className="text-[11px] text-slate-400">
-                          المتبقي من سقف اليوم: <strong className="text-amber-300 font-mono">{formatInt(summary.dailyCapRemainingUnits)} YT</strong>
+                          المتبقي من سقف اليوم: <strong className="text-amber-300 font-mono">{formatYtUnits(summary.dailyCapRemainingUnits)} YT</strong>
                         </p>
                       </div>
 
@@ -555,12 +557,12 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                           <span className="text-xs font-semibold text-slate-400">إجمالي الرصيد المتاح</span>
                           <div className="mt-1 flex items-baseline gap-1.5 font-mono">
                             <strong className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-yellow-300">
-                              {formatInt(summary.balanceUnits)}
+                              {formatYtUnits(summary.balanceUnits)}
                             </strong>
                             <span className="text-xs font-extrabold text-amber-400">YT Coin</span>
                           </div>
                           <span className="block text-[10px] text-slate-500 mt-0.5">
-                            إجمالي المُعدَّن مدى الحياة: {formatInt(summary.lifetimeEarnedUnits)} YT
+                            إجمالي المُعدَّن مدى الحياة: {formatYtUnits(summary.lifetimeEarnedUnits)} YT
                           </span>
                         </div>
                         <YtCoinLogo size="lg" />
@@ -593,7 +595,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <div className="space-y-1">
                           <span className="text-xs font-bold text-slate-400">السقف اليومي + الزيادة</span>
                           <div className="font-mono text-lg font-black text-amber-200">
-                            {formatInt(summary.dailyCapUnits)} <span className="text-xs text-amber-400">YT/يوم</span>
+                            {formatYtUnits(summary.dailyCapUnits)} <span className="text-xs text-amber-400">YT/يوم</span>
                           </div>
                           <p className="text-[10px] text-emerald-400 font-semibold">
                             📈 تزيد +1 عملة صحيحة كل يوم تلقائياً
@@ -609,7 +611,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                         <div className="space-y-1">
                           <span className="text-xs font-bold text-slate-400">سلسلة التعدين المتتالية</span>
                           <div className="font-mono text-lg font-black text-amber-200">
-                            {formatInt(summary.streakDays)} <span className="text-xs text-amber-400">يوم</span>
+                            {formatYtUnits(summary.streakDays)} <span className="text-xs text-amber-400">يوم</span>
                           </div>
                           <p className="text-[10px] text-slate-400">
                             🔥 مكافأة التزام يومية متصاعدة
@@ -628,7 +630,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                             <span>المعروض المستخرج من إجمالي 1 مليار عملة</span>
                           </span>
                           <span className="font-mono text-amber-300">
-                            {formatInt(summary.totalMinedUnits)} / {formatInt(summary.maxSupplyUnits)} YT
+                            {formatYtUnits(summary.totalMinedUnits)} / {formatYtUnits(summary.maxSupplyUnits)} YT
                           </span>
                         </div>
                         <div className="w-full h-2.5 rounded-full bg-slate-900 overflow-hidden p-0.5 border border-amber-500/20">
@@ -713,7 +715,7 @@ export const YtCoinMiningCard: React.FC<{ compact?: boolean; onOpen?: () => void
                                 </div>
                                 <div className="text-left shrink-0 font-mono">
                                   <span className="inline-flex items-center gap-1 text-sm font-black text-amber-300">
-                                    +{formatInt(item.rewardUnits)}
+                                    +{formatYtUnits(item.rewardUnits)}
                                     <span className="text-[10px] text-amber-500">YT</span>
                                   </span>
                                 </div>
