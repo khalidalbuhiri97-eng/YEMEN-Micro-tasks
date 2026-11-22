@@ -36,9 +36,19 @@ import {
   Hourglass,
   ExternalLink,
   Layers,
+  Send,
+  PlayCircle,
+  UserCheck,
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
+import {
+  formatYt,
+  ytToUnitsStrict,
+  YT_MAX_SUPPLY_YT,
+  YT_SUBUNITS_PER_YT,
+  YT_TOKENOMICS_ALLOCATIONS,
+} from '../../../shared/ytCoin.ts';
 
 const YT_COIN_LOGO_SRC = '/assets/yt-coin-logo.jpg';
 
@@ -81,18 +91,39 @@ interface NormalizedHistoryItem {
   txHash: string;
 }
 
+interface NormalizedSwapItem {
+  id: string;
+  direction: 'YT_TO_YER' | 'YER_TO_YT';
+  amountYt: number;
+  amountYer: number;
+  exchangeRate: number;
+  yerWalletAddress: string | null;
+  status: string;
+  createdAt: string | null;
+}
+
 interface NormalizedYtCoinSummary {
+  unitScale: number;
+  walletAddress: string | null;
   balanceYt: number | null;
   totalMinedYt: number | null;
+  adEarnedYt: number;
   todayRewardYt: number | null;
   baseRewardYt: number;
-  dailyIncrementYt: number;
-  maxDailyRewardYt: number;
+  tapRewardYt: number;
+  adClickRewardYt: number;
+  adViewRewardYt: number;
+  tapsToday: number;
+  dailyTapLimit: number;
+  dailyTapsRemaining: number | null;
+  adsToday: number;
+  dailyAdLimit: number;
+  dailyAdsRemaining: number | null;
+  circulatingSupplyYt: number;
   canClaim: boolean;
   claimedToday: boolean;
   capReached: boolean;
   miningEnabled: boolean;
-  streakDays: number | null;
   totalClaims: number | null;
   lastClaimAt: string | null;
   nextClaimAt: string | null;
@@ -179,19 +210,34 @@ function pickArray(sources: Array<Record<string, any> | null>, keys: string[]): 
 }
 
 function translateEventLabel(raw: string | null): string {
-  if (!raw) return 'مكافأة تعدين يومي';
+  if (!raw) return 'مكافأة دخول يومي';
   const normalized = raw.toLowerCase();
-  if (normalized.includes('daily') || normalized.includes('mine') || normalized.includes('mining')) {
-    return 'إيداع كتلة تعدين YT';
+  if (normalized.includes('tap')) {
+    return 'تعدين بالنقر (+0.01 YT)';
   }
-  if (normalized.includes('streak') || normalized.includes('bonus')) {
-    return 'مكافأة سلسلة التعدين';
+  if (normalized.includes('ad_click')) {
+    return 'نقرة إعلانية موثقة (+0.01 YT)';
+  }
+  if (normalized.includes('ad_view') || normalized.includes('ad_watch')) {
+    return 'مشاهدة إعلان موثقة (+0.01 YT)';
+  }
+  if (normalized.includes('transfer_sent')) {
+    return 'تحويل YT صادر';
+  }
+  if (normalized.includes('transfer_received')) {
+    return 'استلام تحويل YT';
+  }
+  if (normalized.includes('daily') || normalized.includes('mine') || normalized.includes('mining')) {
+    return 'مكافأة دخول يومي (0.5 YT)';
+  }
+  if (normalized.includes('bonus')) {
+    return 'مكافأة إضافية';
   }
   if (normalized.includes('referral')) {
-    return 'تحويل مكافأة إحالة';
+    return 'مكافأة إحالة';
   }
   if (normalized.includes('transfer')) {
-    return 'تحويل خارجي عبر الشبكة';
+    return 'تحويل عبر الشبكة';
   }
   return raw;
 }
@@ -214,28 +260,32 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     asRecord(root.config),
   ];
 
+  const explicitScale = pickNumber(sources, ['unitScale', 'unit_scale']);
+  const unitScale = explicitScale && explicitScale > 0 ? explicitScale : YT_SUBUNITS_PER_YT;
+
   let balanceYt = pickNumber(sources, [
+    'balanceYt',
     'balance_yt',
     'yt_balance',
     'wallet_balance_yt',
     'available_yt',
     'available_balance_yt',
     'balance',
-    'balanceYt',
   ]);
   if (balanceYt === null) {
     const atomicBalance = pickNumber(sources, ['balanceUnits', 'balance_units', 'balance_atomic', 'atomic_balance']);
-    if (atomicBalance !== null) balanceYt = atomicBalance / 2;
+    if (atomicBalance !== null) balanceYt = atomicBalance / unitScale;
   }
 
   let totalMinedYt = pickNumber(sources, [
+    'lifetimeEarnedYt',
+    'lifetime_earned_yt',
+    'totalMinedYt',
     'total_mined_yt',
     'lifetime_mined_yt',
     'total_earned_yt',
-    'lifetime_earned_yt',
     'total_claimed_yt',
     'mined_yt',
-    'totalMinedYt',
   ]);
   if (totalMinedYt === null) {
     const atomicMined = pickNumber(sources, [
@@ -245,41 +295,69 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
       'total_mined_atomic',
       'lifetime_mined_atomic',
     ]);
-    if (atomicMined !== null) totalMinedYt = atomicMined / 2;
+    if (atomicMined !== null) totalMinedYt = atomicMined / unitScale;
   }
 
+  let baseRewardYt = pickNumber(sources, ['baseRewardYt', 'base_reward_yt']);
+  if (baseRewardYt === null) {
+    const baseRewardUnitsRaw = pickNumber(sources, ['baseRewardUnits', 'base_reward_units']);
+    baseRewardYt = baseRewardUnitsRaw !== null ? baseRewardUnitsRaw / unitScale : 0.5;
+  }
+
+  let tapRewardYt = pickNumber(sources, ['tapRewardYt', 'tap_reward_yt']);
+  if (tapRewardYt === null) {
+    const tapRewardUnitsRaw = pickNumber(sources, ['tapRewardUnits', 'tap_reward_units']);
+    tapRewardYt = tapRewardUnitsRaw !== null ? tapRewardUnitsRaw / unitScale : 0.01;
+  }
+
+  let adClickRewardYt = pickNumber(sources, ['adClickRewardYt', 'ad_click_reward_yt']);
+  if (adClickRewardYt === null) {
+    const clickUnits = pickNumber(sources, ['adClickRewardUnits', 'ad_click_reward_units']);
+    adClickRewardYt = clickUnits !== null ? clickUnits / unitScale : 0.01;
+  }
+  let adViewRewardYt = pickNumber(sources, ['adViewRewardYt', 'ad_view_reward_yt']);
+  if (adViewRewardYt === null) {
+    const viewUnits = pickNumber(sources, ['adViewRewardUnits', 'ad_view_reward_units']);
+    adViewRewardYt = viewUnits !== null ? viewUnits / unitScale : 0.01;
+  }
+  let adEarnedYt = pickNumber(sources, ['adEarnedYt', 'ad_earned_yt']);
+  if (adEarnedYt === null) {
+    const adEarnedUnits = pickNumber(sources, ['adEarnedUnits', 'ad_earned_units']);
+    adEarnedYt = adEarnedUnits !== null ? adEarnedUnits / unitScale : 0;
+  }
+
+  const tapsToday = Math.max(0, pickNumber(sources, ['tapsToday', 'taps_today']) ?? 0);
+  const dailyTapLimit = Math.max(0, pickNumber(sources, ['dailyTapLimit', 'daily_tap_limit']) ?? 1000);
+  const dailyTapsRemaining = pickNumber(sources, ['dailyTapsRemaining', 'daily_taps_remaining']);
+
+  const adsToday = Math.max(0, pickNumber(sources, ['adsToday', 'ads_today']) ?? 0);
+  const dailyAdLimit = Math.max(0, pickNumber(sources, ['dailyAdLimit', 'daily_ad_limit']) ?? 20);
+  const dailyAdsRemaining = pickNumber(sources, ['dailyAdsRemaining', 'daily_ads_remaining']);
+
+  let circulatingSupplyYt = pickNumber(sources, ['circulatingSupplyYt', 'circulating_supply_yt']);
+  if (circulatingSupplyYt === null) {
+    const circUnits = pickNumber(sources, ['circulatingSupplyUnits', 'circulating_supply_units']);
+    circulatingSupplyYt = circUnits !== null ? circUnits / unitScale : 0;
+  }
+  const walletAddress = pickString(sources, ['walletAddress', 'wallet_address']);
+
   let todayRewardYt = pickNumber(sources, [
-    'today_reward_yt',
-    'daily_reward_yt',
+    'nextRewardYt',
     'next_reward_yt',
+    'todayRewardYt',
+    'today_reward_yt',
+    'dailyRewardYt',
+    'daily_reward_yt',
     'claim_reward_yt',
     'current_reward_yt',
     'reward_yt',
     'base_reward_yt',
     'today_reward',
     'daily_reward',
-    'todayRewardYt',
-    'dailyRewardYt',
   ]);
   if (todayRewardYt === null) {
-    const atomicReward = pickNumber(sources, [
-      'nextRewardUnits',
-      'next_reward_units',
-      'rewardUnits',
-      'reward_units',
-      'today_reward_atomic',
-      'daily_reward_atomic',
-      'reward_atomic',
-    ]);
-    if (atomicReward !== null) todayRewardYt = atomicReward / 2;
+    todayRewardYt = baseRewardYt;
   }
-
-  const baseRewardUnitsRaw = pickNumber(sources, ['baseRewardUnits', 'base_reward_units']);
-  const dailyIncrementUnitsRaw = pickNumber(sources, ['dailyIncrementUnits', 'daily_increment_units']);
-  const maxDailyRewardUnitsRaw = pickNumber(sources, ['maxDailyRewardUnits', 'max_daily_reward_units']);
-  const baseRewardYt = baseRewardUnitsRaw !== null ? baseRewardUnitsRaw / 2 : 0.5;
-  const dailyIncrementYt = dailyIncrementUnitsRaw !== null ? dailyIncrementUnitsRaw / 2 : 0.5;
-  const maxDailyRewardYt = maxDailyRewardUnitsRaw !== null ? maxDailyRewardUnitsRaw / 2 : 20;
 
   const lastClaimDate = pickString(sources, ['lastClaimDate', 'last_claim_date', 'claim_date']);
   const adenToday = new Intl.DateTimeFormat('en-CA', {
@@ -313,6 +391,7 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   ]);
 
   let poolRemainingYt = pickNumber(sources, [
+    'poolRemainingYt',
     'pool_remaining_yt',
     'rewards_treasury_balance_yt',
     'rewards_pool_remaining_yt',
@@ -320,14 +399,15 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'mining_cap_remaining_yt',
     'remaining_pool_yt',
     'remaining_yt',
-    'poolRemainingYt',
   ]);
   if (poolRemainingYt === null) {
     const atomicPoolRem = pickNumber(sources, ['poolRemainingUnits', 'pool_remaining_units']);
-    if (atomicPoolRem !== null) poolRemainingYt = atomicPoolRem / 2;
+    if (atomicPoolRem !== null) poolRemainingYt = atomicPoolRem / unitScale;
   }
 
   let poolCapYt = pickNumber(sources, [
+    'maxSupplyYt',
+    'max_supply_yt',
     'mining_cap_yt',
     'pool_cap_yt',
     'pool_total_yt',
@@ -339,17 +419,19 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
   ]);
   if (poolCapYt === null) {
     const atomicPoolCap = pickNumber(sources, ['maxSupplyUnits', 'max_supply_units', 'poolCapUnits']);
-    if (atomicPoolCap !== null) poolCapYt = atomicPoolCap / 2;
+    if (atomicPoolCap !== null) poolCapYt = atomicPoolCap / unitScale;
   }
 
   let poolDistributedYt = pickNumber(sources, [
+    'totalMinedYt',
+    'total_mined_yt',
+    'poolDistributedYt',
     'pool_distributed_yt',
     'total_distributed_yt',
     'global_mined_yt',
     'total_mined_global_yt',
     'distributed_yt',
     'mined_so_far_yt',
-    'poolDistributedYt',
   ]);
   if (poolDistributedYt === null) {
     const atomicTotalMined = pickNumber(sources, [
@@ -358,32 +440,32 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
       'total_distributed_units',
       'poolDistributedUnits',
     ]);
-    if (atomicTotalMined !== null) poolDistributedYt = atomicTotalMined / 2;
+    if (atomicTotalMined !== null) poolDistributedYt = atomicTotalMined / unitScale;
   }
   if (poolDistributedYt === null && poolCapYt !== null && poolRemainingYt !== null) {
     poolDistributedYt = Math.max(0, poolCapYt - poolRemainingYt);
   }
 
-  let dailyCapYt = pickNumber(sources, ['daily_cap_yt', 'dailyCapYt']);
+  let dailyCapYt = pickNumber(sources, ['dailyCapYt', 'daily_cap_yt']);
   if (dailyCapYt === null) {
     const atomicDailyCap = pickNumber(sources, ['dailyCapUnits', 'daily_cap_units']);
-    if (atomicDailyCap !== null) dailyCapYt = atomicDailyCap / 2;
+    if (atomicDailyCap !== null) dailyCapYt = atomicDailyCap / unitScale;
   }
 
-  let dailyMinedYt = pickNumber(sources, ['daily_mined_yt', 'mined_today_yt', 'dailyMinedYt']);
+  let dailyMinedYt = pickNumber(sources, ['minedTodayYt', 'mined_today_yt', 'dailyMinedYt', 'daily_mined_yt']);
   if (dailyMinedYt === null) {
     const atomicDailyMined = pickNumber(sources, ['minedTodayUnits', 'mined_today_units', 'dailyMinedUnits']);
-    if (atomicDailyMined !== null) dailyMinedYt = atomicDailyMined / 2;
+    if (atomicDailyMined !== null) dailyMinedYt = atomicDailyMined / unitScale;
   }
 
-  let dailyRemainingYt = pickNumber(sources, ['daily_remaining_yt', 'dailyRemainingYt']);
+  let dailyRemainingYt = pickNumber(sources, ['dailyCapRemainingYt', 'daily_cap_remaining_yt', 'dailyRemainingYt', 'daily_remaining_yt']);
   const dailyRemainingUnits = pickNumber(sources, [
     'dailyCapRemainingUnits',
     'daily_cap_remaining_units',
     'daily_remaining_units',
   ]);
   if (dailyRemainingYt === null && dailyRemainingUnits !== null) {
-    dailyRemainingYt = dailyRemainingUnits / 2;
+    dailyRemainingYt = dailyRemainingUnits / unitScale;
   }
 
   const userCapYt = pickNumber(sources, [
@@ -403,6 +485,7 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     capReachedFlag === true ||
     (poolRemainingYt !== null && poolRemainingYt <= 0) ||
     (userRemainingCapYt !== null && userRemainingCapYt <= 0) ||
+    (dailyRemainingYt !== null && dailyRemainingYt <= 0) ||
     (dailyRemainingUnits !== null && dailyRemainingUnits <= 0);
 
   const miningEnabled = miningEnabledFlag !== false;
@@ -415,17 +498,8 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
         !capReached &&
         miningEnabled &&
         eligibleFlag !== false &&
-        !(dailyRemainingUnits !== null && dailyRemainingUnits <= 0);
+        !(dailyRemainingYt !== null && dailyRemainingYt <= 0);
 
-  const streakDays = pickNumber(sources, [
-    'streakDay',
-    'streak_day',
-    'streak_days',
-    'current_streak',
-    'streak',
-    'consecutive_days',
-    'streakDays',
-  ]);
   const totalClaims = pickNumber(sources, ['total_claims', 'claims_count', 'claim_count', 'days_claimed', 'totalClaims']);
 
   const lastClaimAt = pickString(sources, ['last_claim_at', 'last_claimed_at', 'lastClaimAt']);
@@ -469,10 +543,10 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     .map((entry, idx) => {
       const rec = asRecord(entry);
       if (!rec) return null;
-      let amountYt = pickNumber([rec], ['amount_yt', 'reward_yt', 'claimed_yt', 'delta_yt', 'amount', 'reward']);
+      let amountYt = pickNumber([rec], ['amountYt', 'amount_yt', 'rewardYt', 'reward_yt', 'claimed_yt', 'delta_yt', 'amount', 'reward']);
       if (amountYt === null) {
         const atomic = pickNumber([rec], ['amountUnits', 'amount_units', 'atomic_units', 'amount_atomic', 'reward_atomic']);
-        if (atomic !== null) amountYt = atomic / 2;
+        if (atomic !== null) amountYt = atomic / unitScale;
       }
       const rawLabel = pickString([rec], [
         'label',
@@ -505,17 +579,27 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     .filter((item): item is NormalizedHistoryItem => item !== null);
 
   return {
+    unitScale,
+    walletAddress,
     balanceYt,
     totalMinedYt,
+    adEarnedYt,
     todayRewardYt,
     baseRewardYt,
-    dailyIncrementYt,
-    maxDailyRewardYt,
+    tapRewardYt,
+    adClickRewardYt,
+    adViewRewardYt,
+    tapsToday,
+    dailyTapLimit,
+    dailyTapsRemaining,
+    adsToday,
+    dailyAdLimit,
+    dailyAdsRemaining,
+    circulatingSupplyYt,
     canClaim,
     claimedToday,
     capReached,
     miningEnabled,
-    streakDays,
     totalClaims,
     lastClaimAt,
     nextClaimAt,
@@ -536,15 +620,6 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
 function formatInt(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '0';
   return Math.floor(value).toLocaleString('en-US');
-}
-
-function formatYt(value: number | null, maxDecimals = 1): string {
-  if (value === null || !Number.isFinite(value)) return '0';
-  if (value !== 0 && Math.abs(value) < 0.1) return value < 0 ? '-<0.1' : '<0.1';
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: Math.min(1, Math.max(0, maxDecimals)),
-  }).format(value);
 }
 
 function formatDateTime(iso: string | null): string {
@@ -580,7 +655,8 @@ export const YtCoinMiningCard: React.FC<{
   compact?: boolean;
   onOpen?: () => void;
   onExit?: () => void;
-}> = ({ compact = false, onOpen, onExit }) => {
+  onOpenEarnAds?: () => void;
+}> = ({ compact = false, onOpen, onExit, onOpenEarnAds }) => {
   const { user, isAdmin, openAuthModal, showToast } = useAuth();
   const [rawSummary, setRawSummary] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -592,6 +668,10 @@ export const YtCoinMiningCard: React.FC<{
   const [isRefreshingSpin, setIsRefreshingSpin] = useState<boolean>(false);
 
   const [particles, setParticles] = useState<FloatingParticle[]>([]);
+  const [pendingTaps, setPendingTaps] = useState<number>(0);
+  const pendingTapsRef = useRef<number>(0);
+  const flushingTapsRef = useRef<boolean>(false);
+  const tapFlushTimerRef = useRef<number | null>(null);
   const arenaRef = useRef<HTMLDivElement | null>(null);
 
   // Admin-Only State & Real Supabase Configuration Controls
@@ -600,8 +680,11 @@ export const YtCoinMiningCard: React.FC<{
   const [savingAdminConfig, setSavingAdminConfig] = useState<boolean>(false);
   const [adminMiningEnabled, setAdminMiningEnabled] = useState<boolean>(true);
   const [adminBaseRewardYt, setAdminBaseRewardYt] = useState<string>('0.5');
-  const [adminDailyIncrementYt, setAdminDailyIncrementYt] = useState<string>('0.5');
-  const [adminMaxDailyRewardYt, setAdminMaxDailyRewardYt] = useState<string>('20');
+  const [adminTapRewardYt, setAdminTapRewardYt] = useState<string>('0.01');
+  const [adminAdClickRewardYt, setAdminAdClickRewardYt] = useState<string>('0.01');
+  const [adminAdViewRewardYt, setAdminAdViewRewardYt] = useState<string>('0.01');
+  const [adminDailyTapLimit, setAdminDailyTapLimit] = useState<string>('1000');
+  const [adminDailyAdLimit, setAdminDailyAdLimit] = useState<string>('20');
   const [adminDailyCapStartYt, setAdminDailyCapStartYt] = useState<string>('1000');
   const [adminDailyCapMaxYt, setAdminDailyCapMaxYt] = useState<string>('1000000');
 
@@ -610,35 +693,45 @@ export const YtCoinMiningCard: React.FC<{
   const [showResetModal, setShowResetModal] = useState<boolean>(false);
   const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
 
+  // P2P YT Coin Transfer Modal State
+  const [showTransferModal, setShowTransferModal] = useState<boolean>(false);
+  const [transferRecipientAddress, setTransferRecipientAddress] = useState<string>('');
+  const [transferAmountYt, setTransferAmountYt] = useState<string>('');
+  const [transferNote, setTransferNote] = useState<string>('');
+  const [transferRecipientName, setTransferRecipientName] = useState<string | null>(null);
+  const [lookingUpRecipient, setLookingUpRecipient] = useState<boolean>(false);
+  const [transferLookupError, setTransferLookupError] = useState<string | null>(null);
+  const [submittingTransfer, setSubmittingTransfer] = useState<boolean>(false);
+
   // Tasks
   const [tasks, setTasks] = useState<LocalTaskItem[]>([
     {
       id: 1,
-      title: 'تسجيل الدخول اليومي للمنجم',
-      desc: 'احصل على مكافأة الحضور اليومي المتصاعدة من 0.5 إلى 20 YT',
+      title: 'مكافأة الدخول اليومي الثابتة',
+      desc: 'احصل على نصف عملة واحدة فقط (0.5 YT) يومياً عند الدخول',
       reward: 0.5,
       status: 'ready',
     },
     {
       id: 2,
-      title: 'تحقيق سلسلة 20 يوم تعدين متتالية',
-      desc: 'واصل التعدين اليومي لفتح مكافأة 20 YT ثابتة كل يوم',
-      reward: 20,
+      title: 'تعدين 100 نقرة اليوم',
+      desc: 'انقر على العملة لتحصل على 0.01 YT مع كل نقرة مباشرة',
+      reward: 1,
       status: 'progress',
-      target: 20,
+      target: 100,
     },
     {
       id: 3,
-      title: 'توثيق عنوان محفظة YT Coin',
-      desc: 'انسخ أو شارك عنوان محفظتك على شبكة YT Mainnet',
-      reward: 1,
+      title: 'اكسب من الإعلانات الموثقة',
+      desc: 'انتقل إلى صفحة «اكسب من الإعلانات» — مكافأة النقرة أو المشاهدة المؤكدة 0.01 YT',
+      reward: 0.01,
       status: 'ready',
     },
     {
       id: 4,
-      title: 'دعوة صديق للتعدين السحابي',
-      desc: 'شارك رابط المنصة مع أصدقائك لتوسيع مجتمع المعدّنين',
-      reward: 2,
+      title: 'مشاركة عنوان محفظة YT Coin',
+      desc: 'انسخ عنوان محفظتك المستقلة لاستلام التحويلات عبر شبكة YT Mainnet',
+      reward: 0.5,
       status: 'ready',
     },
   ]);
@@ -685,16 +778,32 @@ export const YtCoinMiningCard: React.FC<{
       setAdminSummary(s);
       if (s && typeof s === 'object') {
         if (typeof s.mining_enabled === 'boolean') setAdminMiningEnabled(s.mining_enabled);
-        const toYtStr = (val: unknown, fallback: string) => {
-          const n = Number(val);
+        const scale = Number(s.unit_scale) > 0 ? Number(s.unit_scale) : YT_SUBUNITS_PER_YT;
+        const pickAdminStr = (directVal: unknown, unitVal: unknown, fallback: string) => {
+          if (directVal !== undefined && directVal !== null && directVal !== '') {
+            const d = Number(directVal);
+            if (Number.isFinite(d) && d >= 0) return formatYt(d).replace(/,/g, '');
+          }
+          const n = Number(unitVal);
           if (!Number.isFinite(n) || n < 0) return fallback;
-          return String(Math.round((n / 2) * 10) / 10);
+          return formatYt(n / scale).replace(/,/g, '');
         };
-        setAdminBaseRewardYt(toYtStr(s.base_reward_units, '0.5'));
-        setAdminDailyIncrementYt(toYtStr(s.daily_increment_units, '0.5'));
-        setAdminMaxDailyRewardYt(toYtStr(s.max_daily_reward_units, '20'));
-        setAdminDailyCapStartYt(toYtStr(s.daily_cap_start_units ?? s.daily_global_cap_units, '1000'));
-        setAdminDailyCapMaxYt(toYtStr(s.daily_cap_max_units ?? s.daily_global_cap_max_units, '1000000'));
+        setAdminBaseRewardYt(pickAdminStr(s.base_reward_yt, s.base_reward_units, '0.5'));
+        setAdminTapRewardYt(pickAdminStr(s.tap_reward_yt, s.tap_reward_units, '0.01'));
+        setAdminAdClickRewardYt(pickAdminStr(s.ad_click_reward_yt, s.ad_click_reward_units, '0.01'));
+        setAdminAdViewRewardYt(pickAdminStr(s.ad_view_reward_yt, s.ad_view_reward_units, '0.01'));
+        if (s.daily_tap_limit !== undefined && s.daily_tap_limit !== null) {
+          setAdminDailyTapLimit(String(Math.max(0, Math.floor(Number(s.daily_tap_limit) || 0))));
+        }
+        if (s.daily_ad_limit !== undefined && s.daily_ad_limit !== null) {
+          setAdminDailyAdLimit(String(Math.max(0, Math.floor(Number(s.daily_ad_limit) || 0))));
+        }
+        setAdminDailyCapStartYt(
+          pickAdminStr(s.daily_cap_start_yt, s.daily_cap_start_units ?? s.daily_global_cap_units, '1000')
+        );
+        setAdminDailyCapMaxYt(
+          pickAdminStr(s.daily_cap_max_yt, s.daily_cap_max_units ?? s.daily_global_cap_max_units, '1000000')
+        );
       }
     } catch (err: any) {
       showToast(err?.message || 'تعذر تحميل لوحة إدارة YT Coin', 'error');
@@ -733,26 +842,64 @@ export const YtCoinMiningCard: React.FC<{
   }, [remainingCooldownSec > 0]);
 
   const walletAddress = useMemo(() => {
+    if (summary?.walletAddress) return summary.walletAddress;
     const rawId = String((user as any)?.id || (user as any)?.user_id || '')
       .replace(/[^a-zA-Z0-9]/g, '')
       .toLowerCase();
     return rawId ? `yt1${rawId}` : 'غير متصل';
-  }, [user]);
+  }, [user, summary?.walletAddress]);
 
   const shortWalletAddress = useMemo(() => {
     if (!walletAddress.startsWith('yt1') || walletAddress.length <= 16) return walletAddress;
     return `${walletAddress.slice(0, 8)}...${walletAddress.slice(-6)}`;
   }, [walletAddress]);
 
+  // Recipient lookup for YT P2P Transfer
+  useEffect(() => {
+    if (!showTransferModal) return;
+    const clean = transferRecipientAddress.trim().toLowerCase();
+    if (!clean || clean.length < 10) {
+      setTransferRecipientName(null);
+      setTransferLookupError(null);
+      return;
+    }
+    if (clean === walletAddress.toLowerCase()) {
+      setTransferRecipientName(null);
+      setTransferLookupError('لا يمكنك التحويل إلى نفس محفظتك.');
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      setLookingUpRecipient(true);
+      setTransferLookupError(null);
+      try {
+        const res = await api.lookupYtCoinWallet(clean);
+        if (res?.wallet?.found) {
+          setTransferRecipientName(res.wallet.ownerName || 'مستخدم YT Coin');
+          setTransferLookupError(null);
+        } else {
+          setTransferRecipientName(null);
+          setTransferLookupError('عنوان محفظة YT Coin غير مسجل.');
+        }
+      } catch (err: any) {
+        setTransferRecipientName(null);
+        setTransferLookupError(err?.message || 'تعذر التحقق من المحفظة.');
+      } finally {
+        setLookingUpRecipient(false);
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [showTransferModal, transferRecipientAddress, walletAddress]);
+
   // Effective Values synced directly from Supabase RPC
-  const effectiveBalance = Math.max(0, summary?.balanceYt ?? 0);
-  const currentStreakDays = Math.max(0, summary?.streakDays ?? 0);
-  const upcomingStreakDay = currentStreakDays + 1;
-  const computedFallbackReward =
-    upcomingStreakDay >= 20
-      ? (summary?.maxDailyRewardYt ?? 20)
-      : (summary?.baseRewardYt ?? 0.5) + (upcomingStreakDay - 1) * (summary?.dailyIncrementYt ?? 0.5);
-  const effectiveClaimReward = summary?.todayRewardYt ?? computedFallbackReward;
+  const effectiveTapReward = summary?.tapRewardYt ?? 0.01;
+  const effectiveAdClickReward = summary?.adClickRewardYt ?? 0.01;
+  const effectiveAdViewReward = summary?.adViewRewardYt ?? 0.01;
+  const effectiveTapsToday = (summary?.tapsToday ?? 0) + pendingTaps;
+  const effectiveDailyTapLimit = summary?.dailyTapLimit ?? 1000;
+  const effectiveAdsToday = summary?.adsToday ?? 0;
+  const effectiveDailyAdLimit = summary?.dailyAdLimit ?? 20;
+  const effectiveBalance = Math.max(0, (summary?.balanceYt ?? 0) + pendingTaps * effectiveTapReward);
+  const effectiveClaimReward = summary?.todayRewardYt ?? summary?.baseRewardYt ?? 0.5;
   const effectiveDailyCap = summary?.dailyCapYt ?? 0;
   const effectiveDailyUsed = Math.min(effectiveDailyCap, summary?.dailyMinedYt ?? 0);
   const effectiveCapPercent =
@@ -781,13 +928,57 @@ export const YtCoinMiningCard: React.FC<{
     const x = (e?.clientX ? e.clientX - rect.left : rect.width / 2) - 28;
     const y = (e?.clientY ? e.clientY - rect.top : rect.height / 2) - 20;
     const id = Date.now() + Math.random();
-    setParticles((prev) => [...prev, { id, x, y, text: text || `+${formatYt(effectiveClaimReward)} YT` }]);
+    setParticles((prev) => [...prev, { id, x, y, text: text || `+${formatYt(effectiveTapReward)} YT` }]);
     window.setTimeout(() => {
       setParticles((prev) => prev.filter((p) => p.id !== id));
     }, 950);
   };
 
-  const handleCoinPress = (e: React.MouseEvent<HTMLButtonElement>) => {
+  const flushTapBatch = useCallback(async () => {
+    if (tapFlushTimerRef.current !== null) {
+      window.clearTimeout(tapFlushTimerRef.current);
+      tapFlushTimerRef.current = null;
+    }
+    if (flushingTapsRef.current || pendingTapsRef.current <= 0 || !user) return;
+
+    const batch = Math.min(200, pendingTapsRef.current);
+    pendingTapsRef.current = Math.max(0, pendingTapsRef.current - batch);
+    setPendingTaps(pendingTapsRef.current);
+    flushingTapsRef.current = true;
+
+    try {
+      const res = await api.claimTapYtCoin(batch);
+      const result = asRecord(res?.result);
+      if (result?.success === false) {
+        pendingTapsRef.current = 0;
+        setPendingTaps(0);
+        const msg = pickString([result], ['message', 'status_message']);
+        if (msg) showToast(msg, 'info');
+      }
+      await loadSummary(true);
+    } catch (err: any) {
+      pendingTapsRef.current = 0;
+      setPendingTaps(0);
+      showToast(err?.message || 'تعذر حفظ مكافأة النقر.', 'error');
+    } finally {
+      flushingTapsRef.current = false;
+      if (pendingTapsRef.current > 0) {
+        tapFlushTimerRef.current = window.setTimeout(() => {
+          void flushTapBatch();
+        }, 120);
+      }
+    }
+  }, [user, loadSummary, showToast]);
+
+  useEffect(() => {
+    return () => {
+      if (tapFlushTimerRef.current !== null) {
+        window.clearTimeout(tapFlushTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCoinTap = (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!user) {
       openAuthModal('login');
       return;
@@ -800,17 +991,25 @@ export const YtCoinMiningCard: React.FC<{
       showToast('تم بلوغ سقف التعدين المتاح حالياً.', 'info');
       return;
     }
-    if (summary && !summary.canClaim) {
-      showToast(
-        remainingCooldownSec > 0
-          ? `تم استلام مكافأة اليوم بالفعل — المطالبة القادمة خلال ${formatCountdown(remainingCooldownSec)}`
-          : 'تم استلام مكافأة اليوم بنجاح.',
-        'info'
-      );
+    if (effectiveDailyTapLimit > 0 && effectiveTapsToday >= effectiveDailyTapLimit) {
+      showToast(`تم بلوغ الحد اليومي للنقرات (${formatInt(effectiveDailyTapLimit)} نقرة).`, 'info');
       return;
     }
-    spawnClaimParticle(e, `+${formatYt(effectiveClaimReward)} YT`);
-    void handleClaim();
+
+    pendingTapsRef.current += 1;
+    setPendingTaps(pendingTapsRef.current);
+    spawnClaimParticle(e, `+${formatYt(effectiveTapReward)} YT`);
+
+    if (pendingTapsRef.current >= 25) {
+      void flushTapBatch();
+      return;
+    }
+    if (tapFlushTimerRef.current !== null) {
+      window.clearTimeout(tapFlushTimerRef.current);
+    }
+    tapFlushTimerRef.current = window.setTimeout(() => {
+      void flushTapBatch();
+    }, 350);
   };
 
   const handleClaim = async () => {
@@ -829,10 +1028,11 @@ export const YtCoinMiningCard: React.FC<{
     try {
       const res = await api.claimDailyYtCoin();
       const result = asRecord(res?.result);
-      let claimedAmount = pickNumber([result], ['reward_yt', 'claimed_yt', 'amount_yt', 'credited_yt', 'reward']);
+      const scale = Number(result?.unitScale) > 0 ? Number(result?.unitScale) : (summary?.unitScale ?? YT_SUBUNITS_PER_YT);
+      let claimedAmount = pickNumber([result], ['reward_yt', 'rewardYt', 'claimed_yt', 'amount_yt', 'credited_yt', 'reward']);
       if (claimedAmount === null) {
         const claimedUnits = pickNumber([result], ['amount_units', 'amountUnits', 'reward_units', 'rewardUnits']);
-        if (claimedUnits !== null) claimedAmount = claimedUnits / 2;
+        if (claimedUnits !== null) claimedAmount = claimedUnits / scale;
       }
       const resultMessage = pickString([result], ['message', 'status_message']);
       const rejected =
@@ -849,7 +1049,7 @@ export const YtCoinMiningCard: React.FC<{
           'success'
         );
       } else {
-        showToast(resultMessage || 'تم إيداع مكافأة التعدين في محفظتك بنجاح!', 'success');
+        showToast(resultMessage || 'تم إيداع مكافأة التعدين اليومي في محفظتك بنجاح!', 'success');
       }
       await loadSummary(true);
     } catch (err: any) {
@@ -861,8 +1061,79 @@ export const YtCoinMiningCard: React.FC<{
     }
   };
 
-  const handleClaimTask = (_taskId: number) => {
-    showToast('مكافآت المهام الإضافية قيد التفعيل؛ يمكنك تعدين مكافأتك اليومية من الرئيسية.', 'info');
+  const handleOpenWatchAd = () => {
+    if (onOpenEarnAds) {
+      onOpenEarnAds();
+      return;
+    }
+    showToast('انتقل إلى صفحة «اكسب من الإعلانات» من القائمة الرئيسية لمشاهدة الإعلانات الموثقة.', 'info');
+  };
+
+  const handleTransferYt = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!user || submittingTransfer) return;
+    let amountUnits: number;
+    try {
+      amountUnits = ytToUnitsStrict(transferAmountYt, { fieldLabel: 'كمية التحويل', minUnits: 1 });
+    } catch (err: any) {
+      showToast(err?.message || 'أدخل مبلغاً صحيحاً (0.001 YT على الأقل).', 'error');
+      return;
+    }
+    const amt = amountUnits / YT_SUBUNITS_PER_YT;
+    if (amt > effectiveBalance) {
+      showToast('رصيد YT Coin المتاح غير كافٍ.', 'error');
+      return;
+    }
+    if (!transferRecipientName) {
+      showToast('يرجى التحقق من عنوان محفظة YT Coin المستلمة.', 'error');
+      return;
+    }
+
+    setSubmittingTransfer(true);
+    try {
+      const res = await api.transferYtCoin({
+        recipientAddress: transferRecipientAddress.trim().toLowerCase(),
+        amountYt: amt,
+        note: transferNote.trim() || undefined,
+      });
+      const result = asRecord(res?.result);
+      if (result?.success === false) {
+        showToast(pickString([result], ['message']) || 'تعذر تنفيذ التحويل.', 'error');
+      } else {
+        showToast(`تم تحويل ${formatYt(amt)} YT بنجاح إلى ${transferRecipientName}!`, 'success');
+        setShowTransferModal(false);
+        setTransferRecipientAddress('');
+        setTransferAmountYt('');
+        setTransferNote('');
+        setTransferRecipientName(null);
+        await loadSummary(true);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'فشل تنفيذ تحويل YT Coin.', 'error');
+    } finally {
+      setSubmittingTransfer(false);
+    }
+  };
+
+  const handleClaimTask = (taskId: number) => {
+    if (taskId === 1) {
+      if (summary?.canClaim) {
+        void handleClaim();
+      } else {
+        setActiveTab('home');
+      }
+      return;
+    }
+    if (taskId === 3) {
+      handleOpenWatchAd();
+      return;
+    }
+    if (taskId === 4) {
+      copyWalletAddress();
+      return;
+    }
+    setActiveTab('home');
+    showToast('ابدأ التعدين بالنقر (+0.01 YT لكل نقرة) من شاشة المنجم.', 'info');
   };
 
   const copyWalletAddress = () => {
@@ -882,32 +1153,32 @@ export const YtCoinMiningCard: React.FC<{
     e.preventDefault();
     if (!isAdmin || savingAdminConfig) return;
 
-    const parseDecimalStep = (raw: string, label: string, minVal: number): number | null => {
-      const val = Number(raw);
-      if (!Number.isFinite(val) || val < minVal) {
-        showToast(`قيمة "${label}" يجب أن تكون ${minVal} YT على الأقل.`, 'error');
-        return null;
-      }
-      if (Math.abs(val * 2 - Math.round(val * 2)) > 1e-6) {
-        showToast(`"${label}" يقبل خانة عشرية واحدة من مضاعفات 0.5 YT فقط (مثل 0.5 أو 1.5 أو 20).`, 'error');
-        return null;
-      }
-      return Math.round(val * 10) / 10;
-    };
+    let baseRewardUnits: number;
+    let tapRewardUnits: number;
+    let adClickRewardUnits: number;
+    let adViewRewardUnits: number;
+    let dailyCapStartUnits: number;
+    let dailyCapMaxUnits: number;
+    try {
+      baseRewardUnits = ytToUnitsStrict(adminBaseRewardYt, { fieldLabel: 'مكافأة الدخول اليومي', minUnits: 1 });
+      tapRewardUnits = ytToUnitsStrict(adminTapRewardYt, { fieldLabel: 'مكافأة النقر', minUnits: 1 });
+      adClickRewardUnits = ytToUnitsStrict(adminAdClickRewardYt, { fieldLabel: 'مكافأة النقرة الإعلانية', minUnits: 1 });
+      adViewRewardUnits = ytToUnitsStrict(adminAdViewRewardYt, { fieldLabel: 'مكافأة مشاهدة الإعلان', minUnits: 1 });
+      dailyCapStartUnits = ytToUnitsStrict(adminDailyCapStartYt, { fieldLabel: 'السقف اليومي الابتدائي', minUnits: 1 });
+      dailyCapMaxUnits = ytToUnitsStrict(adminDailyCapMaxYt, { fieldLabel: 'الحد الأقصى للسقف اليومي', minUnits: 1 });
+    } catch (err: any) {
+      showToast(err?.message || 'يرجى التحقق من القيم المدخلة (بحد أقصى 3 خانات عشرية).', 'error');
+      return;
+    }
 
-    const baseRewardYt = parseDecimalStep(adminBaseRewardYt, 'مكافأة اليوم الأول', 0.5);
-    const dailyIncrementYt = parseDecimalStep(adminDailyIncrementYt, 'الزيادة اليومية', 0);
-    const maxDailyRewardYt = parseDecimalStep(adminMaxDailyRewardYt, 'مكافأة اليوم 20 وما بعده', 0.5);
-    const dailyCapStartYt = parseDecimalStep(adminDailyCapStartYt, 'السقف اليومي الابتدائي', 0.5);
-    const dailyCapMaxYt = parseDecimalStep(adminDailyCapMaxYt, 'الحد الأقصى للسقف اليومي', 0.5);
-
-    if (
-      baseRewardYt === null ||
-      dailyIncrementYt === null ||
-      maxDailyRewardYt === null ||
-      dailyCapStartYt === null ||
-      dailyCapMaxYt === null
-    ) {
+    const dailyTapLimit = Number(adminDailyTapLimit);
+    const dailyAdLimit = Number(adminDailyAdLimit);
+    if (!Number.isInteger(dailyTapLimit) || dailyTapLimit < 0) {
+      showToast('الحد اليومي للنقرات يجب أن يكون عدداً صحيحاً موجباً أو 0.', 'error');
+      return;
+    }
+    if (!Number.isInteger(dailyAdLimit) || dailyAdLimit < 0) {
+      showToast('الحد اليومي للإعلانات يجب أن يكون عدداً صحيحاً موجباً أو 0.', 'error');
       return;
     }
 
@@ -915,13 +1186,16 @@ export const YtCoinMiningCard: React.FC<{
     try {
       await api.updateAdminYtCoinConfig({
         miningEnabled: adminMiningEnabled,
-        baseRewardYt,
-        dailyIncrementYt,
-        maxDailyRewardYt,
-        dailyCapStartYt,
-        dailyCapMaxYt,
+        baseRewardYt: baseRewardUnits / YT_SUBUNITS_PER_YT,
+        tapRewardYt: tapRewardUnits / YT_SUBUNITS_PER_YT,
+        adClickRewardYt: adClickRewardUnits / YT_SUBUNITS_PER_YT,
+        adViewRewardYt: adViewRewardUnits / YT_SUBUNITS_PER_YT,
+        dailyTapLimit,
+        dailyAdLimit,
+        dailyCapStartYt: dailyCapStartUnits / YT_SUBUNITS_PER_YT,
+        dailyCapMaxYt: dailyCapMaxUnits / YT_SUBUNITS_PER_YT,
       });
-      showToast('تم حفظ وتحديث إعدادات تعدين YT Coin في Supabase بنجاح.', 'success');
+      showToast('تم حفظ وتحديث إعدادات YT Coin المستقلة في قاعدة البيانات بنجاح.', 'success');
       await Promise.all([loadAdminData(), loadSummary(true)]);
     } catch (err: any) {
       showToast(err?.message || 'تعذر حفظ إعدادات التعدين في قاعدة البيانات.', 'error');
@@ -948,8 +1222,11 @@ export const YtCoinMiningCard: React.FC<{
 
   const handleResetLocalData = () => {
     setAdminBaseRewardYt('0.5');
-    setAdminDailyIncrementYt('0.5');
-    setAdminMaxDailyRewardYt('20');
+    setAdminTapRewardYt('0.01');
+    setAdminAdClickRewardYt('0.01');
+    setAdminAdViewRewardYt('0.01');
+    setAdminDailyTapLimit('1000');
+    setAdminDailyAdLimit('20');
     setTasks((prev) => prev.map((t) => ({ ...t, status: t.id === 2 ? 'progress' : 'ready' })));
     setShowResetModal(false);
     showToast('تمت إعادة تعيين حقول المعاينة الافتراضية (اضغط حفظ لتطبيقها على الخادم).', 'info');
@@ -1248,7 +1525,7 @@ export const YtCoinMiningCard: React.FC<{
           <div className="hidden md:flex items-center gap-3 min-w-0">
             <h2 className="text-xl font-extrabold text-white truncate">{PAGE_TITLES[activeTab]}</h2>
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
-              <Zap className="w-3.5 h-3.5" /> تدرج +0.5 YT حتى 20 YT يومياً
+              <Zap className="w-3.5 h-3.5" /> يومياً {formatYt(effectiveClaimReward)} YT + {formatYt(effectiveTapReward)} YT لكل نقرة
             </span>
           </div>
 
@@ -1292,7 +1569,7 @@ export const YtCoinMiningCard: React.FC<{
 
             <button
               type="button"
-              onClick={() => showToast('النظام يعمل بدقة حتى خانة عشرية واحدة (0.5 YT ← 20 YT في اليوم 20)', 'info')}
+              onClick={() => showToast(`المكافأة اليومية ثابتة ${formatYt(effectiveClaimReward)} YT وكل نقرة تمنحك +${formatYt(effectiveTapReward)} YT`, 'info')}
               aria-label="الإشعارات"
               className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-[#161C28] border border-white/10 flex items-center justify-center text-gray-300 hover:text-amber-400 hover:border-amber-500/30 transition-all relative cursor-pointer"
             >
@@ -1338,7 +1615,7 @@ export const YtCoinMiningCard: React.FC<{
                           </h2>
                           <div className="mt-2.5 inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/35 text-amber-300 text-xs sm:text-sm font-bold">
                             <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                            <span>نمو يومي +0.5 YT ← 20 YT في اليوم 20</span>
+                            <span>تعدين يومي {formatYt(effectiveClaimReward)} YT + {formatYt(effectiveTapReward)} YT لكل نقرة</span>
                           </div>
                         </div>
 
@@ -1352,11 +1629,11 @@ export const YtCoinMiningCard: React.FC<{
                       </div>
 
                       <p className="text-gray-300 text-xs sm:text-sm md:text-base leading-relaxed max-w-2xl">
-                        منصة تعدين مستقلة تبدأ مكافأتها اليومية بـ{' '}
-                        <span className="text-amber-400 font-bold">0.5 YT</span> وتزداد{' '}
-                        <span className="text-emerald-400 font-bold">+0.5 YT يومياً</span> مع كل دخول متتالٍ حتى تصل إلى{' '}
-                        <span className="text-amber-400 font-bold">اليوم 20</span> فتبدأ بالحصول على{' '}
-                        <span className="text-amber-300 font-extrabold">20 YT يومياً</span> باستمرار (بدقة حتى خانة عشرية واحدة).
+                        احصل يومياً على مكافأة ثابتة قدرها{' '}
+                        <span className="text-amber-400 font-bold">{formatYt(effectiveClaimReward)} YT (نصف عملة)</span>،
+                        واجمع أجزاء العملة بقيمة{' '}
+                        <span className="text-emerald-400 font-bold">+{formatYt(effectiveTapReward)} YT</span>{' '}
+                        مع كل نقرة على عملة YT Coin لتضاف إلى رصيدك فوراً.
                       </p>
                     </div>
 
@@ -1390,26 +1667,18 @@ export const YtCoinMiningCard: React.FC<{
                       </div>
                     ))}
 
-                    <div className="w-full flex items-center justify-between text-xs text-gray-400 mb-4">
-                      <span
-                        className={`flex items-center gap-1.5 px-3 py-1 rounded-full border ${
-                          summary?.canClaim
-                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                            : 'bg-white/5 border-white/10 text-gray-300'
-                        }`}
-                      >
-                        <Gem className="w-3.5 h-3.5 text-amber-400" />
-                        <span>
-                          {!user
-                            ? 'سجّل الدخول للتعدين'
-                            : summary?.canClaim
-                              ? 'اضغط على العملة لاستلام مكافأة اليوم'
-                              : 'تم تأكيد تعدين اليوم'}
-                        </span>
+                    <div className="w-full flex items-center justify-between text-xs text-gray-400 mb-4 gap-2 flex-wrap">
+                      <span className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-3 py-1 rounded-full">
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        مكافأة النقر: <strong className="text-amber-300 font-mono">+{formatYt(effectiveTapReward)} YT</strong>
                       </span>
-                      <span className="flex items-center gap-1.5 bg-white/5 px-3 py-1 rounded-full">
+                      <span className="flex items-center gap-1.5 bg-white/5 border border-white/10 px-3 py-1 rounded-full">
                         <Flame className="w-3.5 h-3.5 text-orange-400" />
-                        السلسلة: <strong className="text-white font-mono">{formatInt(currentStreakDays)} / 20 يوم</strong>
+                        نقرات اليوم:{' '}
+                        <strong className="text-white font-mono">
+                          {formatInt(effectiveTapsToday)}
+                          {effectiveDailyTapLimit > 0 ? ` / ${formatInt(effectiveDailyTapLimit)}` : ''}
+                        </strong>
                       </span>
                     </div>
 
@@ -1418,10 +1687,9 @@ export const YtCoinMiningCard: React.FC<{
 
                       <button
                         type="button"
-                        onClick={handleCoinPress}
-                        disabled={claiming}
-                        aria-label="المطالبة بمكافأة التعدين اليومي"
-                        className="relative w-40 h-40 sm:w-48 sm:h-48 rounded-full p-1.5 border-[3px] border-amber-400/80 bg-[#080E1B] shadow-[0_0_40px_rgba(245,185,33,0.3)] cursor-pointer focus:outline-none group transition-transform active:scale-95 overflow-hidden disabled:opacity-75"
+                        onClick={handleCoinTap}
+                        aria-label={`انقر لربح ${formatYt(effectiveTapReward)} YT`}
+                        className="relative w-40 h-40 sm:w-48 sm:h-48 rounded-full p-1.5 border-[3px] border-amber-400/80 bg-[#080E1B] shadow-[0_0_40px_rgba(245,185,33,0.3)] cursor-pointer focus:outline-none group transition-transform active:scale-95 overflow-hidden"
                       >
                         <img
                           src={YT_COIN_LOGO_SRC}
@@ -1431,15 +1699,17 @@ export const YtCoinMiningCard: React.FC<{
                       </button>
                     </div>
 
+                    <p className="text-[11px] sm:text-xs font-bold text-emerald-400/90 mt-1">
+                      انقر على العملة لربح +{formatYt(effectiveTapReward)} YT بكل نقرة
+                    </p>
+
                     <div className="text-center mt-3 space-y-1">
                       <p className="text-amber-400/90 font-bold text-sm sm:text-base">
-                        {summary?.claimedToday
-                          ? `مكافأة الدخول القادم (اليوم ${upcomingStreakDay}${upcomingStreakDay >= 20 ? '+' : ''})`
-                          : `مكافأة اليوم (اليوم ${upcomingStreakDay}${upcomingStreakDay >= 20 ? '+' : ''})`}
+                        المكافأة اليومية الثابتة
                       </p>
                       <div className="flex items-baseline justify-center gap-2" dir="ltr">
                         <span className="text-3xl sm:text-4xl md:text-5xl font-black text-amber-400 tracking-tight font-mono">
-                          {formatYt(effectiveClaimReward)}+
+                          +{formatYt(effectiveClaimReward)}
                         </span>
                         <span className="text-base sm:text-lg font-extrabold text-amber-300">YT Coin</span>
                       </div>
@@ -1453,7 +1723,7 @@ export const YtCoinMiningCard: React.FC<{
                           className="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-[#0B0E14] font-black text-base sm:text-lg shadow-[0_0_35px_rgba(245,185,33,0.25)] transition-all flex items-center justify-center gap-2.5 cursor-pointer"
                         >
                           <LogIn className="w-5 h-5" />
-                          <span>تسجيل الدخول للمطالبة بالمكافأة</span>
+                          <span>تسجيل الدخول لبدء التعدين</span>
                         </button>
                       ) : (
                         <>
@@ -1482,14 +1752,14 @@ export const YtCoinMiningCard: React.FC<{
                                 <Hourglass className="w-5 h-5 text-amber-400" />
                                 <span>
                                   {remainingCooldownSec > 0
-                                    ? `المطالبة القادمة خلال ${formatCountdown(remainingCooldownSec)}`
-                                    : 'تم استلام مكافأة اليوم بنجاح'}
+                                    ? `المكافأة اليومية القادمة خلال ${formatCountdown(remainingCooldownSec)}`
+                                    : 'تم استلام نصف العملة لليوم'}
                                 </span>
                               </>
                             ) : (
                               <>
                                 <Gem className="w-5 h-5" />
-                                <span>مطالبة بمكافأة +{formatYt(effectiveClaimReward)} YT الآن</span>
+                                <span>استلام مكافأة اليوم (+{formatYt(effectiveClaimReward)} YT)</span>
                               </>
                             )}
                           </button>
@@ -1500,54 +1770,89 @@ export const YtCoinMiningCard: React.FC<{
                               <span>
                                 {summary.statusMessage ||
                                   (summary.nextClaimAt
-                                    ? `موعد الكتلة القادمة: ${formatDateTime(summary.nextClaimAt)}`
-                                    : 'جاري تجهيز الكتلة التالية...')}
+                                    ? `يمكنك مواصلة التعدين بالنقر (+${formatYt(effectiveTapReward)} YT) • اليومية القادمة: ${formatDateTime(summary.nextClaimAt)}`
+                                    : 'يمكنك مواصلة التعدين بالنقر الآن...')}
                               </span>
                             </p>
                           ) : (
                             <p className="text-center text-xs text-emerald-400 font-semibold mt-2 flex items-center justify-center gap-1.5">
                               <CheckCircle2 className="w-3.5 h-3.5" />
-                              <span>المكافأة جاهزة للإيداع الفوري في محفظتك!</span>
+                              <span>نصف العملة اليومية جاهزة للإيداع الفوري في محفظتك!</span>
                             </p>
                           )}
                         </>
                       )}
                     </div>
 
-                    {/* Daily Streak Progression Roadmap (0.5 -> Day 20 = 20 YT) */}
-                    <div className="w-full mt-6 rounded-2xl bg-[#131926] border border-amber-500/20 p-4 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                        <span className="font-bold text-amber-300 flex items-center gap-1.5">
-                          <TrendingUp className="w-4 h-4 text-amber-400" />
-                          مسار المكافأة المتتالية (اليوم 1 ← اليوم 20)
-                        </span>
-                        <span className="font-mono font-black text-emerald-400">
-                          {Math.min(currentStreakDays, 20)} / 20 يوم
-                          {currentStreakDays >= 20 ? ' (المستوى الأقصى 20 YT يومياً!)' : ''}
-                        </span>
+                    {/* Three Mining Modes Overview: Daily 0.5 YT + Tap 0.01 YT + Ad Watch Fractional YT */}
+                    <div className="w-full mt-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="rounded-2xl bg-[#131926] border border-amber-500/20 p-4 flex items-center justify-between gap-3">
+                        <div>
+                          <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                            <Calendar className="w-4 h-4 text-amber-400" />
+                            الدخول اليومي
+                          </span>
+                          <p className="text-[11px] text-gray-400 mt-1">نصف وحدة عملة واحدة فقط يومياً</p>
+                        </div>
+                        <div className="text-left shrink-0">
+                          <strong className="text-lg font-black text-amber-400 font-mono block" dir="ltr">
+                            +{formatYt(effectiveClaimReward)} YT
+                          </strong>
+                          <span className="text-[10px] text-emerald-400 font-bold">ثابت كل يوم</span>
+                        </div>
                       </div>
 
-                      <div className="w-full h-2 bg-[#0A0E17] rounded-full overflow-hidden border border-white/5">
-                        <div
-                          className="h-full bg-gradient-to-l from-emerald-400 via-amber-400 to-amber-500 rounded-full transition-all duration-500"
-                          style={{ width: `${Math.min(100, Math.round((Math.min(currentStreakDays, 20) / 20) * 100))}%` }}
-                        />
+                      <div className="rounded-2xl bg-[#131926] border border-emerald-500/25 p-4 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                            <Zap className="w-4 h-4 text-emerald-400" />
+                            التعدين بالنقر
+                          </span>
+                          <strong className="text-xs font-black text-emerald-400 font-mono" dir="ltr">
+                            +{formatYt(effectiveTapReward)} YT / نقرة
+                          </strong>
+                        </div>
+                        <div className="w-full h-1.5 bg-[#0A0E17] rounded-full overflow-hidden border border-white/5">
+                          <div
+                            className="h-full bg-gradient-to-l from-emerald-400 to-amber-400 rounded-full transition-all duration-300"
+                            style={{
+                              width: `${
+                                effectiveDailyTapLimit > 0
+                                  ? Math.min(100, Math.round((effectiveTapsToday / effectiveDailyTapLimit) * 100))
+                                  : 100
+                              }%`,
+                            }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-gray-400 font-mono">
+                          <span>النقرات: {formatInt(effectiveTapsToday)}</span>
+                          <span>
+                            مكتسب النقر: {formatYt(effectiveTapsToday * effectiveTapReward)} YT
+                          </span>
+                        </div>
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
-                        <div className="rounded-xl bg-[#0B0F18] border border-white/5 px-2 py-2">
-                          <span className="text-gray-400 block">اليوم 1</span>
-                          <strong className="text-white font-mono">{formatYt(summary?.baseRewardYt ?? 0.5)} YT</strong>
+                      <button
+                        type="button"
+                        onClick={handleOpenWatchAd}
+                        className="rounded-2xl bg-[#131926] hover:bg-[#192233] border border-sky-500/25 hover:border-sky-400/50 p-4 flex items-center justify-between gap-3 text-right transition-all cursor-pointer"
+                      >
+                        <div>
+                          <span className="text-xs font-bold text-sky-300 flex items-center gap-1.5">
+                            <PlayCircle className="w-4 h-4 text-sky-400" />
+                            اكسب من الإعلانات
+                          </span>
+                          <p className="text-[11px] text-gray-400 mt-1">
+                            مؤكد: {formatInt(effectiveAdsToday)} / {effectiveDailyAdLimit > 0 ? formatInt(effectiveDailyAdLimit) : '∞'}
+                          </p>
                         </div>
-                        <div className="rounded-xl bg-[#0B0F18] border border-white/5 px-2 py-2">
-                          <span className="text-gray-400 block">الزيادة اليومية</span>
-                          <strong className="text-emerald-400 font-mono">+{formatYt(summary?.dailyIncrementYt ?? 0.5)} YT</strong>
+                        <div className="text-left shrink-0">
+                          <strong className="text-base font-black text-sky-400 font-mono block" dir="ltr">
+                            +{formatYt(effectiveAdViewReward)} YT
+                          </strong>
+                          <span className="text-[10px] text-sky-300 font-bold">تأكيد موثوق</span>
                         </div>
-                        <div className="rounded-xl bg-[#0B0F18] border border-amber-500/30 px-2 py-2">
-                          <span className="text-amber-300 block">اليوم 20 وما بعده</span>
-                          <strong className="text-amber-400 font-mono">{formatYt(summary?.maxDailyRewardYt ?? 20)} YT / يوم</strong>
-                        </div>
-                      </div>
+                      </button>
                     </div>
 
                     {/* Daily Cap Progress Bar */}
@@ -1579,17 +1884,26 @@ export const YtCoinMiningCard: React.FC<{
                 {/* 4 Quick Bottom Cards */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
-                    <span className="text-xs text-gray-400">المعروض الكلي</span>
-                    <span className="text-base sm:text-lg font-black text-white mt-1 font-mono">1,000,000,000</span>
-                    <span className="text-[10px] text-amber-400 mt-1">سقف ثابت غير قابل للزيادة</span>
+                    <span className="text-xs text-gray-400">المعروض الكلي النهائي</span>
+                    <span className="text-base sm:text-lg font-black text-white mt-1 font-mono">
+                      {YT_MAX_SUPPLY_YT.toLocaleString('en-US')}
+                    </span>
+                    <span className="text-[10px] text-amber-400 mt-1">1 YT = 1,000 جزء (0.001 YT)</span>
                   </div>
                   <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
-                    <span className="text-xs text-gray-400">الرتبة الحالية</span>
-                    <span className="text-base sm:text-lg font-black text-amber-400 mt-1">
-                      {currentStreakDays >= 20 ? 'أسطورة اليوم 20+' : 'مُعدِّن ذهبي'}
+                    <span className="text-xs text-gray-400">المكافأة اليومية</span>
+                    <span className="text-base sm:text-lg font-black text-amber-400 mt-1 font-mono">
+                      +{formatYt(effectiveClaimReward)} YT
                     </span>
-                    <span className="text-[10px] text-emerald-400 mt-1">
-                      سلسلة: {formatInt(currentStreakDays)} يوم متتالٍ
+                    <span className="text-[10px] text-emerald-400 mt-1">500 جزء يومياً</span>
+                  </div>
+                  <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
+                    <span className="text-xs text-gray-400">مكافأة الإعلان / النقر</span>
+                    <span className="text-base sm:text-lg font-black text-emerald-400 mt-1 font-mono">
+                      +{formatYt(effectiveAdClickReward)} YT
+                    </span>
+                    <span className="text-[10px] text-gray-400 mt-1">
+                      10 أجزاء لكل حدث مؤكد
                     </span>
                   </div>
                   <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
@@ -1597,12 +1911,7 @@ export const YtCoinMiningCard: React.FC<{
                     <span className="text-base sm:text-lg font-black text-white mt-1 font-mono">
                       {formatInt(summary?.totalClaims ?? 0)}
                     </span>
-                    <span className="text-[10px] text-gray-400 mt-1">عملية ناجحة</span>
-                  </div>
-                  <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
-                    <span className="text-xs text-gray-400">دقة التعدين</span>
-                    <span className="text-base sm:text-lg font-black text-emerald-400 mt-1">مُدقّق وآمن</span>
-                    <span className="text-[10px] text-gray-400 mt-1">دقة حتى خانة عشرية واحدة (0.5)</span>
+                    <span className="text-[10px] text-gray-400 mt-1">عملية تعدين ناجحة</span>
                   </div>
                 </div>
               </section>
@@ -1620,20 +1929,20 @@ export const YtCoinMiningCard: React.FC<{
                       <span>مركز المهام والمكافآت اليومية</span>
                     </h2>
                     <p className="text-xs sm:text-sm text-gray-400 mt-1">
-                      المهام الإضافية قيد الربط مع سجل مكافآت YT Coin الرسمي.
+                      تابع تقدمك اليومي في النقر والتعدين المباشر لعملة YT Coin.
                     </p>
                   </div>
                   <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 text-center shrink-0">
-                    <span className="text-xs text-gray-300 block">مكافآت متاحة للاستلام</span>
-                    <span className="text-xl font-black text-amber-400 font-mono">
-                      غير مفعّلة
+                    <span className="text-xs text-gray-300 block">معدل التعدين الحالي</span>
+                    <span className="text-base font-black text-amber-400 font-mono">
+                      {formatYt(effectiveClaimReward)} YT/يوم • +{formatYt(effectiveTapReward)} YT/نقرة
                     </span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {tasks.map((task) => {
-                    const pct = task.target ? Math.min(100, Math.round((currentStreakDays / task.target) * 100)) : 100;
+                    const pct = task.target ? Math.min(100, Math.round((effectiveTapsToday / task.target) * 100)) : 100;
                     return (
                       <div
                         key={task.id}
@@ -1643,14 +1952,14 @@ export const YtCoinMiningCard: React.FC<{
                           <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400 shrink-0">
                             {task.id === 1 && <Calendar className="w-5 h-5" />}
                             {task.id === 2 && <Flame className="w-5 h-5" />}
-                            {task.id === 3 && <Wallet className="w-5 h-5" />}
-                            {task.id === 4 && <Users className="w-5 h-5" />}
+                            {task.id === 3 && <PlayCircle className="w-5 h-5 text-sky-400" />}
+                            {task.id === 4 && <Wallet className="w-5 h-5" />}
                           </div>
                           <div className="min-w-0">
                             <h4 className="font-bold text-sm text-white truncate">{task.title}</h4>
                             <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{task.desc}</p>
                             <span className="inline-block mt-1.5 text-xs font-extrabold text-amber-400 font-mono">
-                              +{formatYt(task.reward)} YT
+                              +{formatYt(task.id === 3 ? effectiveAdViewReward : task.reward)} YT
                             </span>
                           </div>
                         </div>
@@ -1663,7 +1972,7 @@ export const YtCoinMiningCard: React.FC<{
                           ) : task.status === 'progress' ? (
                             <div className="text-left">
                               <span className="text-xs font-bold text-amber-400 block font-mono">
-                                {Math.min(currentStreakDays, task.target ?? 20)} / {task.target}
+                                {Math.min(effectiveTapsToday, task.target ?? 100)} / {task.target}
                               </span>
                               <div className="w-20 h-1.5 bg-white/10 rounded-full mt-1 overflow-hidden">
                                 <div className="h-full bg-amber-400" style={{ width: `${pct}%` }} />
@@ -1675,7 +1984,7 @@ export const YtCoinMiningCard: React.FC<{
                               onClick={() => handleClaimTask(task.id)}
                               className="px-4 py-2 rounded-xl bg-white/5 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 font-black text-xs transition-all cursor-pointer"
                             >
-                              التفاصيل
+                              {task.id === 3 ? 'فتح الإعلانات' : task.id === 4 ? 'نسخ العنوان' : 'تنفيذ'}
                             </button>
                           )}
                         </div>
@@ -1763,9 +2072,9 @@ export const YtCoinMiningCard: React.FC<{
                           </strong>
                         </div>
                         <div className="rounded-2xl bg-[#0B101A]/85 border border-white/10 px-3 py-2.5">
-                          <span className="text-[10px] sm:text-[11px] text-gray-400 block">السلسلة</span>
+                          <span className="text-[10px] sm:text-[11px] text-gray-400 block">نقرات اليوم</span>
                           <strong className="text-xs sm:text-sm font-black text-white font-mono mt-0.5 block">
-                            {formatInt(currentStreakDays)} يوم
+                            {formatInt(effectiveTapsToday)}
                           </strong>
                         </div>
                       </div>
@@ -1796,32 +2105,32 @@ export const YtCoinMiningCard: React.FC<{
                   </div>
 
                   {/* Primary Working Wallet Actions */}
-                  <div className="relative grid grid-cols-3 gap-2.5 sm:gap-3 mt-6 pt-5 border-t border-white/10">
+                  <div className="relative grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3 mt-6 pt-5 border-t border-white/10">
                     <button
                       type="button"
-                      onClick={() => (user ? setShowReceiveModal(true) : openAuthModal('login'))}
+                      onClick={() => (user ? setShowTransferModal(true) : openAuthModal('login'))}
                       className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-gradient-to-l from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-[#0B0E14] font-black text-xs sm:text-sm transition-all active:scale-95 shadow-lg shadow-amber-500/20 cursor-pointer"
                     >
-                      <QrCode className="w-4 h-4 shrink-0" />
-                      <span>استلام / QR</span>
+                      <Send className="w-4 h-4 shrink-0" />
+                      <span>إرسال / تحويل YT</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!user) {
-                          openAuthModal('login');
-                        } else if (summary?.canClaim) {
-                          void handleClaim();
-                        } else {
-                          setActiveTab('home');
-                        }
-                      }}
-                      disabled={claiming}
-                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-amber-500/30 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer disabled:opacity-60"
+                      onClick={handleOpenWatchAd}
+                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/35 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer"
                     >
-                      <Gem className="w-4 h-4 text-amber-400 shrink-0" />
-                      <span>{summary?.canClaim ? 'مطالبة اليوم' : 'التعدين'}</span>
+                      <PlayCircle className="w-4 h-4 text-sky-400 shrink-0" />
+                      <span>اكسب من الإعلانات</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => (user ? setShowReceiveModal(true) : openAuthModal('login'))}
+                      className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-amber-500/30 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer"
+                    >
+                      <QrCode className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>استلام / QR</span>
                     </button>
 
                     <button
@@ -1830,9 +2139,33 @@ export const YtCoinMiningCard: React.FC<{
                       disabled={loading}
                       className="flex flex-col sm:flex-row items-center justify-center gap-2 py-3.5 px-3 rounded-2xl bg-[#192236] hover:bg-[#222E47] text-white border border-white/10 font-extrabold text-xs sm:text-sm transition-all active:scale-95 cursor-pointer disabled:opacity-60"
                     >
-                      <RefreshCw className={`w-4 h-4 text-emerald-400 shrink-0 ${isRefreshingSpin || loading ? 'animate-spin' : ''}`} />
+                      <RefreshCw className={`w-4 h-4 text-sky-400 shrink-0 ${isRefreshingSpin || loading ? 'animate-spin' : ''}`} />
                       <span>تحديث الرصيد</span>
                     </button>
+                  </div>
+                </div>
+
+                {/* Ledger Independence & Precision Notice */}
+                <div className="rounded-3xl bg-[#111622] border border-emerald-500/25 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-extrabold text-white flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        <span>دفتر YT Coin مستقل بأعداد صحيحة (BIGINT)</span>
+                      </h3>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/25">
+                        1 YT = 1,000 جزء (0.001 YT)
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      تعمل محفظة YT Coin بنظام مستقل تماماً بأعداد صحيحة دون أي مساس بمحافظ الريال اليمني أو الدفاتر المالية القديمة.
+                    </p>
+                  </div>
+                  <div className="text-left bg-[#0A0E17] border border-white/10 rounded-xl px-3.5 py-2 shrink-0">
+                    <span className="text-[10px] text-gray-400 block">أرباح الإعلانات الموثقة</span>
+                    <strong className="text-sm font-black text-sky-400 font-mono">
+                      +{formatYt(summary?.adEarnedYt ?? 0)} YT
+                    </strong>
                   </div>
                 </div>
 
@@ -1961,31 +2294,33 @@ export const YtCoinMiningCard: React.FC<{
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="rounded-2xl bg-[#131822] border border-amber-500/20 p-4">
                     <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
-                      <span>إجمالي المعروض المعتمد</span>
+                      <span>سقف الإصدار النهائي</span>
                       <Coins className="w-4 h-4 text-amber-400" />
                     </div>
-                    <div className="text-xl font-black text-white font-mono">1,000,000,000</div>
-                    <div className="text-[11px] text-amber-400 mt-1">سقف ثابت: 1 مليار YT Coin</div>
+                    <div className="text-xl font-black text-white font-mono">
+                      {YT_MAX_SUPPLY_YT.toLocaleString('en-US')}
+                    </div>
+                    <div className="text-[11px] text-amber-400 mt-1">سقف ثابت: 100 مليون YT Coin</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
                     <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
-                      <span>إجمالي العملات المعدّنة</span>
+                      <span>المعروض المتداول الفعلي</span>
                       <Hammer className="w-4 h-4 text-emerald-400" />
                     </div>
                     <div className="text-xl font-black text-emerald-400 font-mono">
-                      {formatYt(summary?.poolDistributedYt ?? 0)}
+                      {formatYt(summary?.circulatingSupplyYt ?? 0)}
                     </div>
-                    <div className="text-[11px] text-gray-400 mt-1">توزيع مستمر من السقف الكلي</div>
+                    <div className="text-[11px] text-gray-400 mt-1">أرصدة موزعة ومعتمدة فعلياً فقط</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
                     <div className="flex items-center justify-between text-gray-400 text-xs mb-2">
-                      <span>السقف التصاعدي لليوم</span>
+                      <span>دقة المحاسبة والأجزاء</span>
                       <TrendingUp className="w-4 h-4 text-amber-400" />
                     </div>
-                    <div className="text-xl font-black text-white font-mono">{formatYt(effectiveDailyCap)}</div>
-                    <div className="text-[11px] text-emerald-400 mt-1">دقة التعدين: حتى 0.5 YT</div>
+                    <div className="text-xl font-black text-white font-mono">0.001 YT</div>
+                    <div className="text-[11px] text-emerald-400 mt-1">كل 1 YT = 1,000 جزء صحيح (BIGINT)</div>
                   </div>
 
                   <div className="rounded-2xl bg-[#131822] border border-white/5 p-4">
@@ -1997,7 +2332,7 @@ export const YtCoinMiningCard: React.FC<{
                       {formatYt(summary?.totalMinedYt ?? 0)}
                     </div>
                     <div className="text-[11px] text-sky-400 mt-1">
-                      سلسلة الالتزام: {formatInt(summary?.streakDays ?? 0)} يوم
+                      نقرات اليوم: {formatInt(effectiveTapsToday)} نقرة
                     </div>
                   </div>
                 </div>
@@ -2072,37 +2407,50 @@ export const YtCoinMiningCard: React.FC<{
                   </div>
                 </div>
 
-                {/* Tokenomics Distribution */}
-                <div className="rounded-3xl bg-[#131822] border border-white/5 p-5 sm:p-6">
-                  <h3 className="text-base font-extrabold text-white mb-4">توزيع المعروض المعتمد (Tokenomics)</h3>
+                {/* Tokenomics Distribution (100,000,000 YT Cap) */}
+                <div className="rounded-3xl bg-[#131822] border border-white/5 p-5 sm:p-6 space-y-4">
+                  <div>
+                    <h3 className="text-base font-extrabold text-white">توزيع سقف الإصدار النهائي (100,000,000 YT)</h3>
+                    <p className="text-xs text-gray-400 mt-1">
+                      مجموع التخصيصات لا يتجاوز 100 مليون YT، ولا تُعتبر التخصيصات غير المعتمدة أو المقفلة إصداراً فعلياً أو متداولاً قبل توزيعها.
+                    </p>
+                  </div>
                   <div className="space-y-3 text-xs sm:text-sm">
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-gray-300">مكافآت التعدين العام (70%)</span>
-                        <span className="font-bold text-amber-400 font-mono">700,000,000 YT</span>
-                      </div>
-                      <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full bg-amber-400 rounded-full" style={{ width: '70%' }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-gray-300">مكافآت المهام والمجتمع (15%)</span>
-                        <span className="font-bold text-emerald-400 font-mono">150,000,000 YT</span>
-                      </div>
-                      <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-400 rounded-full" style={{ width: '15%' }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex justify-between mb-1">
-                        <span className="text-gray-300">السيولة وتطوير النظام البيئي (15%)</span>
-                        <span className="font-bold text-sky-400 font-mono">150,000,000 YT</span>
-                      </div>
-                      <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
-                        <div className="h-full bg-sky-400 rounded-full" style={{ width: '15%' }} />
-                      </div>
-                    </div>
+                    {YT_TOKENOMICS_ALLOCATIONS.map((alloc) => {
+                      const barColor =
+                        alloc.key === 'YT-USER-REWARDS'
+                          ? 'bg-amber-400'
+                          : alloc.key === 'YT-TEAM-VESTING'
+                            ? 'bg-rose-400'
+                            : alloc.key === 'YT-MARKET-LIQUIDITY'
+                              ? 'bg-sky-400'
+                              : 'bg-emerald-400';
+                      const textColor =
+                        alloc.key === 'YT-USER-REWARDS'
+                          ? 'text-amber-400'
+                          : alloc.key === 'YT-TEAM-VESTING'
+                            ? 'text-rose-400'
+                            : alloc.key === 'YT-MARKET-LIQUIDITY'
+                              ? 'text-sky-400'
+                              : 'text-emerald-400';
+                      return (
+                        <div key={alloc.key}>
+                          <div className="flex flex-wrap justify-between gap-2 mb-1">
+                            <span className="text-gray-200 font-bold">
+                              {alloc.labelAr} ({alloc.percentage}%)
+                              {alloc.locked ? ' • مقفلة باستحقاق' : alloc.independentAccount ? ' • حساب مستقل' : ''}
+                            </span>
+                            <span className={`font-bold font-mono ${textColor}`}>
+                              {alloc.allocationYt.toLocaleString('en-US')} YT
+                            </span>
+                          </div>
+                          <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+                            <div className={`h-full ${barColor} rounded-full`} style={{ width: `${alloc.percentage}%` }} />
+                          </div>
+                          <p className="text-[11px] text-gray-400 mt-1">{alloc.notesAr}</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               </section>
@@ -2116,40 +2464,49 @@ export const YtCoinMiningCard: React.FC<{
                 {/* Live Admin KPIs */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="rounded-2xl bg-[#131822] border border-amber-500/25 p-4">
-                    <span className="text-[11px] text-gray-400 block">رصيد خزينة التعدين</span>
+                    <span className="text-[11px] text-gray-400 block">مخصص مكافآت المستخدمين (من 30M)</span>
                     <strong className="text-lg sm:text-xl font-black text-amber-400 font-mono mt-1 block">
                       {adminLoading && !adminSummary
                         ? '...'
-                        : `${formatYt((Number(adminSummary?.rewards_treasury_balance_units ?? 0)) / 2)} YT`}
+                        : `${formatYt(
+                            adminSummary?.rewards_treasury_balance_yt ??
+                              Number(adminSummary?.rewards_treasury_balance_units ?? 0) / Number(adminSummary?.unit_scale || YT_SUBUNITS_PER_YT)
+                          )} YT`}
                     </strong>
                   </div>
                   <div className="rounded-2xl bg-[#131822] border border-emerald-500/25 p-4">
-                    <span className="text-[11px] text-gray-400 block">إجمالي المُعدَّن فعلياً</span>
+                    <span className="text-[11px] text-gray-400 block">المتداول الفعلي الموزّع</span>
                     <strong className="text-lg sm:text-xl font-black text-emerald-400 font-mono mt-1 block">
                       {adminLoading && !adminSummary
                         ? '...'
-                        : `${formatYt((Number(adminSummary?.total_mined_units ?? 0)) / 2)} YT`}
+                        : `${formatYt(
+                            adminSummary?.circulating_supply_yt ??
+                              Number(adminSummary?.circulating_supply_units ?? 0) / Number(adminSummary?.unit_scale || YT_SUBUNITS_PER_YT)
+                          )} YT`}
                     </strong>
                   </div>
                   <div className="rounded-2xl bg-[#131822] border border-white/10 p-4">
                     <span className="text-[11px] text-gray-400 block">مُعدَّن اليوم</span>
-                    <strong className="text-lg sm:text-xl font-black text-white font-mono mt-1 block">
+                    <strong className="text-base sm:text-lg font-black text-white font-mono mt-1 block">
                       {adminLoading && !adminSummary
                         ? '...'
-                        : `${formatYt((Number(adminSummary?.today_mined_units ?? 0)) / 2)} YT`}
+                        : `${formatYt(
+                            adminSummary?.today_mined_yt ??
+                              Number(adminSummary?.today_mined_units ?? 0) / Number(adminSummary?.unit_scale || YT_SUBUNITS_PER_YT)
+                          )} YT`}
                     </strong>
                   </div>
                   <div className="rounded-2xl bg-[#131822] border border-white/10 p-4">
-                    <span className="text-[11px] text-gray-400 block">المعدّنون / المطالبات</span>
-                    <strong className="text-lg sm:text-xl font-black text-sky-400 font-mono mt-1 block">
+                    <span className="text-[11px] text-gray-400 block">المعدّنون / نقرات / إعلانات اليوم</span>
+                    <strong className="text-base sm:text-lg font-black text-sky-400 font-mono mt-1 block">
                       {adminLoading && !adminSummary
                         ? '...'
-                        : `${formatInt(adminSummary?.active_miners_count)} / ${formatInt(adminSummary?.total_claims)}`}
+                        : `${formatInt(adminSummary?.active_miners_count)} / ${formatInt(adminSummary?.today_taps_count)} / ${formatInt(adminSummary?.today_ads_count)}`}
                     </strong>
                   </div>
                 </div>
 
-                {/* Admin Configuration Form (0.5-YT decimal support) */}
+                {/* Admin Configuration Form */}
                 <form
                   onSubmit={(e) => void handleSaveAdminSettings(e)}
                   className="rounded-3xl bg-[#131822] border border-amber-500/25 p-5 sm:p-6"
@@ -2162,7 +2519,7 @@ export const YtCoinMiningCard: React.FC<{
                       <div>
                         <h2 className="text-lg sm:text-xl font-black text-white">لوحة تحكم الإدارة (للمدير فقط)</h2>
                         <p className="text-xs text-gray-400">
-                          إدارة قواعد التعدين والسقف اليومي بدقة حتى خانة عشرية واحدة (مضاعفات 0.5 YT).
+                          1 YT = 1,000 جزء صحيح BIGINT (سقف نهائي 100,000,000 YT) — ضبط مكافأة الدخول اليومي والنقر والإعلانات المؤهلة.
                         </p>
                       </div>
                     </div>
@@ -2181,13 +2538,13 @@ export const YtCoinMiningCard: React.FC<{
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
                     <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
                       <label className="text-xs font-bold text-gray-300 block">
-                        مكافأة اليوم الأول (YT — خانة عشرية واحدة مثل 0.5)
+                        مكافأة الدخول اليومي الثابتة (YT — الافتراضي 0.5)
                       </label>
                       <input
                         name="baseRewardYt"
                         type="number"
-                        min={0.5}
-                        step={0.5}
+                        min={0.001}
+                        step={0.001}
                         value={adminBaseRewardYt}
                         onChange={(e) => setAdminBaseRewardYt(e.target.value)}
                         className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
@@ -2196,30 +2553,75 @@ export const YtCoinMiningCard: React.FC<{
 
                     <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
                       <label className="text-xs font-bold text-gray-300 block">
-                        الزيادة التراكمية لكل يوم متتالٍ (YT — مثل 0.5)
+                        مكافأة كل نقرة (YT — الافتراضي 0.01)
                       </label>
                       <input
-                        name="dailyIncrementYt"
+                        name="tapRewardYt"
                         type="number"
-                        min={0}
-                        step={0.5}
-                        value={adminDailyIncrementYt}
-                        onChange={(e) => setAdminDailyIncrementYt(e.target.value)}
+                        min={0.001}
+                        step={0.001}
+                        value={adminTapRewardYt}
+                        onChange={(e) => setAdminTapRewardYt(e.target.value)}
                         className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
                       />
                     </div>
 
                     <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
                       <label className="text-xs font-bold text-gray-300 block">
-                        مكافأة اليوم 20 وما بعده يومياً (YT)
+                        مكافأة النقرة الإعلانية المؤهلة (YT — الافتراضي 0.01)
                       </label>
                       <input
-                        name="maxDailyRewardYt"
+                        name="adClickRewardYt"
                         type="number"
-                        min={0.5}
-                        step={0.5}
-                        value={adminMaxDailyRewardYt}
-                        onChange={(e) => setAdminMaxDailyRewardYt(e.target.value)}
+                        min={0.001}
+                        step={0.001}
+                        value={adminAdClickRewardYt}
+                        onChange={(e) => setAdminAdClickRewardYt(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
+                      <label className="text-xs font-bold text-gray-300 block">
+                        مكافأة مشاهدة الإعلان المؤهلة (YT — الافتراضي 0.01)
+                      </label>
+                      <input
+                        name="adViewRewardYt"
+                        type="number"
+                        min={0.001}
+                        step={0.001}
+                        value={adminAdViewRewardYt}
+                        onChange={(e) => setAdminAdViewRewardYt(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
+                      <label className="text-xs font-bold text-gray-300 block">
+                        الحد اليومي للنقرات للمستخدم (0 = مفتوح)
+                      </label>
+                      <input
+                        name="dailyTapLimit"
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={adminDailyTapLimit}
+                        onChange={(e) => setAdminDailyTapLimit(e.target.value)}
+                        className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
+                      />
+                    </div>
+
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 space-y-2">
+                      <label className="text-xs font-bold text-gray-300 block">
+                        الحد اليومي للإعلانات للمستخدم (0 = مفتوح)
+                      </label>
+                      <input
+                        name="dailyAdLimit"
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={adminDailyAdLimit}
+                        onChange={(e) => setAdminDailyAdLimit(e.target.value)}
                         className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
                       />
                     </div>
@@ -2231,8 +2633,8 @@ export const YtCoinMiningCard: React.FC<{
                       <input
                         name="dailyCapStartYt"
                         type="number"
-                        min={0.5}
-                        step={0.5}
+                        min={0.001}
+                        step={0.001}
                         value={adminDailyCapStartYt}
                         onChange={(e) => setAdminDailyCapStartYt(e.target.value)}
                         className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
@@ -2246,18 +2648,18 @@ export const YtCoinMiningCard: React.FC<{
                       <input
                         name="dailyCapMaxYt"
                         type="number"
-                        min={0.5}
-                        step={0.5}
+                        min={0.001}
+                        step={0.001}
                         value={adminDailyCapMaxYt}
                         onChange={(e) => setAdminDailyCapMaxYt(e.target.value)}
                         className="w-full bg-[#161C28] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-bold text-sm font-mono focus:outline-none focus:border-amber-400"
                       />
                     </div>
 
-                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 flex items-center justify-between gap-3">
+                    <div className="p-4 rounded-2xl bg-[#0D1119] border border-white/10 flex items-center justify-between gap-3 md:col-span-2">
                       <div>
                         <span className="text-xs font-bold text-gray-200 block">حالة التعدين في المنصة</span>
-                        <span className="text-[11px] text-gray-400">تفعيل أو إيقاف مطالبات التعدين فوراً</span>
+                        <span className="text-[11px] text-gray-400">تفعيل أو إيقاف مطالبات التعدين فوراً (ويمكنك إدارة الشبكات الإعلانية من لوحة الإدارة العامة)</span>
                       </div>
                       <button
                         type="button"
@@ -2300,31 +2702,40 @@ export const YtCoinMiningCard: React.FC<{
                   <div className="rounded-3xl bg-[#131822] border border-white/10 p-5 overflow-hidden">
                     <h3 className="text-sm font-extrabold text-white mb-3 flex items-center gap-2">
                       <History className="w-4 h-4 text-amber-400" />
-                      <span>أحدث مطالبات التعدين للمستخدمين</span>
+                      <span>أحدث مطالبات الدخول اليومي للمستخدمين</span>
                     </h3>
                     <div className="overflow-x-auto">
                       <table className="w-full text-right text-xs">
                         <thead className="text-gray-400 border-b border-white/10">
                           <tr>
                             <th className="py-2 px-3">المستخدم</th>
-                            <th className="py-2 px-3">اليوم المتتالي</th>
+                            <th className="py-2 px-3">النوع</th>
                             <th className="py-2 px-3">المكافأة</th>
                             <th className="py-2 px-3">التاريخ</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                          {adminSummary.recent_claims.slice(0, 15).map((claim: any) => (
-                            <tr key={String(claim.id)}>
-                              <td className="py-2.5 px-3 font-bold text-gray-200">
-                                {claim.full_name || String(claim.user_id || '').slice(0, 8)}
-                              </td>
-                              <td className="py-2.5 px-3 font-mono text-sky-400">اليوم {claim.streak_day ?? 1}</td>
-                              <td className="py-2.5 px-3 font-mono font-black text-amber-400">
-                                +{formatYt(Number(claim.amount_units ?? claim.reward_units ?? 0) / 2)} YT
-                              </td>
-                              <td className="py-2.5 px-3 text-gray-400">{formatDateTime(claim.created_at || claim.claim_date)}</td>
-                            </tr>
-                          ))}
+                          {adminSummary.recent_claims.slice(0, 15).map((claim: any) => {
+                            const amt =
+                              claim.amount_yt !== undefined && claim.amount_yt !== null
+                                ? Number(claim.amount_yt)
+                                : Number(claim.amount_units ?? claim.reward_units ?? 0) /
+                                  Number(adminSummary?.unit_scale || 1);
+                            return (
+                              <tr key={String(claim.id)}>
+                                <td className="py-2.5 px-3 font-bold text-gray-200">
+                                  {claim.full_name || String(claim.user_id || '').slice(0, 8)}
+                                </td>
+                                <td className="py-2.5 px-3 text-sky-400 font-semibold">دخول يومي</td>
+                                <td className="py-2.5 px-3 font-mono font-black text-amber-400">
+                                  +{formatYt(amt)} YT
+                                </td>
+                                <td className="py-2.5 px-3 text-gray-400">
+                                  {formatDateTime(claim.created_at || claim.claim_date)}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -2401,7 +2812,100 @@ export const YtCoinMiningCard: React.FC<{
         </nav>
       </div>
 
-      {/* ==================== WALLET & SYSTEM MODALS ==================== */}
+      {/* P2P YT Coin Transfer Modal (yt1... -> yt1...) */}
+      {showTransferModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#121826] border border-amber-500/35 rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-white flex items-center gap-2">
+                <Send className="w-5 h-5 text-amber-400" />
+                <span>تحويل YT Coin إلى محفظة أخرى</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowTransferModal(false)}
+                className="text-gray-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={(e) => void handleTransferYt(e)} className="space-y-3.5">
+              <div>
+                <label className="text-xs font-bold text-gray-300 block mb-1.5">عنوان محفظة المستلم (yt1...)</label>
+                <input
+                  type="text"
+                  required
+                  dir="ltr"
+                  placeholder="yt1..."
+                  value={transferRecipientAddress}
+                  onChange={(e) => setTransferRecipientAddress(e.target.value)}
+                  className="w-full bg-[#0A0E17] border border-white/15 rounded-xl px-3.5 py-2.5 text-amber-300 font-mono text-xs focus:outline-none focus:border-amber-400"
+                />
+                {lookingUpRecipient && <span className="text-[11px] text-sky-400 mt-1 block">جاري التحقق من العنوان...</span>}
+                {transferRecipientName && (
+                  <div className="mt-1.5 text-xs text-emerald-400 flex items-center gap-1.5 font-bold">
+                    <UserCheck className="w-4 h-4" />
+                    <span>المستلم: {transferRecipientName}</span>
+                  </div>
+                )}
+                {transferLookupError && <span className="text-[11px] text-rose-400 mt-1 block">{transferLookupError}</span>}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <label className="font-bold text-gray-300">الكمية (YT)</label>
+                  <button
+                    type="button"
+                    onClick={() => setTransferAmountYt(String(Math.floor(effectiveBalance * 1000) / 1000))}
+                    className="text-amber-400 hover:underline font-bold cursor-pointer"
+                  >
+                    المتاح: {formatYt(effectiveBalance)} YT
+                  </button>
+                </div>
+                <input
+                  type="number"
+                  required
+                  min={0.001}
+                  step={0.001}
+                  placeholder="0.5"
+                  value={transferAmountYt}
+                  onChange={(e) => setTransferAmountYt(e.target.value)}
+                  className="w-full bg-[#0A0E17] border border-white/15 rounded-xl px-3.5 py-2.5 text-white font-mono font-bold text-sm focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-300 block mb-1.5">ملاحظة (اختياري)</label>
+                <input
+                  type="text"
+                  placeholder="مثال: تحويل رصيد YT"
+                  value={transferNote}
+                  onChange={(e) => setTransferNote(e.target.value)}
+                  className="w-full bg-[#0A0E17] border border-white/15 rounded-xl px-3.5 py-2 text-white text-xs focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTransferModal(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-white/10 text-gray-300 font-bold text-xs cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingTransfer || !transferRecipientName || !transferAmountYt}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-[#0B0E14] font-black text-xs cursor-pointer"
+                >
+                  {submittingTransfer ? 'جاري التحويل...' : 'تأكيد التحويل'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Receive QR Modal */}
       {showReceiveModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -2466,7 +2970,7 @@ export const YtCoinMiningCard: React.FC<{
               <AlertTriangle className="w-6 h-6" />
             </div>
             <h3 className="text-lg font-black text-white">استعادة القيم الافتراضية للحقول؟</h3>
-            <p className="text-xs text-gray-400">سيتم إرجاع قيم الحقول إلى الافتراضي (0.5 YT ثم 20 YT في اليوم 20) دون المساس بأي أرصدة محفوظة.</p>
+            <p className="text-xs text-gray-400">سيتم إرجاع قيم الحقول إلى الافتراضي (0.5 YT يومياً، 0.01 YT لكل نقرة، 0.01 YT لنقرة/مشاهدة الإعلان) دون المساس بأي أرصدة محفوظة.</p>
             <div className="flex gap-2.5">
               <button
                 type="button"

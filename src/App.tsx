@@ -24,11 +24,12 @@ import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
 import { SplashScreen } from './components/common/SplashScreen.tsx';
 import { HomeShortcutsStrip } from './components/home/HomeShortcutsStrip.tsx';
 import { YtCoinMiningCard } from './components/home/YtCoinMiningCard.tsx';
+import { EarnFromAdsView } from './components/ads/EarnFromAdsView.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
 function MainApp() {
   const { user, isAdmin } = useAuth();
-  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin'>('home');
+  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin'>('home');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   
@@ -134,8 +135,18 @@ function MainApp() {
 
         {currentTab === 'ytcoin' && (
           <div className="w-full h-full min-h-[100dvh]">
-            <YtCoinMiningCard onExit={() => setCurrentTab('home')} />
+            <YtCoinMiningCard
+              onExit={() => setCurrentTab('home')}
+              onOpenEarnAds={() => setCurrentTab('earn_ads')}
+            />
           </div>
+        )}
+
+        {currentTab === 'earn_ads' && (
+          <EarnFromAdsView
+            onBackHome={() => setCurrentTab('home')}
+            onOpenYtCoin={() => setCurrentTab('ytcoin')}
+          />
         )}
 
         {currentTab === 'tasks' && (

@@ -768,6 +768,8 @@ function mapLedgerTxType(rawType: string, entrySide: 'debit' | 'credit'): Transa
       return 'CLIXWALL_REWARD';
     case 'CLIXWALL_REVERSAL':
       return 'CLIXWALL_REVERSAL';
+    case 'YT_COIN_SWAP':
+      return 'YT_COIN_SWAP';
     default:
       return (entrySide === 'credit' ? 'TASK_REWARD' : 'ADMIN_ADJUSTMENT') as TransactionType;
   }

@@ -7,6 +7,7 @@ import {
   formatYer,
   parseMoneyStrict,
 } from '../../../shared/money.ts';
+import { formatYt, formatYtUnits, YT_SUBUNITS_PER_YT } from '../../../shared/ytCoin.ts';
 import {
   Wallet,
   ArrowUpRight,
@@ -36,13 +37,18 @@ import confetti from 'canvas-confetti';
 import { CampaignLedgerTxModal } from '../advertiser/CampaignModals.tsx';
 import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 
-function formatYtCoinUnits(value: unknown): string {
-  if (value === null || value === undefined || value === '') return '0';
-  const units = Number(value);
+function formatYtCoinAmount(directYt: unknown, unitsFallback?: unknown, unitScaleRaw?: unknown): string {
+  if (directYt !== null && directYt !== undefined && directYt !== '') {
+    const val = Number(directYt);
+    if (Number.isFinite(val)) return formatYt(val);
+  }
+  if (unitsFallback === null || unitsFallback === undefined || unitsFallback === '') return '0';
+  const units = Number(unitsFallback);
   if (!Number.isFinite(units)) return '0';
-  const yt = units / 2;
-  if (yt !== 0 && Math.abs(yt) < 0.1) return yt < 0 ? '-<0.1' : '<0.1';
-  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 1 }).format(yt);
+  const parsedScale = Number(unitScaleRaw);
+  const scale = Number.isFinite(parsedScale) && parsedScale > 0 ? parsedScale : YT_SUBUNITS_PER_YT;
+  if (scale === YT_SUBUNITS_PER_YT) return formatYtUnits(units);
+  return formatYt(units / scale);
 }
 
 interface WalletViewProps {
@@ -280,6 +286,8 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
         return 'مكافأة عروض ClixWall';
       case 'CLIXWALL_REVERSAL':
         return 'عكس / استرجاع مكافأة ClixWall';
+      case 'YT_COIN_SWAP':
+        return 'تبديل علائقي مع محفظة YT Coin';
       default:
         return 'حركة قيود مالية';
     }
@@ -463,24 +471,44 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
         </div>
       </div>
 
-      {/* Independent YT Coin balance: never mixed with the YER financial wallet */}
+      {/* Independent YT Coin balance: separate system & BIGINT integer sub-unit ledger */}
       <section className="rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-gradient-to-l from-amber-50 via-white to-yellow-50 dark:from-slate-900 dark:via-slate-900 dark:to-amber-950/20 p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="h-11 w-11 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0"><Coins className="w-6 h-6" /></div>
             <div className="min-w-0">
               <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">محفظة YT Coin المستقلة</h2>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">رصيد منفصل تماماً عن الريال اليمني ولا يدخل في السحب أو التحويل المالي</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                نظام مستقل بأعداد صحيحة BIGINT (1 YT = 1,000 جزء • أصغر وحدة 0.001 YT) — تبقى محفظة يمن تاسك بالريال اليمني دون مساس
+              </p>
             </div>
           </div>
           <div className="text-left shrink-0">
-            <strong className="block text-xl font-extrabold font-mono text-amber-700 dark:text-amber-300">{formatYtCoinUnits(ytCoinSummary?.balanceUnits ?? ytCoinSummary?.balance_units)}</strong>
+            <strong className="block text-xl font-extrabold font-mono text-amber-700 dark:text-amber-300">
+              {formatYtCoinAmount(
+                ytCoinSummary?.balanceYt ?? ytCoinSummary?.balance_yt,
+                ytCoinSummary?.balanceUnits ?? ytCoinSummary?.balance_units,
+                ytCoinSummary?.unitScale
+              )}
+            </strong>
             <span className="text-xs font-bold text-amber-700 dark:text-amber-300">YT</span>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-amber-100 dark:border-amber-900/40 pt-3 text-[11px]">
-          <span className="text-slate-600 dark:text-slate-300">إجمالي المكتسب: <b className="font-mono">{formatYtCoinUnits(ytCoinSummary?.lifetimeEarnedUnits ?? ytCoinSummary?.lifetime_earned_units)} YT</b></span>
-          <span className="text-slate-500 dark:text-slate-400">تُجمع عبر التعدين والمكافآت الداخلية</span>
+          <span className="text-slate-600 dark:text-slate-300">
+            إجمالي المكتسب:{' '}
+            <b className="font-mono">
+              {formatYtCoinAmount(
+                ytCoinSummary?.lifetimeEarnedYt ?? ytCoinSummary?.lifetime_earned_yt,
+                ytCoinSummary?.lifetimeEarnedUnits ?? ytCoinSummary?.lifetime_earned_units,
+                ytCoinSummary?.unitScale
+              )}{' '}
+              YT
+            </b>
+          </span>
+          <span className="text-slate-500 dark:text-slate-400">
+            الدخول اليومي ({formatYtCoinAmount(ytCoinSummary?.baseRewardYt ?? 0.5)} YT) • نقرة الإعلان ({formatYtCoinAmount(ytCoinSummary?.adClickRewardYt ?? 0.01)} YT) • المشاهدة ({formatYtCoinAmount(ytCoinSummary?.adViewRewardYt ?? 0.01)} YT)
+          </span>
         </div>
       </section>
 

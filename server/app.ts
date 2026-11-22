@@ -25,6 +25,14 @@ import {
   calculateCampaignFeePolicyCosts,
   formatYer,
 } from '../shared/money.js';
+import { ytToUnitsStrict } from '../shared/ytCoin.js';
+import {
+  getYtCoinAdCenter,
+  createYtCoinAdSession,
+  handleVerifiedYtCoinAdPostback,
+  adminUpsertYtCoinAdNetwork,
+  adminDeleteYtCoinAdNetwork,
+} from './ytCoinAdHandlers.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.vip').trim().replace(/\/$/, '');
@@ -4220,7 +4228,8 @@ const offerwallGgHandlers = createOfferwallGgHandlers({
   },
 });
 
-// YT Coin mining: user-scoped JWT RPCs; independent from YER wallets and financial ledgers.
+// YT Coin: independent schema (100,000,000 YT final cap, BIGINT 1 YT = 1,000 integer sub-units, 0.001 YT min),
+// isolated from YER wallets and financial ledgers.
 app.get('/api/yt-coin/summary', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
@@ -4233,6 +4242,7 @@ app.get('/api/yt-coin/summary', authMiddleware, async (req: AuthenticatedRequest
     return res.status(400).json({ error: err?.message || 'تعذر تحميل ملخص YT Coin.' });
   }
 });
+
 app.post('/api/yt-coin/claim', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
@@ -4242,8 +4252,87 @@ app.post('/api/yt-coin/claim', authMiddleware, async (req: AuthenticatedRequest,
     return res.json({ result: data });
   } catch (err: any) {
     await logSupabaseError({ err, operation: 'YT_COIN_DAILY_CLAIM', apiRoute: '/api/yt-coin/claim' });
-    return res.status(400).json({ error: err?.message || 'تعذر استلام مكافأة التعدين.' });
+    return res.status(400).json({ error: err?.message || 'تعذر استلام مكافأة الدخول اليومي.' });
   }
+});
+
+app.post('/api/yt-coin/tap', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const rawTaps = body.taps === undefined ? 1 : Number(body.taps);
+    if (!Number.isInteger(rawTaps) || rawTaps < 1 || rawTaps > 200) {
+      return res.status(400).json({ error: 'عدد النقرات يجب أن يكون عدداً صحيحاً بين 1 و 200.' });
+    }
+    const userClient = getSupabaseUserClient(req.authToken);
+    const { data, error } = await userClient.rpc('claim_my_yt_coin_taps', { p_taps: rawTaps });
+    if (error) throw error;
+    return res.json({ result: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_TAP_CLAIM', apiRoute: '/api/yt-coin/tap' });
+    return res.status(400).json({ error: err?.message || 'تعذر تسجيل مكافأة النقر.' });
+  }
+});
+
+// Strict Anti-Fraud Rule: Never grant ad rewards from a mere browser click/POST.
+app.post('/api/yt-coin/watch-ad', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(403).json({
+    error: 'لا يمكن منح مكافأة الإعلان من المتصفح مباشرة. تُضاف المكافأة فقط بعد التحقق الموثوق من الشبكة الإعلانية.',
+  });
+});
+
+// Verified Ad Rewards Center («اكسب من الإعلانات»)
+app.get('/api/yt-coin/ads', authMiddleware, getYtCoinAdCenter);
+app.post('/api/yt-coin/ads/session', authMiddleware, createYtCoinAdSession);
+app.all('/api/postbacks/yt-coin-ads/:networkKey', handleVerifiedYtCoinAdPostback);
+
+app.get('/api/yt-coin/lookup', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
+    const address = String(req.query.address || '').trim();
+    if (!address) return res.status(400).json({ error: 'يرجى إدخال عنوان المحفظة.' });
+    const userClient = getSupabaseUserClient(req.authToken);
+    const { data, error } = await userClient.rpc('lookup_yt_coin_wallet', { p_wallet_address: address });
+    if (error) throw error;
+    return res.json({ wallet: data });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر التحقق من عنوان المحفظة.' });
+  }
+});
+
+app.post('/api/yt-coin/transfer', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const recipientAddress = String(body.recipientAddress || '').trim();
+    const note = typeof body.note === 'string' ? body.note.trim() : null;
+
+    if (!recipientAddress) {
+      return res.status(400).json({ error: 'يرجى إدخال عنوان محفظة المستلم (yt1...).' });
+    }
+    const amountUnits = ytToUnitsStrict(body.amountYt, {
+      fieldLabel: 'مبلغ التحويل',
+      minUnits: 1, // 0.001 YT minimum
+    });
+
+    const userClient = getSupabaseUserClient(req.authToken);
+    const { data, error } = await userClient.rpc('transfer_yt_coin', {
+      p_recipient_address: recipientAddress,
+      p_amount_units: amountUnits,
+      p_note: note,
+    });
+    if (error) throw error;
+    return res.json({ result: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_TRANSFER', apiRoute: '/api/yt-coin/transfer' });
+    return res.status(400).json({ error: err?.message || 'تعذر تنفيذ تحويل YT Coin.' });
+  }
+});
+
+app.post('/api/yt-coin/swap', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(403).json({
+    error: 'التبديل المباشر مع محافظ الريال اليمني غير مفعل حفاظاً على استقلالية الدفتر المالي القديم.',
+  });
 });
 
 app.get('/api/admin/yt-coin/summary', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
@@ -4251,7 +4340,19 @@ app.get('/api/admin/yt-coin/summary', adminMiddleware, async (req: Authenticated
     if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
     const { data, error } = await getSupabaseUserClient(req.authToken).rpc('get_yt_coin_admin_summary');
     if (error) throw error;
-    return res.json({ summary: data });
+
+    const raw = (data && typeof data === 'object' ? { ...(data as Record<string, any>) } : {}) as Record<string, any>;
+    if (Array.isArray(raw.ad_networks)) {
+      raw.ad_networks = raw.ad_networks.map((net: any) => {
+        const keyName = typeof net?.secret_env_key === 'string' ? net.secret_env_key.trim() : '';
+        const val = keyName && /^[A-Z0-9_]{3,80}$/.test(keyName) ? process.env[keyName] : undefined;
+        return {
+          ...net,
+          secret_configured: typeof val === 'string' && val.trim().length >= 8,
+        };
+      });
+    }
+    return res.json({ summary: raw });
   } catch (err: any) {
     await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_SUMMARY', apiRoute: '/api/admin/yt-coin/summary' });
     return res.status(400).json({ error: err?.message || 'تعذر تحميل مؤشرات YT Coin.' });
@@ -4263,37 +4364,52 @@ app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedR
     if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
 
-    const toUnits = (raw: unknown, label: string, minUnits: number): number | null => {
+    const parseOptUnits = (raw: unknown, label: string): number | null => {
       if (raw === undefined || raw === null || raw === '') return null;
-      const num = Number(raw);
-      if (!Number.isFinite(num) || num < 0) {
-        throw new Error(`قيمة "${label}" غير صالحة.`);
-      }
-      if (Math.abs(num * 2 - Math.round(num * 2)) > 1e-6) {
-        throw new Error(`قيمة "${label}" يجب أن تكون من مضاعفات 0.5 YT (خانة عشرية واحدة مثل 0.5 أو 1.5 أو 20).`);
-      }
-      const units = Math.round(num * 2);
-      if (units < minUnits) {
-        throw new Error(`قيمة "${label}" أقل من الحد الأدنى المسموح.`);
-      }
-      return units;
+      return ytToUnitsStrict(raw, { fieldLabel: label, minUnits: 1 });
     };
 
-    const miningEnabled =
-      typeof body.miningEnabled === 'boolean' ? body.miningEnabled : null;
-    const baseRewardUnits = toUnits(body.baseRewardYt, 'مكافأة اليوم الأول', 1);
-    const dailyIncrementUnits = toUnits(body.dailyIncrementYt, 'الزيادة اليومية', 0);
-    const maxDailyRewardUnits = toUnits(body.maxDailyRewardYt, 'مكافأة اليوم 20 وما بعده', 1);
-    const dailyCapStartUnits = toUnits(body.dailyCapStartYt, 'السقف اليومي الابتدائي', 1);
-    const dailyCapMaxUnits = toUnits(body.dailyCapMaxYt, 'الحد الأقصى للسقف اليومي', 1);
+    const parseIntOpt = (raw: unknown, label: string): number | null => {
+      if (raw === undefined || raw === null || raw === '') return null;
+      const num = Number(raw);
+      if (!Number.isInteger(num) || num < 0) {
+        throw new Error(`قيمة "${label}" يجب أن تكون عدداً صحيحاً غير سالب.`);
+      }
+      return num;
+    };
+
+    const miningEnabled = typeof body.miningEnabled === 'boolean' ? body.miningEnabled : null;
+    const baseRewardUnits = parseOptUnits(body.baseRewardYt, 'مكافأة الدخول اليومي');
+    const tapRewardUnits = parseOptUnits(body.tapRewardYt, 'مكافأة النقر');
+    const adClickRewardUnits = parseOptUnits(body.adClickRewardYt ?? body.adRewardYt, 'مكافأة النقرة الإعلانية');
+    const adViewRewardUnits = parseOptUnits(body.adViewRewardYt ?? body.adRewardYt, 'مكافأة مشاهدة الإعلان');
+    const dailyTapLimit = parseIntOpt(body.dailyTapLimit, 'الحد اليومي للنقرات');
+    const dailyAdLimit = parseIntOpt(body.dailyAdLimit, 'الحد اليومي للإعلانات');
+    const dailyCapStartUnits = parseOptUnits(body.dailyCapStartYt, 'السقف اليومي الابتدائي');
+    const dailyCapMaxUnits = parseOptUnits(body.dailyCapMaxYt, 'الحد الأقصى للسقف اليومي');
+    const swapEnabled = typeof body.swapEnabled === 'boolean' ? body.swapEnabled : null;
+
+    let exchangeRateYerPerYt: number | null = null;
+    if (body.exchangeRateYerPerYt !== undefined && body.exchangeRateYerPerYt !== null && body.exchangeRateYerPerYt !== '') {
+      const rate = Number(body.exchangeRateYerPerYt);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        throw new Error('قيمة سعر الصرف غير صالحة.');
+      }
+      exchangeRateYerPerYt = rate;
+    }
 
     const { data, error } = await getSupabaseUserClient(req.authToken).rpc('admin_update_yt_coin_config', {
       p_mining_enabled: miningEnabled,
       p_base_reward_units: baseRewardUnits,
-      p_daily_increment_units: dailyIncrementUnits,
-      p_max_daily_reward_units: maxDailyRewardUnits,
+      p_tap_reward_units: tapRewardUnits,
+      p_ad_click_reward_units: adClickRewardUnits,
+      p_ad_view_reward_units: adViewRewardUnits,
+      p_daily_tap_limit: dailyTapLimit,
+      p_daily_ad_limit: dailyAdLimit,
       p_daily_cap_start_units: dailyCapStartUnits,
       p_daily_cap_max_units: dailyCapMaxUnits,
+      p_swap_enabled: swapEnabled,
+      p_exchange_rate_yer_per_yt: exchangeRateYerPerYt,
     });
     if (error) throw error;
     return res.json({ config: data });
@@ -4302,6 +4418,10 @@ app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedR
     return res.status(400).json({ error: err?.message || 'تعذر تحديث إعدادات تعدين YT Coin.' });
   }
 });
+
+app.post('/api/admin/yt-coin/ad-networks', adminMiddleware, adminUpsertYtCoinAdNetwork);
+app.put('/api/admin/yt-coin/ad-networks', adminMiddleware, adminUpsertYtCoinAdNetwork);
+app.delete('/api/admin/yt-coin/ad-networks/:id', adminMiddleware, adminDeleteYtCoinAdNetwork);
 
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);

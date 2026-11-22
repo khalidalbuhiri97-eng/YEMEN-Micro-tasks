@@ -11,6 +11,7 @@ import {
   Gift,
   CircleDollarSign,
   Clock3,
+  Tv,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { formatYer } from '../../../shared/money.ts';
@@ -29,6 +30,13 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
       targetTab: 'tasks',
       icon: CheckSquare,
       accent: 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/60',
+    },
+    {
+      id: 'earn_ads',
+      label: 'اكسب من الإعلانات',
+      targetTab: 'earn_ads',
+      icon: Tv,
+      accent: 'text-sky-700 bg-sky-50 dark:text-sky-300 dark:bg-sky-950/60',
     },
     {
       id: 'offerwall',

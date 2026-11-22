@@ -14,6 +14,7 @@ import {
   CheckSquare,
   HelpCircle,
   LayoutDashboard,
+  Tv,
 } from 'lucide-react';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 import { AndroidApkDownloadButton } from '../pwa/PWAInstallButton.tsx';
@@ -97,6 +98,16 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
                 }`}
               >
                 المحفظة والسحب
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('earn_ads')}
+                className={`hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 flex items-center gap-1.5 cursor-pointer ${
+                  currentTab === 'earn_ads' ? 'text-sky-600 dark:text-sky-400 font-bold border-b-2 border-sky-600' : ''
+                }`}
+              >
+                <Tv className="w-3.5 h-3.5 text-sky-500" />
+                <span>اكسب من الإعلانات</span>
               </button>
               <button
                 type="button"
@@ -390,6 +401,20 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
               >
                 <CheckSquare className="w-4 h-4 shrink-0" />
                 <span>المهام المتاحة</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => navigateFromDrawer('earn_ads')}
+                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-colors ${
+                  currentTab === 'earn_ads'
+                    ? 'bg-sky-600 text-white'
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Tv className="w-4 h-4 shrink-0 text-sky-500" />
+                <span>اكسب من الإعلانات</span>
+                <span className="mr-auto font-mono text-[10px] text-amber-500">YT</span>
               </button>
 
               <button

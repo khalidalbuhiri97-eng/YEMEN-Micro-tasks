@@ -714,22 +714,116 @@ export const api = {
   importAdminGeoCountry: (countryId: string) =>
     request<any>(`/admin/geo/countries/${encodeURIComponent(countryId)}/import`, { method: 'POST' }),
 
-  // Independent YT Coin mining (never touches the YER wallet or financial ledger)
+  // Independent YT Coin mining, verified ad rewards & wallet (BIGINT 1 YT = 1,000 parts, 100M max supply)
   getMyYtCoinSummary: () => request<{ summary: any }>('/yt-coin/summary'),
   claimDailyYtCoin: () => request<{ result: any }>('/yt-coin/claim', { method: 'POST' }),
+  claimTapYtCoin: (taps: number) =>
+    request<{ result: any }>('/yt-coin/tap', {
+      method: 'POST',
+      body: JSON.stringify({ taps }),
+    }),
+  lookupYtCoinWallet: (address: string) =>
+    request<{ wallet: any }>(`/yt-coin/lookup?address=${encodeURIComponent(address)}`),
+  transferYtCoin: (payload: { recipientAddress: string; amountYt: number; note?: string }) =>
+    request<{ result: any }>('/yt-coin/transfer', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  // Verified Ad Rewards Center («اكسب من الإعلانات»)
+  getYtCoinAdCenter: () =>
+    request<{
+      adCenter: {
+        unitScale: number;
+        adClickRewardUnits: number;
+        adClickRewardYt: number;
+        adViewRewardUnits: number;
+        adViewRewardYt: number;
+        dailyAdLimit: number;
+        adsToday: number;
+        totalAdEarnedUnits: number;
+        totalAdEarnedYt: number;
+        availableAdsCount: number;
+        hasConnectedNetwork: boolean;
+        connectedNetworks: Array<{
+          id: string;
+          networkKey: string;
+          displayName: string;
+          description?: string | null;
+          adType: 'view' | 'click' | 'both';
+          rewardClickUnits: number;
+          rewardClickYt: number;
+          rewardViewUnits: number;
+          rewardViewYt: number;
+          dailyUserLimit: number;
+          isActive: boolean;
+          isConnected: boolean;
+        }>;
+        recentEvents: Array<{
+          id: string;
+          networkKey: string;
+          externalEventId: string;
+          eventType: 'click' | 'view';
+          amountUnits: number;
+          amountYt: number;
+          verificationSource: string;
+          createdAt: string;
+        }>;
+      };
+    }>('/yt-coin/ads'),
+  createYtCoinAdSession: (payload: { networkKey: string; eventType: 'click' | 'view' }) =>
+    request<{
+      session: {
+        sessionId: string;
+        networkKey: string;
+        eventType: 'click' | 'view';
+        targetUrl: string;
+        rewardGrantedOnOpen: boolean;
+      };
+    }>('/yt-coin/ads/session', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 
   getAdminYtCoinSummary: () => request<{ summary: any }>('/admin/yt-coin/summary'),
   updateAdminYtCoinConfig: (payload: {
     miningEnabled?: boolean;
     baseRewardYt?: number;
-    dailyIncrementYt?: number;
-    maxDailyRewardYt?: number;
+    tapRewardYt?: number;
+    adClickRewardYt?: number;
+    adViewRewardYt?: number;
+    dailyTapLimit?: number;
+    dailyAdLimit?: number;
     dailyCapStartYt?: number;
     dailyCapMaxYt?: number;
+    swapEnabled?: boolean;
+    exchangeRateYerPerYt?: number;
   }) =>
     request<{ config: any }>('/admin/yt-coin/config', {
       method: 'PUT',
       body: JSON.stringify(payload),
+    }),
+  upsertAdminYtCoinAdNetwork: (payload: {
+    id?: string | null;
+    networkKey: string;
+    displayName: string;
+    description?: string | null;
+    authMode: 'hmac_sha256' | 'shared_secret';
+    secretEnvKey?: string;
+    placementUrl?: string | null;
+    adType: 'view' | 'click' | 'both';
+    rewardClickYt: number;
+    rewardViewYt: number;
+    dailyUserLimit: number;
+    isActive: boolean;
+  }) =>
+    request<{ network: any; secretConfigured: boolean }>('/admin/yt-coin/ad-networks', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteAdminYtCoinAdNetwork: (id: string) =>
+    request<{ result: any }>(`/admin/yt-coin/ad-networks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
     }),
 
   // Independent Offerwall.GG wall and YER rewards

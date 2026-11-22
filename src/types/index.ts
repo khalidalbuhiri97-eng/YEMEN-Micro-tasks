@@ -186,6 +186,7 @@ export type TransactionType =
   | 'CAMPAIGN_ESCROW_REFUND'
   | 'CLIXWALL_REWARD'
   | 'CLIXWALL_REVERSAL'
+  | 'YT_COIN_SWAP'
   | 'REVERSAL';
 
 export interface WalletTransaction {
