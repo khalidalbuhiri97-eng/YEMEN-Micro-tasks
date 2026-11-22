@@ -1161,7 +1161,7 @@ export const supabaseDb = {
         localYemen,
         `0${localYemen}`,
         `967${localYemen}`,
-        `+${'967'}${localYemen}`,
+        `+967${localYemen}`,
         `00967${localYemen}`,
       ].filter(Boolean)));
 
