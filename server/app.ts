@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { supabaseDb, generateWalletAddress, generateReferralCode } from './supabaseDb.js';
 import { geoService } from './geoService.js';
 import { createClixWallHandlers } from './clixwallHandlers.js';
+import { createOfferwallGgHandlers } from './offerwallGgHandlers.js';
 import {
   getPushPublicStatus,
   saveUserPushSubscription,
@@ -3949,6 +3950,29 @@ const clixwallHandlers = createClixWallHandlers({
   },
 });
 
+const offerwallGgHandlers = createOfferwallGgHandlers({
+  getAdminClient: getSupabaseAdminClient,
+  onRewardCredited: async (info) => {
+    await supabaseDb.createNotification({
+      userId: info.userId,
+      title: 'تمت إضافة مكافأة Offerwall.GG إلى محفظتك!',
+      message: `تم قيد مبلغ ${formatYer(info.amountYer)} ر.ي عن إتمام عرض "${info.offerName}".`,
+      type: 'OFFERWALL_GG_REWARD',
+      link: '/wallet',
+    });
+  },
+  onPostbackError: async (info) => {
+    await logSupabaseError({
+      err: new Error(info.reason),
+      operation: 'OFFERWALL_GG_POSTBACK',
+      sourceTable: 'offerwall_gg_postbacks',
+      sourceFunction: 'process_offerwall_gg_postback',
+      apiRoute: '/api/postbacks/offerwall-gg',
+      details: { transaction_id: info.transactionId || null, user_id: info.userId || null },
+    });
+  },
+});
+
 // YT Coin mining: user-scoped JWT RPCs; independent from YER wallets and financial ledgers.
 app.get('/api/yt-coin/summary', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -3989,6 +4013,9 @@ app.get('/api/admin/yt-coin/summary', adminMiddleware, async (req: Authenticated
 
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
+app.get('/api/offerwall-gg/url', authMiddleware, offerwallGgHandlers.getOfferWallUrl);
+app.get('/api/offerwall-gg/rewards', authMiddleware, offerwallGgHandlers.getRewards);
+app.all('/api/postbacks/offerwall-gg', offerwallGgHandlers.handlePostback);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
 app.all('/api/clixwall/postback', clixwallHandlers.handlePostback);
 
