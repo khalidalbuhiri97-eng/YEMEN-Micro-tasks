@@ -59,7 +59,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
     try {
       if (mode === 'forgot') {
         const recoveryEmail = identifier.trim().toLowerCase();
-        if (!recoveryEmail || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(recoveryEmail)) {
+        if (!recoveryEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recoveryEmail)) {
           throw new Error('أدخل البريد الإلكتروني المسجل في حسابك.');
         }
         const { error: resetError } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
