@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   AdCenterComfortSettings,
   AdTrackingSessionRecord,
@@ -10,6 +10,25 @@ import type {
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { formatYt } from '../../../shared/ytCoin.ts';
+import {
+  DISPLAY_BANNER_FORMATS,
+  REWARD_ELIGIBLE_AD_FORMATS,
+  buildMiningAdSrcDoc,
+  extractAdZoneKey,
+  isDisplayBannerTemplate,
+  isExoClickCode,
+  isRewardEligibleTemplate,
+} from '../../../shared/miningAdBannerUtils.ts';
+
+export {
+  DISPLAY_BANNER_FORMATS,
+  REWARD_ELIGIBLE_AD_FORMATS,
+  buildMiningAdSrcDoc,
+  extractAdZoneKey,
+  isDisplayBannerTemplate,
+  isExoClickCode,
+  isRewardEligibleTemplate,
+};
 import {
   ExternalLink,
   ShieldCheck,
@@ -103,6 +122,10 @@ export function detectCurrentDeviceType(): 'desktop' | 'mobile' {
   return window.innerWidth >= 768 ? 'desktop' : 'mobile';
 }
 
+// Module-level mounted zone ownership registry so an ExoClick zone (e.g., 6104102)
+// is never mounted twice simultaneously across slots or sub-pages.
+const mountedAdZoneOwners = new Map<string, string>();
+
 function toSafeVideoEmbedUrl(url: string): { kind: 'iframe' | 'video'; src: string } {
   try {
     const parsed = new URL(url);
@@ -175,59 +198,7 @@ function parseVastXmlSafe(xmlText: string): ParsedVastResult {
   }
 }
 
-/**
- * Generates an isolated srcDoc HTML wrapper executed inside an iframe
- * WITHOUT `allow-same-origin` so third-party HTML/JS/ad-network scripts
- * cannot access parent DOM, auth tokens, localStorage, IndexedDB, or wallets.
- */
-export function buildMiningAdSrcDoc(
-  template: Pick<MiningAdTemplate, 'codeContent' | 'templateType' | 'width' | 'height'>
-): string {
-  const safeH = Math.min(900, Math.max(50, Number(template.height) || 250));
-  const rawCode = String(template.codeContent || '').trim();
 
-  let bodyContent = rawCode;
-  if (template.templateType === 'javascript') {
-    if (!/<script[\s>]/i.test(rawCode)) {
-      bodyContent = `<script type="text/javascript">\n${rawCode}\n</script>`;
-    }
-  } else if (
-    template.templateType === 'network_code' ||
-    template.templateType === 'video_player' ||
-    template.templateType === 'multi_format' ||
-    template.templateType === 'recommendation_widget'
-  ) {
-    if (!/<(script|iframe|div|ins|a|video|img)[\s>]/i.test(rawCode) && /^https?:\/\//i.test(rawCode)) {
-      const escapedUrl = rawCode.replace(/"/g, '&quot;');
-      bodyContent = `<iframe src="${escapedUrl}" width="100%" height="${safeH}" frameborder="0" referrerpolicy="no-referrer" style="border:0;width:100%;height:${safeH}px;"></iframe>`;
-    }
-  }
-
-  return `<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: http: data: blob: 'unsafe-inline' 'unsafe-eval'; form-action 'none'; object-src 'none'; base-uri 'none';" />
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      background: #0B0E14;
-      color: #F3F4F6;
-      font-family: system-ui, -apple-system, sans-serif;
-    }
-    img, iframe, video { max-width: 100%; max-height: 100%; border: 0; }
-  </style>
-</head>
-<body>${bodyContent}</body>
-</html>`;
-}
 
 /**
  * Tracked Video / VAST Player (muted by default, explicit user click to play, dispatches real VAST milestones)
@@ -450,9 +421,63 @@ export const MiningAdTemplateCard: React.FC<{
   className = '',
 }) => {
   const { user, openAuthModal, showToast } = useAuth();
+  const instanceId = useId();
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const impressionTrackedRef = useRef<boolean>(false);
   const [imageBroken, setImageBroken] = useState(false);
+
+  const isDisplayBanner = useMemo(() => isDisplayBannerTemplate(template), [template]);
+  const isRewardEligible = useMemo(() => isRewardEligibleTemplate(template), [template]);
+  const isExoClickBanner = useMemo(
+    () => isExoClickCode(template.codeContent, template.sourceName),
+    [template.codeContent, template.sourceName]
+  );
+  const zoneKey = useMemo(() => (isPreview ? null : extractAdZoneKey(template)), [isPreview, template]);
+  const [duplicateZoneBlocked, setDuplicateZoneBlocked] = useState<boolean>(false);
+  const [adLoadStatus, setAdLoadStatus] = useState<'loading' | 'loaded' | 'failed'>(() =>
+    isExoClickCode(template.codeContent, template.sourceName) ? 'loading' : 'loaded'
+  );
+
+  // Claim single mounted instance ownership for external ad zones (e.g. ExoClick 6104102)
+  useEffect(() => {
+    if (!zoneKey || isPreview) {
+      setDuplicateZoneBlocked(false);
+      return;
+    }
+    const existingOwner = mountedAdZoneOwners.get(zoneKey);
+    if (existingOwner && existingOwner !== instanceId) {
+      setDuplicateZoneBlocked(true);
+      return;
+    }
+    mountedAdZoneOwners.set(zoneKey, instanceId);
+    setDuplicateZoneBlocked(false);
+    return () => {
+      if (mountedAdZoneOwners.get(zoneKey) === instanceId) {
+        mountedAdZoneOwners.delete(zoneKey);
+      }
+    };
+  }, [zoneKey, instanceId, isPreview]);
+
+  // Reset health status when template code changes
+  useEffect(() => {
+    setAdLoadStatus(isExoClickBanner ? 'loading' : 'loaded');
+  }, [template.id, template.codeContent, isExoClickBanner]);
+
+  // Verified iframe health postMessage listener (only accepts events from our exact iframeRef)
+  useEffect(() => {
+    if (!isExoClickBanner) return;
+    const onMessage = (event: MessageEvent) => {
+      if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return;
+      const payload = event.data;
+      if (!payload || typeof payload !== 'object') return;
+      if (payload.type !== 'yt_mining_ad_status' || payload.templateId !== template.id) return;
+      if (payload.status === 'loaded') setAdLoadStatus('loaded');
+      else if (payload.status === 'failed') setAdLoadStatus('failed');
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [isExoClickBanner, template.id]);
 
   // Server-Side Tracking State
   const [trackingSession, setTrackingSession] = useState<AdTrackingSessionRecord | null>(null);
@@ -466,13 +491,19 @@ export const MiningAdTemplateCard: React.FC<{
   const safeTargetUrl = useMemo(() => sanitizeHttpHref(template.targetUrl), [template.targetUrl]);
   const safeMediaUrl = useMemo(() => sanitizeHttpHref(template.mediaUrl), [template.mediaUrl]);
   const safeVastUrl = useMemo(() => sanitizeHttpHref(template.vastUrl), [template.vastUrl]);
+  const sandboxSrcDoc = useMemo(
+    () => buildMiningAdSrcDoc(template),
+    [template.id, template.codeContent, template.templateType, template.width, template.height, template.sourceName]
+  );
 
   useEffect(() => {
     setImageBroken(false);
   }, [template.id, template.mediaUrl]);
 
   useEffect(() => {
-    if (isPreview || impressionTrackedRef.current) return;
+    if (isPreview || duplicateZoneBlocked || impressionTrackedRef.current) return;
+    // Wait until async network banner actually filled before recording impression
+    if (isExoClickBanner && adLoadStatus !== 'loaded') return;
     const el = cardRef.current;
     if (!el || typeof IntersectionObserver === 'undefined') {
       impressionTrackedRef.current = true;
@@ -494,7 +525,7 @@ export const MiningAdTemplateCard: React.FC<{
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [template.id, isPreview]);
+  }, [template.id, isPreview, duplicateZoneBlocked, isExoClickBanner, adLoadStatus]);
 
   // Visibility API tracker: automatically pause dwell heartbeats when tab/app is hidden!
   useEffect(() => {
@@ -675,11 +706,20 @@ export const MiningAdTemplateCard: React.FC<{
     : 0;
 
   const canTriggerVerifiedReward =
+    isRewardEligible &&
     Boolean(connectedNetwork?.isActive && connectedNetwork?.isConnected) &&
     Boolean(onStartVerifiedSession) &&
     (rewardEvent === 'click'
       ? connectedNetwork?.adType === 'click' || connectedNetwork?.adType === 'both'
       : connectedNetwork?.adType === 'view' || connectedNetwork?.adType === 'both');
+
+  // Strict deduplication & clean collapse when an async ad fails/has no-fill on live user pages
+  if (!isPreview && duplicateZoneBlocked) {
+    return null;
+  }
+  if (!isPreview && isExoClickBanner && adLoadStatus === 'failed') {
+    return null;
+  }
 
   const TypeIcon =
     template.templateType === 'video_player' || template.templateType === 'vast_url'
@@ -707,14 +747,31 @@ export const MiningAdTemplateCard: React.FC<{
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/30 text-amber-300 font-bold shrink-0">
             <TypeIcon className="w-3 h-3" />
-            <span>{template.sourceName ? template.sourceName : 'إعلان ممول'}</span>
+            <span>{isDisplayBanner ? `إعلان${template.sourceName ? ` · ${template.sourceName}` : ''}` : template.sourceName ? template.sourceName : 'إعلان ممول'}</span>
           </span>
-          <span className="font-bold text-white truncate">{template.title}</span>
+          {!isDisplayBanner && <span className="font-bold text-white truncate">{template.title}</span>}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {isPreview && isExoClickBanner && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                adLoadStatus === 'loaded'
+                  ? 'bg-emerald-500/15 text-emerald-300'
+                  : adLoadStatus === 'failed'
+                    ? 'bg-amber-500/15 text-amber-300'
+                    : 'bg-sky-500/15 text-sky-300'
+              }`}
+            >
+              {adLoadStatus === 'loaded'
+                ? 'تم تحميل الإعلان'
+                : adLoadStatus === 'failed'
+                  ? 'بانتظار Fill / موافقة النطاق'
+                  : 'جاري تحميل ExoClick...'}
+            </span>
+          )}
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-400">
-            {AD_FORMAT_LABELS[template.adFormat] || template.adFormat}
+            {isDisplayBanner ? `${w}×${h}` : AD_FORMAT_LABELS[template.adFormat] || template.adFormat}
           </span>
           {canTriggerVerifiedReward && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-mono font-bold text-[10px]">
@@ -831,7 +888,8 @@ export const MiningAdTemplateCard: React.FC<{
           >
             <iframe
               key={template.id}
-              srcDoc={buildMiningAdSrcDoc(template)}
+              ref={iframeRef}
+              srcDoc={sandboxSrcDoc}
               width={w}
               height={aspectHeight}
               title={`فيديو ${template.title}`}
@@ -873,16 +931,17 @@ export const MiningAdTemplateCard: React.FC<{
           {template.codeContent.trim().length > 0 ? (
             <div
               className="w-full mx-auto rounded-xl overflow-hidden bg-[#0B0E14] border border-white/10 flex items-center justify-center"
-              style={{ maxWidth: `${w}px`, height: `${aspectHeight}px` }}
+              style={{ maxWidth: `${w}px`, height: `${isExoClickBanner ? Math.min(h, 250) : aspectHeight}px` }}
             >
               <iframe
                 key={template.id}
-                srcDoc={buildMiningAdSrcDoc(template)}
+                ref={iframeRef}
+                srcDoc={sandboxSrcDoc}
                 width={w}
-                height={aspectHeight}
+                height={isExoClickBanner ? Math.min(h, 250) : aspectHeight}
                 title={`إعلان ${template.title}`}
                 sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
-                referrerPolicy="no-referrer"
+                referrerPolicy={isExoClickBanner || template.templateType === 'network_code' ? 'origin' : 'no-referrer'}
                 loading="lazy"
                 scrolling="no"
                 className="border-0 block w-full h-full bg-transparent"
@@ -910,8 +969,8 @@ export const MiningAdTemplateCard: React.FC<{
         </div>
       )}
 
-      {/* Honest Server-Side Dwell / Completion Tracker Strip */}
-      {!isPreview && !compact && template.trackingEnabled && (
+      {/* Honest Server-Side Dwell / Completion Tracker Strip (STRICTLY hidden on Display Banners) */}
+      {!isPreview && !compact && !isDisplayBanner && template.trackingEnabled && (
         <div className="mt-2.5 pt-2.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px]">
           {!trackingSession ? (
             <>
@@ -1083,9 +1142,11 @@ export const MiningAdSlot: React.FC<MiningAdSlotProps> = ({
       {eligibleTemplates.length > 1 && (placement?.slotType === 'mixed' || placement?.slotType === 'recommendation') ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {eligibleTemplates.map((tpl) => {
-            const net = tpl.ytNetworkKey
-              ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
-              : null;
+            const rewardEligible = isRewardEligibleTemplate(tpl);
+            const net =
+              rewardEligible && tpl.ytNetworkKey
+                ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
+                : null;
             return (
               <MiningAdTemplateCard
                 key={tpl.id}
@@ -1093,7 +1154,7 @@ export const MiningAdSlot: React.FC<MiningAdSlotProps> = ({
                 compact={compact}
                 isPreview={isPreview}
                 connectedNetwork={net}
-                onStartVerifiedSession={onStartVerifiedSession}
+                onStartVerifiedSession={rewardEligible ? onStartVerifiedSession : undefined}
                 startingSessionKey={startingSessionKey}
                 onDismiss={() => setDismissedIds((prev) => ({ ...prev, [tpl.id]: Date.now() }))}
               />
@@ -1102,9 +1163,11 @@ export const MiningAdSlot: React.FC<MiningAdSlotProps> = ({
         </div>
       ) : (
         eligibleTemplates.map((tpl) => {
-          const net = tpl.ytNetworkKey
-            ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
-            : null;
+          const rewardEligible = isRewardEligibleTemplate(tpl);
+          const net =
+            rewardEligible && tpl.ytNetworkKey
+              ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
+              : null;
           return (
             <MiningAdTemplateCard
               key={tpl.id}
@@ -1112,7 +1175,7 @@ export const MiningAdSlot: React.FC<MiningAdSlotProps> = ({
               compact={compact}
               isPreview={isPreview}
               connectedNetwork={net}
-              onStartVerifiedSession={onStartVerifiedSession}
+              onStartVerifiedSession={rewardEligible ? onStartVerifiedSession : undefined}
               startingSessionKey={startingSessionKey}
               onDismiss={() => setDismissedIds((prev) => ({ ...prev, [tpl.id]: Date.now() }))}
             />

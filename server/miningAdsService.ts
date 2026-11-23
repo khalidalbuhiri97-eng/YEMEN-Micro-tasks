@@ -57,6 +57,52 @@ export const VALID_AD_FORMATS = new Set<MiningAdFormat>([
 
 export const VALID_DEVICE_TARGETS = new Set<MiningAdDeviceTarget>(['all', 'desktop', 'mobile']);
 
+import {
+  DISPLAY_BANNER_FORMATS,
+  NON_REWARDABLE_TEMPLATE_TYPES,
+  REWARD_ELIGIBLE_AD_FORMATS,
+  REWARD_ELIGIBLE_TEMPLATE_TYPES,
+  extractAdZoneKey,
+  isDisplayBannerTemplate,
+  isRewardEligibleTemplate,
+} from '../shared/miningAdBannerUtils.js';
+
+export {
+  DISPLAY_BANNER_FORMATS,
+  NON_REWARDABLE_TEMPLATE_TYPES,
+  REWARD_ELIGIBLE_AD_FORMATS,
+  REWARD_ELIGIBLE_TEMPLATE_TYPES,
+};
+
+export function isDisplayBannerAd(params: {
+  adFormat?: MiningAdFormat | string | null;
+  sourceName?: string | null;
+  codeContent?: string | null;
+}): boolean {
+  const fmt = String(params.adFormat || '').trim() as MiningAdFormat;
+  return isDisplayBannerTemplate({
+    adFormat: fmt,
+    sourceName: params.sourceName ?? '',
+    codeContent: params.codeContent ?? '',
+  });
+}
+
+export function isRewardEligibleAd(params: {
+  adFormat?: MiningAdFormat | string | null;
+  templateType?: MiningAdTemplateType | string | null;
+  sourceName?: string | null;
+  codeContent?: string | null;
+}): boolean {
+  return isRewardEligibleTemplate(params);
+}
+
+export function extractAdZoneSignature(codeContent?: string | null, sourceName?: string | null): string | null {
+  return extractAdZoneKey({
+    codeContent: codeContent ?? '',
+    sourceName: sourceName ?? '',
+  });
+}
+
 export const VALID_SLOT_TYPES = new Set<MiningAdSlotType>([
   'banner',
   'between_tasks',
@@ -479,15 +525,22 @@ function mapTemplateRow(row: any, rulesByTemplateId?: Map<string, AdCompletionRu
   const deviceRaw = String(row.device_target ?? row.deviceTarget ?? 'all') as MiningAdDeviceTarget;
   const id = String(row.id);
 
+  const adFormat = inferAdFormat(templateType, row.ad_format ?? row.adFormat);
+  const sourceName = String(row.source_name ?? row.sourceName ?? '');
+  const codeContent = String(row.code_content ?? row.codeContent ?? '');
+  const isBanner = isDisplayBannerAd({ adFormat, sourceName, codeContent });
+  const isRewardEligible = isRewardEligibleAd({ adFormat, templateType, sourceName, codeContent });
+  const rawTrackingEnabled = row.tracking_enabled === undefined ? true : Boolean(row.tracking_enabled);
+
   return {
     id,
     title: String(row.title ?? ''),
     placementKey: String(row.placement_key ?? row.placementKey ?? ''),
     templateType,
-    adFormat: inferAdFormat(templateType, row.ad_format ?? row.adFormat),
+    adFormat,
     deviceTarget: VALID_DEVICE_TARGETS.has(deviceRaw) ? deviceRaw : 'all',
-    sourceName: String(row.source_name ?? row.sourceName ?? ''),
-    codeContent: String(row.code_content ?? row.codeContent ?? ''),
+    sourceName,
+    codeContent,
     targetUrl: row.target_url ?? row.targetUrl ?? null,
     mediaUrl: row.media_url ?? row.mediaUrl ?? null,
     vastUrl: row.vast_url ?? row.vastUrl ?? null,
@@ -498,10 +551,10 @@ function mapTemplateRow(row: any, rulesByTemplateId?: Map<string, AdCompletionRu
     sortOrder: Number(row.sort_order ?? row.sortOrder ?? 0),
     maxImpressions: Math.max(0, Number(row.max_impressions ?? row.maxImpressions ?? 0)),
     impressionsCount: Math.max(0, Number(row.impressions_count ?? row.impressionsCount ?? 0)),
-    ytNetworkKey: row.yt_network_key ?? row.ytNetworkKey ?? null,
-    rewardEventType: evRaw === 'click' || evRaw === 'view' ? evRaw : null,
+    ytNetworkKey: isRewardEligible ? (row.yt_network_key ?? row.ytNetworkKey ?? null) : null,
+    rewardEventType: isRewardEligible && (evRaw === 'click' || evRaw === 'view') ? evRaw : null,
     isDismissible: row.is_dismissible === undefined ? true : Boolean(row.is_dismissible),
-    trackingEnabled: row.tracking_enabled === undefined ? true : Boolean(row.tracking_enabled),
+    trackingEnabled: isBanner ? false : rawTrackingEnabled,
     isActive: Boolean(row.is_active ?? row.isActive ?? true),
     completionRule: rulesByTemplateId?.get(id) ?? null,
     createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
@@ -523,7 +576,11 @@ function validateSafeHttpUrl(raw: unknown, fieldLabel: string): string | null {
   return val;
 }
 
-function validateCodeContent(rawCode: unknown, templateType: MiningAdTemplateType): string {
+export function validateCodeContent(
+  rawCode: unknown,
+  templateType: MiningAdTemplateType,
+  adFormat?: MiningAdFormat
+): string {
   const code = String(rawCode ?? '').trim();
   if (
     ['html', 'javascript', 'network_code', 'mixed', 'recommendation_widget', 'multi_format'].includes(templateType) &&
@@ -537,6 +594,13 @@ function validateCodeContent(rawCode: unknown, templateType: MiningAdTemplateTyp
   const lower = code.toLowerCase();
   if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:text/html')) {
     throw new Error('الكود يحتوي على بروتوكول غير آمن مرفوض.');
+  }
+  if (
+    adFormat !== 'popunder' &&
+    (/top\.location\s*=|window\.top\.location\s*=|parent\.location\s*=/i.test(code) ||
+      /\bpopunder\b/i.test(code))
+  ) {
+    throw new Error('يُمنع استخدام أكواد Popunder أو إعادة التوجيه القسري حفاظاً على تجربة المستخدم.');
   }
   return code;
 }
@@ -606,7 +670,7 @@ export const miningAdsService = {
 
       const activeKeySet = new Set(activePlacements.map((p) => p.placementKey));
 
-      const activeTemplates = templates
+      const rawActiveTemplates = templates
         .filter((t) => t.isActive && activeKeySet.has(t.placementKey))
         // Enforce mandatory comfort policy: automatically block popunder when enabled
         .filter((t) => !(comfortSettings.popunderAutoDisabled && t.adFormat === 'popunder'))
@@ -615,6 +679,15 @@ export const miningAdsService = {
         .filter((t) => !filters?.placementKey || t.placementKey === filters.placementKey)
         .filter((t) => !filters?.templateType || t.templateType === filters.templateType)
         .sort((a, b) => a.sortOrder - b.sortOrder || b.priority - a.priority);
+
+      const seenZones = new Set<string>();
+      const activeTemplates = rawActiveTemplates.filter((t) => {
+        const zoneSig = extractAdZoneSignature(t.codeContent, t.sourceName);
+        if (!zoneSig) return true;
+        if (seenZones.has(zoneSig)) return false;
+        seenZones.add(zoneSig);
+        return true;
+      });
 
       return { placements: activePlacements, templates: activeTemplates, comfortSettings };
     };
@@ -899,7 +972,7 @@ export const miningAdsService = {
     const targetUrl = validateSafeHttpUrl(params.targetUrl, 'الرابط الخارجي');
     const mediaUrl = validateSafeHttpUrl(params.mediaUrl, 'رابط الوسائط (صورة/فيديو)');
     const vastUrl = validateSafeHttpUrl(params.vastUrl, 'رابط VAST XML');
-    const codeContent = validateCodeContent(params.codeContent, params.templateType);
+    const codeContent = validateCodeContent(params.codeContent, params.templateType, adFormat);
 
     assertHonestFormatCompatibility({
       templateType: params.templateType,
@@ -917,21 +990,52 @@ export const miningAdsService = {
     const maxImpressions = Math.max(0, Math.round(Number(params.maxImpressions ?? 0) || 0));
     const sourceName = String(params.sourceName || '').trim().slice(0, 120);
     const ctaLabel = params.ctaLabel ? String(params.ctaLabel).trim().slice(0, 80) : null;
-    const ytNetworkKey = params.ytNetworkKey ? String(params.ytNetworkKey).trim().toLowerCase() : null;
+
+    const isBanner = isDisplayBannerAd({ adFormat, sourceName, codeContent });
+    const isRewardEligible = isRewardEligibleAd({
+      adFormat,
+      templateType: params.templateType,
+      sourceName,
+      codeContent,
+    });
+    const requestedYtKey = params.ytNetworkKey ? String(params.ytNetworkKey).trim().toLowerCase() : null;
+    if (isBanner && (requestedYtKey || params.completionRule?.requireServerPostback)) {
+      throw new Error('إعلانات البانر للعرض فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin (لا يمكن ربطها بشبكات المكافآت).');
+    }
+    if (!isRewardEligible && (requestedYtKey || params.completionRule?.requireServerPostback)) {
+      throw new Error('مكافآت YT Coin وربط S2S مخصصة فقط لإعلانات الفيديو والروابط وما يشبهها (غير متاحة للبانرات والودجات والعروض الترويجية).');
+    }
+
+    const ytNetworkKey = isRewardEligible ? requestedYtKey : null;
     const rewardEventType =
-      ytNetworkKey && (params.rewardEventType === 'click' || params.rewardEventType === 'view')
+      isRewardEligible && ytNetworkKey && (params.rewardEventType === 'click' || params.rewardEventType === 'view')
         ? params.rewardEventType
-        : ytNetworkKey
+        : isRewardEligible && ytNetworkKey
           ? 'view'
           : null;
     const isDismissible = params.isDismissible !== false;
-    const trackingEnabled = params.trackingEnabled !== false;
+    const trackingEnabled = isBanner ? false : params.trackingEnabled !== false;
     const isActive = params.isActive !== false;
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
 
     const db = getActorClient(authToken);
     try {
+      const zoneSig = extractAdZoneSignature(codeContent, sourceName);
+      if (zoneSig) {
+        const zoneNum = zoneSig.replace(/^exoclick:zone:/, '');
+        const { data: existingZoneRows } = await db
+          .from('mining_ad_templates')
+          .select('id, title, code_content, source_name')
+          .limit(50);
+        const dup = (existingZoneRows || []).find(
+          (row: any) => extractAdZoneSignature(row.code_content, row.source_name) === zoneSig
+        );
+        if (dup) {
+          throw new Error(`يوجد قالب مضاف مسبقاً لنفس المنطقة الإعلانية (${zoneNum} - ${dup.title}). يرجى تعديله أو نقله بدلاً من تكراره.`);
+        }
+      }
+
       const { data, error } = await db
         .from('mining_ad_templates')
         .insert({
@@ -970,21 +1074,25 @@ export const miningAdsService = {
       let ruleRecord: AdCompletionRule | null = null;
       if (params.completionRule) {
         const cr = params.completionRule;
+        const requestedMode = isBanner
+          ? 'impression_only'
+          : cr.verificationMode || (adFormat === 'external_link' ? 'link_return' : 'dwell');
+        const safeMode = !isRewardEligible && requestedMode === 's2s_postback' ? 'dwell' : requestedMode;
         const { data: ruleData, error: ruleErr } = await db
           .from('ad_completion_rules')
           .upsert(
             {
               template_id: id,
               ad_format: adFormat,
-              tracking_enabled: cr.trackingEnabled ?? trackingEnabled,
-              verification_mode: cr.verificationMode || (adFormat === 'external_link' ? 'link_return' : 'dwell'),
-              required_watch_sec: Math.max(0, Math.min(600, Math.round(Number(cr.requiredWatchSec ?? 15) || 0))),
-              require_active_visibility: cr.requireActiveVisibility !== false,
+              tracking_enabled: isBanner ? false : (cr.trackingEnabled ?? trackingEnabled),
+              verification_mode: safeMode,
+              required_watch_sec: isBanner ? 0 : Math.max(0, Math.min(600, Math.round(Number(cr.requiredWatchSec ?? 15) || 0))),
+              require_active_visibility: isBanner ? false : cr.requireActiveVisibility !== false,
               required_vast_events: Array.isArray(cr.requiredVastEvents) && cr.requiredVastEvents.length > 0
                 ? cr.requiredVastEvents
                 : ['start', 'complete'],
-              require_link_return: Boolean(cr.requireLinkReturn),
-              require_server_postback: Boolean(cr.requireServerPostback),
+              require_link_return: isBanner ? false : Boolean(cr.requireLinkReturn),
+              require_server_postback: isRewardEligible ? Boolean(cr.requireServerPostback) : false,
               session_ttl_sec: Math.max(60, Math.min(7200, Math.round(Number(cr.sessionTtlSec ?? 900) || 900))),
               max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(cr.maxDailyPerUser ?? 20) || 20))),
               frequency_cap_minutes: Math.max(0, Math.min(1440, Math.round(Number(cr.frequencyCapMinutes ?? 0) || 0))),
@@ -1113,6 +1221,63 @@ export const miningAdsService = {
 
     const db = getActorClient(authToken);
     try {
+      const { data: existingTpl, error: existingErr } = await db
+        .from('mining_ad_templates')
+        .select('*')
+        .eq('id', id)
+        .single();
+      if (existingErr) throw existingErr;
+
+      const effTemplateType = (updates.template_type ?? existingTpl.template_type) as MiningAdTemplateType;
+      const effFormat = (updates.ad_format ?? existingTpl.ad_format) as MiningAdFormat;
+      const effSource = String(updates.source_name ?? existingTpl.source_name ?? '');
+      const effCode =
+        updates.code_content !== undefined
+          ? validateCodeContent(updates.code_content, effTemplateType, effFormat)
+          : String(existingTpl.code_content ?? '');
+      if (updates.code_content !== undefined) {
+        updates.code_content = effCode;
+      }
+
+      const effIsBanner = isDisplayBannerAd({ adFormat: effFormat, sourceName: effSource, codeContent: effCode });
+      const effRewardEligible = isRewardEligibleAd({
+        adFormat: effFormat,
+        templateType: effTemplateType,
+        sourceName: effSource,
+        codeContent: effCode,
+      });
+      const reqYtKey = updates.yt_network_key !== undefined ? updates.yt_network_key : null;
+      if (effIsBanner && (reqYtKey || params.completionRule?.requireServerPostback)) {
+        throw new Error('إعلانات البانر للعرض فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin.');
+      }
+      if (!effRewardEligible && (reqYtKey || params.completionRule?.requireServerPostback)) {
+        throw new Error('مكافآت YT Coin وربط S2S مخصصة فقط لإعلانات الفيديو والروابط وما يشبهها.');
+      }
+
+      const effZoneSig = extractAdZoneSignature(effCode, effSource);
+      if (effZoneSig && updates.code_content !== undefined) {
+        const { data: allRows } = await db
+          .from('mining_ad_templates')
+          .select('id, title, code_content, source_name')
+          .neq('id', id)
+          .limit(50);
+        const dup = (allRows || []).find(
+          (row: any) => extractAdZoneSignature(row.code_content, row.source_name) === effZoneSig
+        );
+        if (dup) {
+          throw new Error(`يوجد قالب آخر لنفس المنطقة الإعلانية (${dup.title}).`);
+        }
+      }
+
+      if (effIsBanner) {
+        updates.yt_network_key = null;
+        updates.reward_event_type = null;
+        updates.tracking_enabled = false;
+      } else if (!effRewardEligible) {
+        updates.yt_network_key = null;
+        updates.reward_event_type = null;
+      }
+
       const { data, error } = await db
         .from('mining_ad_templates')
         .update(updates)
@@ -1124,21 +1289,23 @@ export const miningAdsService = {
       let ruleRecord: AdCompletionRule | null = null;
       if (params.completionRule) {
         const cr = params.completionRule;
+        const requestedMode = effIsBanner ? 'impression_only' : (cr.verificationMode || 'dwell');
+        const safeMode = !effRewardEligible && requestedMode === 's2s_postback' ? 'dwell' : requestedMode;
         const { data: ruleData, error: ruleErr } = await db
           .from('ad_completion_rules')
           .upsert(
             {
               template_id: id,
               ad_format: data.ad_format,
-              tracking_enabled: cr.trackingEnabled ?? Boolean(data.tracking_enabled),
-              verification_mode: cr.verificationMode || 'dwell',
-              required_watch_sec: Math.max(0, Math.min(600, Math.round(Number(cr.requiredWatchSec ?? 15) || 0))),
-              require_active_visibility: cr.requireActiveVisibility !== false,
+              tracking_enabled: effIsBanner ? false : (cr.trackingEnabled ?? Boolean(data.tracking_enabled)),
+              verification_mode: safeMode,
+              required_watch_sec: effIsBanner ? 0 : Math.max(0, Math.min(600, Math.round(Number(cr.requiredWatchSec ?? 15) || 0))),
+              require_active_visibility: effIsBanner ? false : cr.requireActiveVisibility !== false,
               required_vast_events: Array.isArray(cr.requiredVastEvents) && cr.requiredVastEvents.length > 0
                 ? cr.requiredVastEvents
                 : ['start', 'complete'],
-              require_link_return: Boolean(cr.requireLinkReturn),
-              require_server_postback: Boolean(cr.requireServerPostback),
+              require_link_return: effIsBanner ? false : Boolean(cr.requireLinkReturn),
+              require_server_postback: effRewardEligible ? Boolean(cr.requireServerPostback) : false,
               session_ttl_sec: Math.max(60, Math.min(7200, Math.round(Number(cr.sessionTtlSec ?? 900) || 900))),
               max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(cr.maxDailyPerUser ?? 20) || 20))),
               frequency_cap_minutes: Math.max(0, Math.min(1440, Math.round(Number(cr.frequencyCapMinutes ?? 0) || 0))),
@@ -1225,6 +1392,15 @@ export const miningAdsService = {
     if (!VALID_AD_FORMATS.has(rule.adFormat)) {
       throw new Error('نوع الإعلان المحدد للقاعدة غير صالح.');
     }
+    const isBannerFmt = DISPLAY_BANNER_FORMATS.has(rule.adFormat);
+    const isRewardEligibleFmt = REWARD_ELIGIBLE_AD_FORMATS.has(rule.adFormat);
+    if (isBannerFmt && rule.requireServerPostback) {
+      throw new Error('إعلانات البانر للعرض فقط ومفصولة عن مكافآت YT Coin (S2S).');
+    }
+    if (!isRewardEligibleFmt && (rule.requireServerPostback || rule.verificationMode === 's2s_postback')) {
+      throw new Error('مكافآت YT Coin (S2S) مخصصة فقط لإعلانات الفيديو والروابط وما يشبهها.');
+    }
+
     const db = getActorClient(authToken);
     const now = new Date().toISOString();
     try {
@@ -1236,19 +1412,25 @@ export const miningAdsService = {
         .eq('ad_format', rule.adFormat)
         .maybeSingle();
 
+      const safeMode = isBannerFmt
+        ? 'impression_only'
+        : !isRewardEligibleFmt && rule.verificationMode === 's2s_postback'
+          ? 'dwell'
+          : (rule.verificationMode || 'dwell');
+
       const payload = {
         template_id: null,
         ad_format: rule.adFormat,
-        tracking_enabled: rule.trackingEnabled !== false,
-        verification_mode: rule.verificationMode || 'dwell',
-        required_watch_sec: Math.max(0, Math.min(600, Math.round(Number(rule.requiredWatchSec ?? 15) || 0))),
-        require_active_visibility: rule.requireActiveVisibility !== false,
+        tracking_enabled: isBannerFmt ? false : rule.trackingEnabled !== false,
+        verification_mode: safeMode,
+        required_watch_sec: isBannerFmt ? 0 : Math.max(0, Math.min(600, Math.round(Number(rule.requiredWatchSec ?? 15) || 0))),
+        require_active_visibility: isBannerFmt ? false : rule.requireActiveVisibility !== false,
         required_vast_events:
           Array.isArray(rule.requiredVastEvents) && rule.requiredVastEvents.length > 0
             ? rule.requiredVastEvents
             : ['start', 'complete'],
-        require_link_return: Boolean(rule.requireLinkReturn),
-        require_server_postback: Boolean(rule.requireServerPostback),
+        require_link_return: isBannerFmt ? false : Boolean(rule.requireLinkReturn),
+        require_server_postback: isRewardEligibleFmt ? Boolean(rule.requireServerPostback) : false,
         session_ttl_sec: Math.max(60, Math.min(7200, Math.round(Number(rule.sessionTtlSec ?? 900) || 900))),
         max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(rule.maxDailyPerUser ?? 20) || 20))),
         frequency_cap_minutes: Math.max(0, Math.min(1440, Math.round(Number(rule.frequencyCapMinutes ?? 0) || 0))),

@@ -15,6 +15,9 @@ import {
   MiningAdSlot,
   MiningAdTemplateCard,
   TEMPLATE_TYPE_LABELS,
+  extractAdZoneKey,
+  isDisplayBannerTemplate,
+  isRewardEligibleTemplate,
   type ConnectedYtNetworkLite,
 } from './MiningAdSandboxRenderer.tsx';
 import { MiningAdsManager } from '../admin/MiningAdsManager.tsx';
@@ -435,16 +438,19 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
     [templates, comfortSettings]
   );
 
-  const bannerTemplates = useMemo(
-    () =>
-      activeTemplates.filter(
-        (t) =>
-          ['banner', 'sticky_banner', 'desktop_interstitial', 'mobile_banner', 'mobile_sticky_banner', 'mobile_interstitial', 'instant_message'].includes(
-            t.adFormat
-          ) || t.placementKey === 'mining_banner_gallery'
-      ),
-    [activeTemplates]
-  );
+  const bannerTemplates = useMemo(() => {
+    const seenZones = new Set<string>();
+    return activeTemplates.filter((t) => {
+      const matches = isDisplayBannerTemplate(t) || t.placementKey === 'mining_banner_gallery';
+      if (!matches) return false;
+      const zk = extractAdZoneKey(t);
+      if (zk) {
+        if (seenZones.has(zk)) return false;
+        seenZones.add(zk);
+      }
+      return true;
+    });
+  }, [activeTemplates]);
 
   const recommendationTemplates = useMemo(
     () =>
@@ -486,9 +492,10 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
     () =>
       activeTemplates.filter(
         (t) =>
-          t.templateType === 'multi_format' ||
-          t.adFormat === 'multi_format' ||
-          ['html', 'javascript', 'image_banner', 'network_code', 'mixed'].includes(t.templateType)
+          !isDisplayBannerTemplate(t) &&
+          (t.templateType === 'multi_format' ||
+            t.adFormat === 'multi_format' ||
+            ['html', 'javascript', 'image_banner', 'network_code', 'mixed'].includes(t.templateType))
       ),
     [activeTemplates]
   );
@@ -539,7 +546,7 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-3.5 py-2 text-center">
-              <span className="text-[10px] text-gray-300 block">مكافأة الإعلانات المؤكدة</span>
+              <span className="text-[10px] text-gray-300 block">مكافآت الفيديو والروابط المؤكدة</span>
               <span className="text-xs sm:text-sm font-black text-amber-400 font-mono">
                 +{formatYt(effectiveAdViewReward)} / +{formatYt(effectiveAdClickReward)} YT
               </span>
@@ -787,27 +794,34 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
       )}
 
       {/* ============================================================ */}
-      {/* 2. صفحة إعلانات Banner                                       */}
+      {/* 2. صفحة إعلانات Banner (عرض فقط بدون مهام أو مكافآت YT)       */}
       {/* ============================================================ */}
       {activeSubPage === 'banner_ads' && (
         <div className="space-y-4">
+          <div className="rounded-2xl bg-[#131822] border border-white/10 px-4 py-3 text-xs text-gray-300 flex flex-wrap items-center justify-between gap-2">
+            <span>
+              إعلانات البانر مخصصة للعرض فقط ولا تمنح مكافآت YT Coin أو نقاط مهام. مكافآت YT Coin مخصصة لقسمي إعلانات الفيديو والروابط الموثقة.
+            </span>
+            <button
+              type="button"
+              onClick={() => onSelectSubPage('video_ads')}
+              className="text-amber-400 hover:text-amber-300 font-bold shrink-0 cursor-pointer"
+            >
+              انتقل إلى فيديوهات المكافآت ←
+            </button>
+          </div>
+
           <MiningAdSlot
             placementKey="mining_banner_gallery"
             placements={placements}
             templates={templates}
             comfortSettings={comfortSettings}
-            connectedNetworks={connectedNetworks}
-            onStartVerifiedSession={handleStartVerifiedSession}
-            startingSessionKey={startingKey}
           />
           <MiningAdSlot
             placementKey="mining_mid_banner"
             placements={placements}
             templates={templates}
             comfortSettings={comfortSettings}
-            connectedNetworks={connectedNetworks}
-            onStartVerifiedSession={handleStartVerifiedSession}
-            startingSessionKey={startingKey}
             compact
           />
           <MiningAdSlot
@@ -815,9 +829,6 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
             placements={placements}
             templates={templates}
             comfortSettings={comfortSettings}
-            connectedNetworks={connectedNetworks}
-            onStartVerifiedSession={handleStartVerifiedSession}
-            startingSessionKey={startingKey}
           />
 
           {bannerTemplates.filter(
@@ -834,20 +845,13 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
                       t.placementKey
                     )
                 )
-                .map((tpl) => {
-                  const net = tpl.ytNetworkKey
-                    ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
-                    : null;
-                  return (
-                    <MiningAdTemplateCard
-                      key={tpl.id}
-                      template={tpl}
-                      connectedNetwork={net}
-                      onStartVerifiedSession={handleStartVerifiedSession}
-                      startingSessionKey={startingKey}
-                    />
-                  );
-                })}
+                .map((tpl) => (
+                  <MiningAdTemplateCard
+                    key={tpl.id}
+                    template={tpl}
+                    connectedNetwork={null}
+                  />
+                ))}
             </div>
           )}
 
@@ -856,7 +860,7 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
               <RectangleHorizontal className="w-10 h-10 text-amber-400/70 mx-auto" />
               <h3 className="text-base font-black text-white">لا توجد إعلانات Banner مفعّلة حالياً</h3>
               <p className="text-xs text-gray-400 max-w-md mx-auto leading-relaxed">
-                عند إضافة قوالب Banner أو Mobile Banner أو Sticky Banner من لوحة الإدارة، تظهر هنا مع التتبع الخادمي دون إعاقة تجربة المستخدم.
+                عند إضافة قوالب Banner أو Mobile Banner أو Sticky Banner من لوحة الإدارة، تظهر هنا كوحدات عرض مستقلة دون إزعاج ودون خلط مع المهام والمكافآت.
               </p>
             </div>
           )}
@@ -868,34 +872,28 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
       {/* ============================================================ */}
       {activeSubPage === 'recommendation_ads' && (
         <div className="space-y-4">
+          <div className="rounded-2xl bg-[#131822] border border-white/10 px-4 py-3 text-xs text-gray-300">
+            بطاقات Recommendation Widget والتوصيات الأصلية مخصصة للعرض والتصفح فقط ولا تمنح مكافآت YT Coin (المكافآت مخصصة فقط لمهام الفيديو والروابط).
+          </div>
+
           <MiningAdSlot
             placementKey="mining_recommendation_intro"
             placements={placements}
             templates={templates}
             comfortSettings={comfortSettings}
-            connectedNetworks={connectedNetworks}
-            onStartVerifiedSession={handleStartVerifiedSession}
-            startingSessionKey={startingKey}
           />
 
           {recommendationTemplates.filter((t) => t.placementKey !== 'mining_recommendation_intro').length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {recommendationTemplates
                 .filter((t) => t.placementKey !== 'mining_recommendation_intro')
-                .map((tpl) => {
-                  const net = tpl.ytNetworkKey
-                    ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
-                    : null;
-                  return (
-                    <MiningAdTemplateCard
-                      key={tpl.id}
-                      template={tpl}
-                      connectedNetwork={net}
-                      onStartVerifiedSession={handleStartVerifiedSession}
-                      startingSessionKey={startingKey}
-                    />
-                  );
-                })}
+                .map((tpl) => (
+                  <MiningAdTemplateCard
+                    key={tpl.id}
+                    template={tpl}
+                    connectedNetwork={null}
+                  />
+                ))}
             </div>
           )}
 
@@ -956,15 +954,17 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
                     )
                 )
                 .map((tpl) => {
-                  const net = tpl.ytNetworkKey
-                    ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
-                    : null;
+                  const rewardEligible = isRewardEligibleTemplate(tpl);
+                  const net =
+                    rewardEligible && tpl.ytNetworkKey
+                      ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
+                      : null;
                   return (
                     <MiningAdTemplateCard
                       key={tpl.id}
                       template={tpl}
                       connectedNetwork={net}
-                      onStartVerifiedSession={handleStartVerifiedSession}
+                      onStartVerifiedSession={rewardEligible ? handleStartVerifiedSession : undefined}
                       startingSessionKey={startingKey}
                     />
                   );
@@ -1039,15 +1039,17 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
               {linkTemplates
                 .filter((t) => t.placementKey !== 'mining_links_featured')
                 .map((tpl) => {
-                  const net = tpl.ytNetworkKey
-                    ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
-                    : null;
+                  const rewardEligible = isRewardEligibleTemplate(tpl);
+                  const net =
+                    rewardEligible && tpl.ytNetworkKey
+                      ? connectedNetworks.find((n) => n.networkKey === tpl.ytNetworkKey) ?? null
+                      : null;
                   return (
                     <MiningAdTemplateCard
                       key={tpl.id}
                       template={tpl}
                       connectedNetwork={net}
-                      onStartVerifiedSession={handleStartVerifiedSession}
+                      onStartVerifiedSession={rewardEligible ? handleStartVerifiedSession : undefined}
                       startingSessionKey={startingKey}
                     />
                   );
@@ -1139,23 +1141,21 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
       {/* ============================================================ */}
       {activeSubPage === 'mixed_ads' && (
         <div className="space-y-4">
+          <div className="rounded-2xl bg-[#131822] border border-white/10 px-4 py-3 text-xs text-gray-300">
+            مساحات الصور والبانرات ووحدات Multi Format للعرض الترويجي فقط؛ مكافآت YT Coin تقتصر على مهام الفيديو والروابط الموثقة.
+          </div>
+
           <MiningAdSlot
             placementKey="mining_image_gallery"
             placements={placements}
             templates={templates}
             comfortSettings={comfortSettings}
-            connectedNetworks={connectedNetworks}
-            onStartVerifiedSession={handleStartVerifiedSession}
-            startingSessionKey={startingKey}
           />
           <MiningAdSlot
             placementKey="mining_mixed_grid"
             placements={placements}
             templates={templates}
             comfortSettings={comfortSettings}
-            connectedNetworks={connectedNetworks}
-            onStartVerifiedSession={handleStartVerifiedSession}
-            startingSessionKey={startingKey}
           />
           {customExtensiblePlacementsWithAds.map((plc) => (
             <MiningAdSlot
@@ -1174,9 +1174,6 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
             placements={placements}
             templates={templates}
             comfortSettings={comfortSettings}
-            connectedNetworks={connectedNetworks}
-            onStartVerifiedSession={handleStartVerifiedSession}
-            startingSessionKey={startingKey}
             compact
           />
 

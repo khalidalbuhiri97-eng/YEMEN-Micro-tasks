@@ -17,8 +17,13 @@ import type {
 } from '../../types/index.ts';
 import {
   AD_FORMAT_LABELS,
+  DISPLAY_BANNER_FORMATS,
   MiningAdTemplateCard,
+  REWARD_ELIGIBLE_AD_FORMATS,
   TEMPLATE_TYPE_LABELS,
+  extractAdZoneKey,
+  isDisplayBannerTemplate,
+  isRewardEligibleTemplate,
 } from '../mining/MiningAdSandboxRenderer.tsx';
 import {
   Plus,
@@ -172,7 +177,14 @@ interface PlacementFormState {
   isSystem?: boolean;
 }
 
+const EXOCLICK_BANNER_CODE = `<script async type="application/javascript" src="https://a.magsrv.com/ad-provider.js"></script>
+<ins class="eas6a97888e2" data-zoneid="6104102"></ins>
+<script>(AdProvider = window.AdProvider || []).push({"serve": {}});</script>`;
+
 function defaultVerificationForFormat(adFormat: MiningAdFormat): AdVerificationMode {
+  if (DISPLAY_BANNER_FORMATS.has(adFormat)) {
+    return 'impression_only';
+  }
   if (['instream_video', 'invideo_banner', 'video_slider', 'outstream_video', 'vertical_video'].includes(adFormat)) {
     return 'vast';
   }
@@ -221,11 +233,11 @@ const DEFAULT_TEMPLATE_FORM: TemplateFormState = {
   ytNetworkKey: '',
   rewardEventType: 'view',
   isDismissible: true,
-  trackingEnabled: true,
+  trackingEnabled: false,
   isActive: true,
-  verificationMode: 'dwell',
-  requiredWatchSec: '15',
-  requireActiveVisibility: true,
+  verificationMode: 'impression_only',
+  requiredWatchSec: '0',
+  requireActiveVisibility: false,
   requiredVastEvents: ['start', 'complete'],
   requireLinkReturn: false,
   requireServerPostback: false,
@@ -456,6 +468,9 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
   const openEditTemplate = (tpl: MiningAdTemplate) => {
     setEditingTpl(tpl);
     const cr = tpl.completionRule;
+    const isBanner = isDisplayBannerTemplate(tpl);
+    const isRewardEligible = isRewardEligibleTemplate(tpl);
+    const rawMode = cr?.verificationMode || defaultVerificationForFormat(tpl.adFormat || 'banner');
     setTplForm({
       title: tpl.title,
       placementKey: tpl.placementKey,
@@ -473,20 +488,24 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       priority: String(tpl.priority ?? 10),
       sortOrder: String(tpl.sortOrder ?? 10),
       maxImpressions: String(tpl.maxImpressions ?? 0),
-      ytNetworkKey: tpl.ytNetworkKey || '',
+      ytNetworkKey: isRewardEligible ? tpl.ytNetworkKey || '' : '',
       rewardEventType: tpl.rewardEventType === 'click' ? 'click' : 'view',
       isDismissible: tpl.isDismissible !== false,
-      trackingEnabled: tpl.trackingEnabled !== false,
+      trackingEnabled: isBanner ? false : tpl.trackingEnabled !== false,
       isActive: tpl.isActive,
-      verificationMode: cr?.verificationMode || defaultVerificationForFormat(tpl.adFormat || 'banner'),
-      requiredWatchSec: String(cr?.requiredWatchSec ?? 15),
-      requireActiveVisibility: cr?.requireActiveVisibility !== false,
+      verificationMode: isBanner
+        ? 'impression_only'
+        : !isRewardEligible && rawMode === 's2s_postback'
+          ? 'dwell'
+          : rawMode,
+      requiredWatchSec: isBanner ? '0' : String(cr?.requiredWatchSec ?? 15),
+      requireActiveVisibility: isBanner ? false : cr?.requireActiveVisibility !== false,
       requiredVastEvents:
         Array.isArray(cr?.requiredVastEvents) && cr.requiredVastEvents.length > 0
           ? cr.requiredVastEvents
           : ['start', 'complete'],
-      requireLinkReturn: Boolean(cr?.requireLinkReturn),
-      requireServerPostback: Boolean(cr?.requireServerPostback),
+      requireLinkReturn: isBanner ? false : Boolean(cr?.requireLinkReturn),
+      requireServerPostback: isRewardEligible ? Boolean(cr?.requireServerPostback) : false,
       sessionTtlSec: String(cr?.sessionTtlSec ?? 900),
       maxDailyPerUser: String(cr?.maxDailyPerUser ?? 25),
       frequencyCapMinutes: String(cr?.frequencyCapMinutes ?? 0),
@@ -495,6 +514,64 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
     setShowInlinePreview(false);
     setTplModalOpen(true);
   };
+
+  const openExoClickPreset = () => {
+    const existing = templates.find(
+      (t) => extractAdZoneKey(t) === 'exoclick:zone:6104102' || t.title.trim() === 'YemenTask_Website_Banner'
+    );
+    if (existing) {
+      openEditTemplate(existing);
+      showToast('قالب ExoClick (Zone 6104102) مضاف مسبقاً — تم فتحه للتعديل دون تكرار.', 'info');
+      return;
+    }
+    const targetPlc =
+      placementMap.get('mining_banner_gallery') ||
+      placementMap.get('mining_mid_banner') ||
+      sortedPlacements[0] ||
+      null;
+    setEditingTpl(null);
+    setTplForm({
+      ...DEFAULT_TEMPLATE_FORM,
+      title: 'YemenTask_Website_Banner',
+      sourceName: 'ExoClick',
+      placementKey: targetPlc?.placementKey || 'mining_banner_gallery',
+      templateType: 'network_code',
+      adFormat: 'banner',
+      deviceTarget: 'all',
+      codeContent: EXOCLICK_BANNER_CODE,
+      width: '300',
+      height: '250',
+      priority: '20',
+      sortOrder: '10',
+      maxImpressions: '0',
+      ytNetworkKey: '',
+      rewardEventType: 'view',
+      isDismissible: true,
+      trackingEnabled: false,
+      isActive: true,
+      verificationMode: 'impression_only',
+      requiredWatchSec: '0',
+      requireActiveVisibility: false,
+      requireLinkReturn: false,
+      requireServerPostback: false,
+    });
+    setTplError('');
+    setShowInlinePreview(false);
+    setTplModalOpen(true);
+  };
+
+  const isTplFormBannerOnly = isDisplayBannerTemplate({
+    adFormat: tplForm.adFormat,
+    sourceName: tplForm.sourceName,
+    codeContent: tplForm.codeContent,
+  });
+
+  const isTplFormRewardEligible = isRewardEligibleTemplate({
+    adFormat: tplForm.adFormat,
+    templateType: tplForm.templateType,
+    sourceName: tplForm.sourceName,
+    codeContent: tplForm.codeContent,
+  });
 
   const buildPreviewTemplateObject = (): MiningAdTemplate => ({
     id: editingTpl?.id || '00000000-0000-4000-8000-000000000000',
@@ -515,20 +592,28 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
     sortOrder: Number(tplForm.sortOrder) || 0,
     maxImpressions: Math.max(0, Number(tplForm.maxImpressions) || 0),
     impressionsCount: editingTpl?.impressionsCount ?? 0,
-    ytNetworkKey: tplForm.ytNetworkKey.trim() || null,
-    rewardEventType: tplForm.ytNetworkKey.trim() ? tplForm.rewardEventType : null,
+    ytNetworkKey: isTplFormRewardEligible ? tplForm.ytNetworkKey.trim() || null : null,
+    rewardEventType: isTplFormRewardEligible
+      ? tplForm.ytNetworkKey.trim()
+        ? tplForm.rewardEventType
+        : null
+      : null,
     isDismissible: tplForm.isDismissible,
-    trackingEnabled: tplForm.trackingEnabled,
+    trackingEnabled: isTplFormBannerOnly ? false : tplForm.trackingEnabled,
     isActive: tplForm.isActive,
     completionRule: {
       adFormat: tplForm.adFormat,
-      trackingEnabled: tplForm.trackingEnabled,
-      verificationMode: tplForm.verificationMode,
-      requiredWatchSec: Number(tplForm.requiredWatchSec) || 15,
-      requireActiveVisibility: tplForm.requireActiveVisibility,
+      trackingEnabled: isTplFormBannerOnly ? false : tplForm.trackingEnabled,
+      verificationMode: isTplFormBannerOnly
+        ? 'impression_only'
+        : !isTplFormRewardEligible && tplForm.verificationMode === 's2s_postback'
+          ? 'dwell'
+          : tplForm.verificationMode,
+      requiredWatchSec: isTplFormBannerOnly ? 0 : Number(tplForm.requiredWatchSec) || 15,
+      requireActiveVisibility: isTplFormBannerOnly ? false : tplForm.requireActiveVisibility,
       requiredVastEvents: tplForm.requiredVastEvents,
-      requireLinkReturn: tplForm.requireLinkReturn,
-      requireServerPostback: tplForm.requireServerPostback,
+      requireLinkReturn: isTplFormBannerOnly ? false : tplForm.requireLinkReturn,
+      requireServerPostback: isTplFormRewardEligible ? tplForm.requireServerPostback : false,
       sessionTtlSec: Number(tplForm.sessionTtlSec) || 900,
       maxDailyPerUser: Number(tplForm.maxDailyPerUser) || 25,
       frequencyCapMinutes: Number(tplForm.frequencyCapMinutes) || 0,
@@ -545,6 +630,18 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       setTplError('يرجى إدخال عنوان القالب الإعلاني.');
       return;
     }
+
+    const bannerOnly = isDisplayBannerTemplate({
+      adFormat: tplForm.adFormat,
+      sourceName: tplForm.sourceName,
+      codeContent: tplForm.codeContent,
+    });
+    const rewardEligible = isRewardEligibleTemplate({
+      adFormat: tplForm.adFormat,
+      templateType: tplForm.templateType,
+      sourceName: tplForm.sourceName,
+      codeContent: tplForm.codeContent,
+    });
 
     const payload = {
       title: tplForm.title.trim(),
@@ -563,21 +660,29 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       priority: Number(tplForm.priority) || 10,
       sortOrder: Number(tplForm.sortOrder) || 0,
       maxImpressions: Math.max(0, Number(tplForm.maxImpressions) || 0),
-      ytNetworkKey: tplForm.ytNetworkKey.trim() || null,
-      rewardEventType: tplForm.ytNetworkKey.trim() ? tplForm.rewardEventType : null,
+      ytNetworkKey: rewardEligible ? tplForm.ytNetworkKey.trim() || null : null,
+      rewardEventType: rewardEligible
+        ? tplForm.ytNetworkKey.trim()
+          ? tplForm.rewardEventType
+          : null
+        : null,
       isDismissible: tplForm.isDismissible,
-      trackingEnabled: tplForm.trackingEnabled,
+      trackingEnabled: bannerOnly ? false : tplForm.trackingEnabled,
       isActive: tplForm.isActive,
       completionRule: {
         adFormat: tplForm.adFormat,
-        trackingEnabled: tplForm.trackingEnabled,
-        verificationMode: tplForm.verificationMode,
-        requiredWatchSec: Math.max(0, Math.min(600, Number(tplForm.requiredWatchSec) || 0)),
-        requireActiveVisibility: tplForm.requireActiveVisibility,
+        trackingEnabled: bannerOnly ? false : tplForm.trackingEnabled,
+        verificationMode: bannerOnly
+          ? ('impression_only' as AdVerificationMode)
+          : !rewardEligible && tplForm.verificationMode === 's2s_postback'
+            ? ('dwell' as AdVerificationMode)
+            : tplForm.verificationMode,
+        requiredWatchSec: bannerOnly ? 0 : Math.max(0, Math.min(600, Number(tplForm.requiredWatchSec) || 0)),
+        requireActiveVisibility: bannerOnly ? false : tplForm.requireActiveVisibility,
         requiredVastEvents:
           tplForm.requiredVastEvents.length > 0 ? tplForm.requiredVastEvents : ['start', 'complete'],
-        requireLinkReturn: tplForm.requireLinkReturn,
-        requireServerPostback: tplForm.requireServerPostback,
+        requireLinkReturn: bannerOnly ? false : tplForm.requireLinkReturn,
+        requireServerPostback: rewardEligible ? tplForm.requireServerPostback : false,
         sessionTtlSec: Math.max(60, Math.min(7200, Number(tplForm.sessionTtlSec) || 900)),
         maxDailyPerUser: Math.max(0, Math.min(500, Number(tplForm.maxDailyPerUser) || 25)),
         frequencyCapMinutes: Math.max(0, Math.min(1440, Number(tplForm.frequencyCapMinutes) || 0)),
@@ -588,7 +693,7 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
     try {
       if (editingTpl) {
         await api.updateAdminMiningAdTemplate(editingTpl.id, payload);
-        showToast('تم تحديث القالب الإعلاني وقواعد التحقق بنجاح.', 'success');
+        showToast('تم تحديث القالب الإعلاني بنجاح.', 'success');
       } else {
         await api.createAdminMiningAdTemplate(payload);
         showToast('تم إضافة القالب الإعلاني وحفظه في قاعدة البيانات بنجاح.', 'success');
@@ -611,6 +716,19 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       onChanged?.();
     } catch (err: any) {
       showToast(err?.message || 'تعذر تغيير حالة القالب.', 'error');
+    }
+  };
+
+  const handleChangeTemplatePlacement = async (tpl: MiningAdTemplate, nextPlacementKey: string) => {
+    if (!nextPlacementKey || nextPlacementKey === tpl.placementKey) return;
+    try {
+      await api.updateAdminMiningAdTemplate(tpl.id, { placementKey: nextPlacementKey });
+      const plcTitle = placementMap.get(nextPlacementKey)?.titleAr || nextPlacementKey;
+      showToast(`تم نقل "${tpl.title}" إلى مساحة "${plcTitle}".`, 'success');
+      await loadAll();
+      onChanged?.();
+    } catch (err: any) {
+      showToast(err?.message || 'تعذر نقل القالب إلى المساحة المختارة.', 'error');
     }
   };
 
@@ -801,9 +919,27 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
     e.preventDefault();
     setSavingFormatRule(true);
     try {
+      const isBannerFmt = DISPLAY_BANNER_FORMATS.has(selectedRuleFormat);
+      const isRewardFmt = REWARD_ELIGIBLE_AD_FORMATS.has(selectedRuleFormat);
       await api.saveAdminAdFormatRule({
         ...formatRuleDraft,
         adFormat: selectedRuleFormat,
+        ...(!isRewardFmt
+          ? {
+              requireServerPostback: false,
+              verificationMode:
+                formatRuleDraft.verificationMode === 's2s_postback' ? 'dwell' : formatRuleDraft.verificationMode,
+            }
+          : {}),
+        ...(isBannerFmt
+          ? {
+              trackingEnabled: false,
+              verificationMode: 'impression_only',
+              requireLinkReturn: false,
+              requireServerPostback: false,
+              requiredWatchSec: 0,
+            }
+          : {}),
       });
       showToast(`تم حفظ شروط التحقق الافتراضية لنوع ${AD_FORMAT_LABELS[selectedRuleFormat]}.`, 'success');
       await loadAll();
@@ -869,6 +1005,19 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
           >
             <Plus className="w-3.5 h-3.5" />
             <span>إضافة مساحة</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={openExoClickPreset}
+            className={`inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+              isObsidian
+                ? 'bg-emerald-500/15 hover:bg-emerald-500/25 border-emerald-500/35 text-emerald-300'
+                : 'bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>تحضير قالب ExoClick (6104102)</span>
           </button>
 
           <button
@@ -1018,20 +1167,33 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
             <p className={`text-xs max-w-md mx-auto leading-relaxed ${mutedText}`}>
               لا يتم إدراج أي إعلانات أو روابط تجريبية تلقائياً. وتبقى المساحات مخفية تماماً عن المستخدمين حتى تضيف قالباً فعلياً وتفعّله هنا.
             </p>
-            <button
-              type="button"
-              onClick={() => openCreateTemplate()}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-black text-xs cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              <span>إنشاء أول قالب إعلاني</span>
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={openExoClickPreset}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#0B0E14] font-black text-xs cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>تحضير قالب ExoClick (300×250 · Zone 6104102)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => openCreateTemplate()}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-black text-xs cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>إنشاء أول قالب إعلاني</span>
+              </button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3">
             {filteredTemplates.map((tpl, idx) => {
               const plc = placementMap.get(tpl.placementKey);
               const capped = tpl.maxImpressions > 0 && tpl.impressionsCount >= tpl.maxImpressions;
+              const isBannerOnly = isDisplayBannerTemplate(tpl);
+              const isRewardable = isRewardEligibleTemplate(tpl);
+              const zoneKey = extractAdZoneKey(tpl);
               return (
                 <div
                   key={tpl.id}
@@ -1062,18 +1224,46 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
                           {tpl.sourceName}
                         </span>
                       )}
-                      {tpl.ytNetworkKey && (
-                        <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                          YT: {tpl.ytNetworkKey} ({tpl.rewardEventType || 'view'})
+                      {zoneKey && (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-white/5 text-amber-300 border border-amber-500/25">
+                          {zoneKey}
                         </span>
+                      )}
+                      {isBannerOnly ? (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-500/15 text-slate-300 border border-slate-500/30">
+                          بانر عرض فقط (بدون YT Coin)
+                        </span>
+                      ) : !isRewardable ? (
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-500/15 text-slate-300 border border-slate-500/30">
+                          عرض بدون مكافآت YT Coin
+                        </span>
+                      ) : (
+                        tpl.ytNetworkKey && (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                            YT: {tpl.ytNetworkKey} ({tpl.rewardEventType || 'view'})
+                          </span>
+                        )
                       )}
                     </div>
 
                     <h3 className="text-sm sm:text-base font-black truncate">{tpl.title}</h3>
 
-                    <div className={`flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] ${mutedText}`}>
-                      <span>
-                        المساحة: <strong className="text-amber-400">{plc?.titleAr || tpl.placementKey}</strong>
+                    <div className={`flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] ${mutedText}`}>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span>المساحة:</span>
+                        <select
+                          aria-label={`نقل مساحة ${tpl.title}`}
+                          value={tpl.placementKey}
+                          onChange={(e) => void handleChangeTemplatePlacement(tpl, e.target.value)}
+                          className={`rounded-lg px-2 py-1 text-[11px] font-bold text-amber-400 ${inputSurface}`}
+                        >
+                          {sortedPlacements.map((p) => (
+                            <option key={p.placementKey} value={p.placementKey}>
+                              {p.titleAr}
+                            </option>
+                          ))}
+                        </select>
+                        {!plc && <span className="text-rose-400 font-mono">({tpl.placementKey})</span>}
                       </span>
                       <span className="font-mono tabular-nums">الأبعاد: {tpl.width}×{tpl.height}</span>
                       <span className="font-mono tabular-nums">
@@ -1082,10 +1272,12 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
                       </span>
                       <span>
                         التتبع:{' '}
-                        <strong className={tpl.trackingEnabled ? 'text-emerald-400' : 'text-gray-400'}>
-                          {tpl.trackingEnabled
-                            ? `${VERIFICATION_MODE_LABELS[tpl.completionRule?.verificationMode || 'dwell']} (${tpl.completionRule?.requiredWatchSec ?? 15}ث)`
-                            : 'معطّل'}
+                        <strong className={!isBannerOnly && tpl.trackingEnabled ? 'text-emerald-400' : 'text-gray-400'}>
+                          {isBannerOnly
+                            ? 'عرض صامت فقط (مفصول عن المهام)'
+                            : tpl.trackingEnabled
+                              ? `${VERIFICATION_MODE_LABELS[tpl.completionRule?.verificationMode || 'dwell']} (${tpl.completionRule?.requiredWatchSec ?? 15}ث)`
+                              : 'معطّل'}
                         </strong>
                       </span>
                     </div>
@@ -1436,130 +1628,146 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
               </select>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-              <div>
-                <label className="font-bold block mb-1">نمط التحقق الخادمي</label>
-                <select
-                  value={formatRuleDraft.verificationMode}
-                  onChange={(e) =>
-                    setFormatRuleDraft({
-                      ...formatRuleDraft,
-                      verificationMode: e.target.value as AdVerificationMode,
-                    })
-                  }
-                  className={`w-full rounded-xl px-3 py-2 font-bold ${inputSurface}`}
-                >
-                  {(Object.keys(VERIFICATION_MODE_LABELS) as AdVerificationMode[]).map((mode) => (
-                    <option key={mode} value={mode}>
-                      {VERIFICATION_MODE_LABELS[mode]}
-                    </option>
-                  ))}
-                </select>
+            {DISPLAY_BANNER_FORMATS.has(selectedRuleFormat) ? (
+              <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4 text-xs text-amber-200 leading-relaxed font-semibold">
+                إعلانات البانر ({AD_FORMAT_LABELS[selectedRuleFormat]}) للعرض الصامت فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin — ولا تقبل تفعيل تتبع المدة أو S2S Postback. المكافآت مخصصة فقط لمهام الفيديو والروابط الموثقة.
               </div>
-              <div>
-                <label className="font-bold block mb-1">مدة المشاهدة النشطة المطلوبة (ثانية)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={600}
-                  value={formatRuleDraft.requiredWatchSec}
-                  onChange={(e) =>
-                    setFormatRuleDraft({
-                      ...formatRuleDraft,
-                      requiredWatchSec: Number(e.target.value) || 0,
-                    })
-                  }
-                  className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
-                />
-              </div>
-              <div>
-                <label className="font-bold block mb-1">صلاحية الجلسة (ثانية)</label>
-                <input
-                  type="number"
-                  min={60}
-                  max={7200}
-                  value={formatRuleDraft.sessionTtlSec}
-                  onChange={(e) =>
-                    setFormatRuleDraft({
-                      ...formatRuleDraft,
-                      sessionTtlSec: Number(e.target.value) || 900,
-                    })
-                  }
-                  className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
-                />
-              </div>
-              <div>
-                <label className="font-bold block mb-1">الحد اليومي لكل مستخدم</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={500}
-                  value={formatRuleDraft.maxDailyPerUser}
-                  onChange={(e) =>
-                    setFormatRuleDraft({
-                      ...formatRuleDraft,
-                      maxDailyPerUser: Number(e.target.value) || 25,
-                    })
-                  }
-                  className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="font-bold block mb-1">فترة التهدئة بين الجلسات (دقيقة — 0 بدون تهدئة)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={1440}
-                  value={formatRuleDraft.frequencyCapMinutes}
-                  onChange={(e) =>
-                    setFormatRuleDraft({
-                      ...formatRuleDraft,
-                      frequencyCapMinutes: Number(e.target.value) || 0,
-                    })
-                  }
-                  className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
-                />
-              </div>
-            </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <label className="font-bold block mb-1">نمط التحقق الخادمي</label>
+                    <select
+                      value={formatRuleDraft.verificationMode}
+                      onChange={(e) =>
+                        setFormatRuleDraft({
+                          ...formatRuleDraft,
+                          verificationMode: e.target.value as AdVerificationMode,
+                        })
+                      }
+                      className={`w-full rounded-xl px-3 py-2 font-bold ${inputSurface}`}
+                    >
+                      {(Object.keys(VERIFICATION_MODE_LABELS) as AdVerificationMode[])
+                        .filter((mode) => mode !== 's2s_postback' || REWARD_ELIGIBLE_AD_FORMATS.has(selectedRuleFormat))
+                        .map((mode) => (
+                          <option key={mode} value={mode}>
+                            {VERIFICATION_MODE_LABELS[mode]}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-bold block mb-1">مدة المشاهدة النشطة المطلوبة (ثانية)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={600}
+                      value={formatRuleDraft.requiredWatchSec}
+                      onChange={(e) =>
+                        setFormatRuleDraft({
+                          ...formatRuleDraft,
+                          requiredWatchSec: Number(e.target.value) || 0,
+                        })
+                      }
+                      className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold block mb-1">صلاحية الجلسة (ثانية)</label>
+                    <input
+                      type="number"
+                      min={60}
+                      max={7200}
+                      value={formatRuleDraft.sessionTtlSec}
+                      onChange={(e) =>
+                        setFormatRuleDraft({
+                          ...formatRuleDraft,
+                          sessionTtlSec: Number(e.target.value) || 900,
+                        })
+                      }
+                      className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold block mb-1">الحد اليومي لكل مستخدم</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={500}
+                      value={formatRuleDraft.maxDailyPerUser}
+                      onChange={(e) =>
+                        setFormatRuleDraft({
+                          ...formatRuleDraft,
+                          maxDailyPerUser: Number(e.target.value) || 25,
+                        })
+                      }
+                      className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="font-bold block mb-1">فترة التهدئة بين الجلسات (دقيقة — 0 بدون تهدئة)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={1440}
+                      value={formatRuleDraft.frequencyCapMinutes}
+                      onChange={(e) =>
+                        setFormatRuleDraft({
+                          ...formatRuleDraft,
+                          frequencyCapMinutes: Number(e.target.value) || 0,
+                        })
+                      }
+                      className={`w-full rounded-xl px-3 py-2 font-mono font-bold ${inputSurface}`}
+                    />
+                  </div>
+                </div>
 
-            <div className={`rounded-2xl p-3.5 space-y-2 text-xs ${subSurface}`}>
-              <label className="flex items-center gap-2 cursor-pointer font-bold">
-                <input
-                  type="checkbox"
-                  checked={formatRuleDraft.trackingEnabled}
-                  onChange={(e) => setFormatRuleDraft({ ...formatRuleDraft, trackingEnabled: e.target.checked })}
-                />
-                <span>تفعيل التتبع لهذا التنسيق</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer font-bold">
-                <input
-                  type="checkbox"
-                  checked={formatRuleDraft.requireActiveVisibility}
-                  onChange={(e) =>
-                    setFormatRuleDraft({ ...formatRuleDraft, requireActiveVisibility: e.target.checked })
-                  }
-                />
-                <span>إلزامية بقاء التبويب نشطاً (Page Visibility) — إيقاف العدّاد عند التبديل</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer font-bold">
-                <input
-                  type="checkbox"
-                  checked={formatRuleDraft.requireLinkReturn}
-                  onChange={(e) => setFormatRuleDraft({ ...formatRuleDraft, requireLinkReturn: e.target.checked })}
-                />
-                <span>إلزامية فتح الرابط الخارجي وتسجيل العودة</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer font-bold">
-                <input
-                  type="checkbox"
-                  checked={formatRuleDraft.requireServerPostback}
-                  onChange={(e) =>
-                    setFormatRuleDraft({ ...formatRuleDraft, requireServerPostback: e.target.checked })
-                  }
-                />
-                <span>إلزامية تأكيد S2S Postback من الشبكة قبل اعتماد المكافأة</span>
-              </label>
-            </div>
+                <div className={`rounded-2xl p-3.5 space-y-2 text-xs ${subSurface}`}>
+                  <label className="flex items-center gap-2 cursor-pointer font-bold">
+                    <input
+                      type="checkbox"
+                      checked={formatRuleDraft.trackingEnabled}
+                      onChange={(e) => setFormatRuleDraft({ ...formatRuleDraft, trackingEnabled: e.target.checked })}
+                    />
+                    <span>تفعيل التتبع لهذا التنسيق</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer font-bold">
+                    <input
+                      type="checkbox"
+                      checked={formatRuleDraft.requireActiveVisibility}
+                      onChange={(e) =>
+                        setFormatRuleDraft({ ...formatRuleDraft, requireActiveVisibility: e.target.checked })
+                      }
+                    />
+                    <span>إلزامية بقاء التبويب نشطاً (Page Visibility) — إيقاف العدّاد عند التبديل</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer font-bold">
+                    <input
+                      type="checkbox"
+                      checked={formatRuleDraft.requireLinkReturn}
+                      onChange={(e) => setFormatRuleDraft({ ...formatRuleDraft, requireLinkReturn: e.target.checked })}
+                    />
+                    <span>إلزامية فتح الرابط الخارجي وتسجيل العودة</span>
+                  </label>
+                  {REWARD_ELIGIBLE_AD_FORMATS.has(selectedRuleFormat) ? (
+                    <label className="flex items-center gap-2 cursor-pointer font-bold">
+                      <input
+                        type="checkbox"
+                        checked={formatRuleDraft.requireServerPostback}
+                        onChange={(e) =>
+                          setFormatRuleDraft({ ...formatRuleDraft, requireServerPostback: e.target.checked })
+                        }
+                      />
+                      <span>إلزامية تأكيد S2S Postback من الشبكة قبل اعتماد المكافأة</span>
+                    </label>
+                  ) : (
+                    <p className="text-[11px] font-semibold text-amber-300 pt-1">
+                      مكافآت YT Coin (S2S) متاحة فقط لإعلانات الفيديو والروابط وما يشبهها، ولا تشمل البانرات أو الودجات أو التنسيقات المختلطة.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
 
             <button
               type="submit"
@@ -2120,35 +2328,45 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
                   />
                 </div>
 
-                <div>
-                  <label className="font-bold block mb-1">ربط بمكافآت YT Coin (اختياري)</label>
-                  <select
-                    value={tplForm.ytNetworkKey}
-                    onChange={(e) => setTplForm({ ...tplForm, ytNetworkKey: e.target.value })}
-                    className={`w-full rounded-xl px-3 py-2 font-bold ${inputSurface}`}
-                  >
-                    <option value="">بدون مكافأة YT (عرض وتتبع فقط)</option>
-                    {ytNetworks.map((net) => (
-                      <option key={net.network_key} value={net.network_key}>
-                        {net.display_name} ({net.network_key})
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {isTplFormRewardEligible ? (
+                  <>
+                    <div>
+                      <label className="font-bold block mb-1">ربط بمكافآت YT Coin (مهام الفيديو والروابط فقط)</label>
+                      <select
+                        value={tplForm.ytNetworkKey}
+                        onChange={(e) => setTplForm({ ...tplForm, ytNetworkKey: e.target.value })}
+                        className={`w-full rounded-xl px-3 py-2 font-bold ${inputSurface}`}
+                      >
+                        <option value="">بدون مكافأة YT (عرض وتتبع فقط)</option>
+                        {ytNetworks.map((net) => (
+                          <option key={net.network_key} value={net.network_key}>
+                            {net.display_name} ({net.network_key})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                {tplForm.ytNetworkKey && (
-                  <div>
-                    <label className="font-bold block mb-1">نوع الحدث الموثق (S2S)</label>
-                    <select
-                      value={tplForm.rewardEventType}
-                      onChange={(e) =>
-                        setTplForm({ ...tplForm, rewardEventType: e.target.value as 'view' | 'click' })
-                      }
-                      className={`w-full rounded-xl px-3 py-2 font-bold ${inputSurface}`}
-                    >
-                      <option value="view">مشاهدة إعلان (View)</option>
-                      <option value="click">نقرة إعلانية (Click)</option>
-                    </select>
+                    {tplForm.ytNetworkKey && (
+                      <div>
+                        <label className="font-bold block mb-1">نوع الحدث الموثق (S2S)</label>
+                        <select
+                          value={tplForm.rewardEventType}
+                          onChange={(e) =>
+                            setTplForm({ ...tplForm, rewardEventType: e.target.value as 'view' | 'click' })
+                          }
+                          className={`w-full rounded-xl px-3 py-2 font-bold ${inputSurface}`}
+                        >
+                          <option value="view">مشاهدة إعلان (View)</option>
+                          <option value="click">نقرة إعلانية (Click)</option>
+                        </select>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="sm:col-span-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] font-semibold text-amber-300 flex items-center">
+                    {isTplFormBannerOnly
+                      ? 'إعلانات البانر وشبكات العرض (مثل ExoClick) للعرض الصامت فقط ولا ترتبط بمكافآت YT Coin أو نظام المهام.'
+                      : 'المكافآت (YT Coin / S2S) مخصصة فقط لإعلانات الفيديو والروابط وما يشبهها — هذا النوع لا يمنح مكافآت.'}
                   </div>
                 )}
               </div>
@@ -2169,124 +2387,136 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
                       />
                       <span>قابل للإغلاق</span>
                     </label>
-                    <label className="inline-flex items-center gap-1.5 font-bold cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={tplForm.trackingEnabled}
-                        onChange={(e) => setTplForm({ ...tplForm, trackingEnabled: e.target.checked })}
-                      />
-                      <span>تفعيل التتبع</span>
-                    </label>
+                    {!isTplFormBannerOnly && (
+                      <label className="inline-flex items-center gap-1.5 font-bold cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={tplForm.trackingEnabled}
+                          onChange={(e) => setTplForm({ ...tplForm, trackingEnabled: e.target.checked })}
+                        />
+                        <span>تفعيل التتبع</span>
+                      </label>
+                    )}
                   </div>
                 </div>
 
-                {tplForm.trackingEnabled && (
-                  <>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                      <div className="col-span-2">
-                        <label className="font-bold block mb-1">نمط التحقق</label>
-                        <select
-                          value={tplForm.verificationMode}
-                          onChange={(e) =>
-                            setTplForm({ ...tplForm, verificationMode: e.target.value as AdVerificationMode })
-                          }
-                          className={`w-full rounded-xl px-2.5 py-2 font-bold ${inputSurface}`}
-                        >
-                          {(Object.keys(VERIFICATION_MODE_LABELS) as AdVerificationMode[]).map((m) => (
-                            <option key={m} value={m}>
-                              {VERIFICATION_MODE_LABELS[m]}
-                            </option>
-                          ))}
-                        </select>
+                {isTplFormBannerOnly ? (
+                  <p className="text-[11px] font-semibold text-gray-300 leading-relaxed">
+                    إعلانات البانر للعرض فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin (عرض صامت بدون جلسات تتبع أو مؤقت أو مكافأة).
+                  </p>
+                ) : (
+                  tplForm.trackingEnabled && (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                        <div className="col-span-2">
+                          <label className="font-bold block mb-1">نمط التحقق</label>
+                          <select
+                            value={tplForm.verificationMode}
+                            onChange={(e) =>
+                              setTplForm({ ...tplForm, verificationMode: e.target.value as AdVerificationMode })
+                            }
+                            className={`w-full rounded-xl px-2.5 py-2 font-bold ${inputSurface}`}
+                          >
+                            {(Object.keys(VERIFICATION_MODE_LABELS) as AdVerificationMode[])
+                              .filter((m) => m !== 's2s_postback' || isTplFormRewardEligible)
+                              .map((m) => (
+                                <option key={m} value={m}>
+                                  {VERIFICATION_MODE_LABELS[m]}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="font-bold block mb-1">المشاهدة (ث)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={600}
+                            value={tplForm.requiredWatchSec}
+                            onChange={(e) => setTplForm({ ...tplForm, requiredWatchSec: e.target.value })}
+                            className={`w-full rounded-xl px-2.5 py-2 font-mono font-bold ${inputSurface}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="font-bold block mb-1">حد يومي/مستخدم</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={500}
+                            value={tplForm.maxDailyPerUser}
+                            onChange={(e) => setTplForm({ ...tplForm, maxDailyPerUser: e.target.value })}
+                            className={`w-full rounded-xl px-2.5 py-2 font-mono font-bold ${inputSurface}`}
+                          />
+                        </div>
+                        <div>
+                          <label className="font-bold block mb-1">تهدئة (دقيقة)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1440}
+                            value={tplForm.frequencyCapMinutes}
+                            onChange={(e) => setTplForm({ ...tplForm, frequencyCapMinutes: e.target.value })}
+                            className={`w-full rounded-xl px-2.5 py-2 font-mono font-bold ${inputSurface}`}
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <label className="font-bold block mb-1">المشاهدة (ث)</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={600}
-                          value={tplForm.requiredWatchSec}
-                          onChange={(e) => setTplForm({ ...tplForm, requiredWatchSec: e.target.value })}
-                          className={`w-full rounded-xl px-2.5 py-2 font-mono font-bold ${inputSurface}`}
-                        />
-                      </div>
-                      <div>
-                        <label className="font-bold block mb-1">حد يومي/مستخدم</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={500}
-                          value={tplForm.maxDailyPerUser}
-                          onChange={(e) => setTplForm({ ...tplForm, maxDailyPerUser: e.target.value })}
-                          className={`w-full rounded-xl px-2.5 py-2 font-mono font-bold ${inputSurface}`}
-                        />
-                      </div>
-                      <div>
-                        <label className="font-bold block mb-1">تهدئة (دقيقة)</label>
-                        <input
-                          type="number"
-                          min={0}
-                          max={1440}
-                          value={tplForm.frequencyCapMinutes}
-                          onChange={(e) => setTplForm({ ...tplForm, frequencyCapMinutes: e.target.value })}
-                          className={`w-full rounded-xl px-2.5 py-2 font-mono font-bold ${inputSurface}`}
-                        />
-                      </div>
-                    </div>
 
-                    <div className="flex flex-wrap items-center gap-4">
-                      <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
-                        <input
-                          type="checkbox"
-                          checked={tplForm.requireActiveVisibility}
-                          onChange={(e) => setTplForm({ ...tplForm, requireActiveVisibility: e.target.checked })}
-                        />
-                        <span>اشتراط بقاء التبويب نشطاً</span>
-                      </label>
-                      <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
-                        <input
-                          type="checkbox"
-                          checked={tplForm.requireLinkReturn}
-                          onChange={(e) => setTplForm({ ...tplForm, requireLinkReturn: e.target.checked })}
-                        />
-                        <span>اشتراط فتح الرابط والعودة</span>
-                      </label>
-                      <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
-                        <input
-                          type="checkbox"
-                          checked={tplForm.requireServerPostback}
-                          onChange={(e) => setTplForm({ ...tplForm, requireServerPostback: e.target.checked })}
-                        />
-                        <span>اشتراط S2S للمكافأة</span>
-                      </label>
-                    </div>
-
-                    {tplForm.verificationMode === 'vast' && (
-                      <div className="flex flex-wrap items-center gap-3 pt-1">
-                        <span className="font-bold text-gray-300">أحداث VAST المطلوبة:</span>
-                        {VAST_REQUIRED_OPTIONS.map((evt) => {
-                          const checked = tplForm.requiredVastEvents.includes(evt);
-                          return (
-                            <label key={evt} className="inline-flex items-center gap-1 font-mono cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) => {
-                                  setTplForm((prev) => ({
-                                    ...prev,
-                                    requiredVastEvents: e.target.checked
-                                      ? [...prev.requiredVastEvents, evt]
-                                      : prev.requiredVastEvents.filter((x) => x !== evt),
-                                  }));
-                                }}
-                              />
-                              <span>{evt}</span>
-                            </label>
-                          );
-                        })}
+                      <div className="flex flex-wrap items-center gap-4">
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={tplForm.requireActiveVisibility}
+                            onChange={(e) => setTplForm({ ...tplForm, requireActiveVisibility: e.target.checked })}
+                          />
+                          <span>اشتراط بقاء التبويب نشطاً</span>
+                        </label>
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
+                          <input
+                            type="checkbox"
+                            checked={tplForm.requireLinkReturn}
+                            onChange={(e) => setTplForm({ ...tplForm, requireLinkReturn: e.target.checked })}
+                          />
+                          <span>اشتراط فتح الرابط والعودة</span>
+                        </label>
+                        {isTplFormRewardEligible && (
+                          <label className="inline-flex items-center gap-1.5 cursor-pointer font-semibold">
+                            <input
+                              type="checkbox"
+                              checked={tplForm.requireServerPostback}
+                              onChange={(e) => setTplForm({ ...tplForm, requireServerPostback: e.target.checked })}
+                            />
+                            <span>اشتراط S2S للمكافأة</span>
+                          </label>
+                        )}
                       </div>
-                    )}
-                  </>
+
+                      {tplForm.verificationMode === 'vast' && (
+                        <div className="flex flex-wrap items-center gap-3 pt-1">
+                          <span className="font-bold text-gray-300">أحداث VAST المطلوبة:</span>
+                          {VAST_REQUIRED_OPTIONS.map((evt) => {
+                            const checked = tplForm.requiredVastEvents.includes(evt);
+                            return (
+                              <label key={evt} className="inline-flex items-center gap-1 font-mono cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    setTplForm((prev) => ({
+                                      ...prev,
+                                      requiredVastEvents: e.target.checked
+                                        ? [...prev.requiredVastEvents, evt]
+                                        : prev.requiredVastEvents.filter((x) => x !== evt),
+                                    }));
+                                  }}
+                                />
+                                <span>{evt}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )
                 )}
               </div>
 

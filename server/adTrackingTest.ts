@@ -17,7 +17,21 @@ import {
   type StoredTrackingSession,
   checkTrackingRateLimit,
 } from './adTrackingService.js';
-import { DEFAULT_COMFORT_SETTINGS, MigrationRequiredError } from './miningAdsService.js';
+import {
+  DEFAULT_COMFORT_SETTINGS,
+  MigrationRequiredError,
+  REWARD_ELIGIBLE_AD_FORMATS,
+  extractAdZoneSignature,
+  isDisplayBannerAd,
+  isRewardEligibleAd,
+  validateCodeContent,
+} from './miningAdsService.js';
+import {
+  buildMiningAdSrcDoc,
+  extractAdZoneKey,
+  isExoClickCode,
+  isRewardEligibleTemplate,
+} from '../shared/miningAdBannerUtils.js';
 import {
   YT_MAX_SUPPLY_YT,
   YT_SUBUNITS_PER_YT,
@@ -154,7 +168,7 @@ class InMemoryAdTrackingStore implements AdTrackingStore {
 }
 
 async function runTests() {
-  console.log('=== Yemen Task Smart Ad Tracking & Anti-Fraud Test Suite (15 Scenarios) ===');
+  console.log('=== Yemen Task Smart Ad Tracking & Anti-Fraud Test Suite (18 Scenarios) ===');
 
   const USER_A = '11111111-1111-4111-8111-111111111111';
   const USER_B = '22222222-2222-4222-8222-222222222222';
@@ -163,22 +177,26 @@ async function runTests() {
   const TPL_LINK = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   const TPL_POPUNDER = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   const TPL_CAP = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  const TPL_EXOCLICK = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const TPL_DISPLAY_BANNER = '12121212-1212-4121-8121-121212121212';
+  const TPL_WIDGET = '13131313-1313-4131-8131-131313131313';
 
   const makeStoreAndEngine = (startMs = 1_760_000_000_000) => {
     let clockMs = startMs;
     const store = new InMemoryAdTrackingStore();
     store.templates.set(TPL_BANNER, {
       id: TPL_BANNER,
-      title: 'Web Banner S2S',
-      placementKey: 'mining_top_banner',
-      adFormat: 'banner',
+      title: 'Outstream Video Task S2S',
+      placementKey: 'mining_video_primary',
+      templateType: 'video_player',
+      adFormat: 'outstream_video',
       ytNetworkKey: 'adsterra',
       targetUrl: 'https://example.com/offer',
       isActive: true,
       trackingEnabled: true,
     });
     store.rulesByTemplate.set(TPL_BANNER, {
-      adFormat: 'banner',
+      adFormat: 'outstream_video',
       trackingEnabled: true,
       verificationMode: 'dwell',
       requiredWatchSec: 30,
@@ -195,6 +213,7 @@ async function runTests() {
       id: TPL_VIDEO,
       title: 'InStream VAST Video',
       placementKey: 'mining_video_primary',
+      templateType: 'vast_url',
       adFormat: 'instream_video',
       ytNetworkKey: null,
       targetUrl: null,
@@ -205,7 +224,8 @@ async function runTests() {
     store.templates.set(TPL_LINK, {
       id: TPL_LINK,
       title: 'External Link Visit',
-      placementKey: 'mining_links_primary',
+      placementKey: 'mining_links_featured',
+      templateType: 'external_link',
       adFormat: 'external_link',
       ytNetworkKey: 'monetag',
       targetUrl: 'https://example.com/landing',
@@ -226,16 +246,17 @@ async function runTests() {
 
     store.templates.set(TPL_CAP, {
       id: TPL_CAP,
-      title: 'Frequency Capped Banner',
-      placementKey: 'mining_top_banner',
-      adFormat: 'banner',
+      title: 'Frequency Capped Video Slider',
+      placementKey: 'mining_video_mid',
+      templateType: 'video_player',
+      adFormat: 'video_slider',
       ytNetworkKey: null,
       targetUrl: null,
       isActive: true,
       trackingEnabled: true,
     });
     store.rulesByTemplate.set(TPL_CAP, {
-      adFormat: 'banner',
+      adFormat: 'video_slider',
       trackingEnabled: true,
       verificationMode: 'dwell',
       requiredWatchSec: 5,
@@ -246,6 +267,64 @@ async function runTests() {
       sessionTtlSec: 600,
       maxDailyPerUser: 2,
       frequencyCapMinutes: 10,
+    });
+
+    store.templates.set(TPL_EXOCLICK, {
+      id: TPL_EXOCLICK,
+      title: 'YemenTask_Website_Banner',
+      placementKey: 'mining_banner_gallery',
+      templateType: 'network_code',
+      adFormat: 'banner',
+      sourceName: 'ExoClick',
+      codeContent:
+        '<script async type="application/javascript" src="https://a.magsrv.com/ad-provider.js"></script>\n' +
+        '<ins class="eas6a97888e2" data-zoneid="6104102"></ins>\n' +
+        '<script>(AdProvider = window.AdProvider || []).push({"serve": {}});</script>',
+      ytNetworkKey: null,
+      targetUrl: null,
+      isActive: true,
+      trackingEnabled: false,
+    });
+
+    store.templates.set(TPL_DISPLAY_BANNER, {
+      id: TPL_DISPLAY_BANNER,
+      title: 'Mobile Display Banner',
+      placementKey: 'mining_banner_gallery',
+      templateType: 'html',
+      adFormat: 'mobile_banner',
+      sourceName: 'DirectBanner',
+      codeContent: '<div>Banner</div>',
+      ytNetworkKey: null,
+      targetUrl: null,
+      isActive: true,
+      trackingEnabled: true,
+    });
+
+    store.templates.set(TPL_WIDGET, {
+      id: TPL_WIDGET,
+      title: 'Recommendation Widget (Non-Rewardable)',
+      placementKey: 'mining_recommendation_intro',
+      templateType: 'recommendation_widget',
+      adFormat: 'recommendation_widget',
+      sourceName: 'WidgetNetwork',
+      codeContent: '<div>Recommended</div>',
+      ytNetworkKey: 'adsterra',
+      targetUrl: 'https://example.com/rec',
+      isActive: true,
+      trackingEnabled: true,
+    });
+    store.rulesByTemplate.set(TPL_WIDGET, {
+      adFormat: 'recommendation_widget',
+      trackingEnabled: true,
+      verificationMode: 's2s_postback',
+      requiredWatchSec: 10,
+      requireActiveVisibility: true,
+      requiredVastEvents: [],
+      requireLinkReturn: false,
+      requireServerPostback: true,
+      sessionTtlSec: 600,
+      maxDailyPerUser: 25,
+      frequencyCapMinutes: 0,
     });
 
     const engine = new AdTrackingEngine(store, () => clockMs);
@@ -268,7 +347,7 @@ async function runTests() {
     assert.strictEqual(res.session.sessionStatus, 'started');
     assert.strictEqual(res.session.activeDurationSec, 0);
     assert.strictEqual(store.events.filter((e) => e.eventName === 'view_start').length, 1);
-    console.log('✓ [1/15] Session start issues server token & logs initial view_start event');
+    console.log('✓ [1/18] Session start issues server token & logs initial view_start event');
   }
 
   // [Test 2] Valid 30s server dwell completion (eligible_for_yt_reward until S2S)
@@ -296,7 +375,7 @@ async function runTests() {
     assert.strictEqual(done.session.sessionStatus, 'completed');
     assert.strictEqual(done.session.verificationStatus, 'verified');
     assert.strictEqual(done.session.eligibilityResult, 'eligible_for_yt_reward');
-    console.log('✓ [2/15] Valid 30s server-clock dwell completes and marks S2S eligibility without self-crediting');
+    console.log('✓ [2/18] Valid 30s server-clock dwell completes and marks S2S eligibility without self-crediting');
   }
 
   // [Test 3] Premature completion rejection & premature_complete risk flag
@@ -310,7 +389,7 @@ async function runTests() {
     assert.strictEqual(done.session.verificationStatus, 'failed');
     assert.ok(store.riskFlags.some((f) => f.flagType === 'premature_complete'), 'Expected premature_complete risk flag');
     assert.ok(store.events.some((e) => e.eventName === 'complete_rejected'));
-    console.log('✓ [3/15] Premature completion (<30s) rejected with high-severity risk flag');
+    console.log('✓ [3/18] Premature completion (<30s) rejected with high-severity risk flag');
   }
 
   // [Test 4] Hidden tab visibility pause & visibility_bypass spoofing detection
@@ -319,7 +398,6 @@ async function runTests() {
     const { session, sessionToken } = await engine.startSession({ userId: USER_A, templateId: TPL_BANNER });
     advanceSec(10);
     await engine.recordHeartbeat({ sessionId: session.id, userId: USER_A, sessionToken, isVisible: true, clientElapsedSec: 10 });
-    // Tab hidden for 12s while user tries to spoof clientElapsedSec = 45
     advanceSec(12);
     const hiddenHb = await engine.recordHeartbeat({
       sessionId: session.id,
@@ -332,7 +410,7 @@ async function runTests() {
     assert.ok(store.riskFlags.some((f) => f.flagType === 'visibility_bypass'), 'Expected visibility_bypass risk flag');
     const done = await engine.attemptComplete({ sessionId: session.id, userId: USER_A, sessionToken, isVisible: false });
     assert.strictEqual(done.completed, false);
-    console.log('✓ [4/15] Hidden tab pauses server timer & flags spoofed clientElapsedSec');
+    console.log('✓ [4/18] Hidden tab pauses server timer & flags spoofed clientElapsedSec');
   }
 
   // [Test 5] External link exit -> return ordering & time gap capture
@@ -351,7 +429,7 @@ async function runTests() {
     const done = await engine.attemptComplete({ sessionId: session.id, userId: USER_A, sessionToken, isVisible: true });
     assert.strictEqual(done.completed, true);
     assert.strictEqual(done.session.eligibilityResult, 'eligible_for_yt_reward');
-    console.log('✓ [5/15] External link exit/return window validated & logged before S2S reward');
+    console.log('✓ [5/18] External link exit/return window validated & logged before S2S reward');
   }
 
   // [Test 6] Duplicate completion rejection
@@ -367,7 +445,7 @@ async function runTests() {
     const second = await engine.attemptComplete({ sessionId: session.id, userId: USER_A, sessionToken, isVisible: true });
     assert.strictEqual(second.completed, false);
     assert.ok(store.riskFlags.some((f) => f.flagType === 'duplicate_complete'), 'Expected duplicate_complete risk flag');
-    console.log('✓ [6/15] Duplicate completion attempt rejected cleanly with risk flag');
+    console.log('✓ [6/18] Duplicate completion attempt rejected cleanly with risk flag');
   }
 
   // [Test 7] Replay-protected S2S postback linkage & invalid signature audit
@@ -420,7 +498,7 @@ async function runTests() {
     assert.strictEqual(replay.accepted, false);
     assert.strictEqual(replay.reason, 'duplicate_postback');
     assert.ok(store.riskFlags.some((f) => f.flagType === 'duplicate_postback'));
-    console.log('✓ [7/15] S2S postback invalid signature rejected & replay blocked cleanly');
+    console.log('✓ [7/18] S2S postback invalid signature rejected & replay blocked cleanly');
   }
 
   // [Test 8] Expired session rejection (after server TTL)
@@ -435,7 +513,7 @@ async function runTests() {
     const expiredSess = await store.getSessionById(session.id);
     assert.strictEqual(expiredSess?.sessionStatus, 'expired');
     assert.ok(store.riskFlags.some((f) => f.flagType === 'expired_session'));
-    console.log('✓ [8/15] Expired tracking session blocked past server TTL with expired_session flag');
+    console.log('✓ [8/18] Expired tracking session blocked past server TTL with expired_session flag');
   }
 
   // [Test 9] Forged template ID & bounded heartbeat step (max 15s per beat)
@@ -451,12 +529,11 @@ async function runTests() {
     );
     assert.strictEqual(store.riskFlags.filter((f) => f.flagType === 'forged_template_id').length, 2);
 
-    // Even if user leaves tab open for 120s without heartbeats, one heartbeat adds max 15s!
     const { session, sessionToken } = await engine.startSession({ userId: USER_A, templateId: TPL_BANNER });
     advanceSec(120);
     const hb = await engine.recordHeartbeat({ sessionId: session.id, userId: USER_A, sessionToken, isVisible: true });
     assert.strictEqual(hb.activeDurationSec, 15, 'Single heartbeat increment must be capped at 15s');
-    console.log('✓ [9/15] Forged template IDs flagged & single-heartbeat idle jump capped at 15s');
+    console.log('✓ [9/18] Forged template IDs flagged & single-heartbeat idle jump capped at 15s');
   }
 
   // [Test 10] VAST milestone sequence enforcement (invalid vs valid progression)
@@ -466,14 +543,12 @@ async function runTests() {
       userId: USER_A,
       templateId: TPL_VIDEO,
     });
-    // Reject vast_complete before vast_start
     await assert.rejects(
       () => engine.recordEvent({ sessionId: badSess.id, userId: USER_A, sessionToken: badTok, eventName: 'vast_complete' }),
       /تسلسل أحداث الفيديو/
     );
     assert.ok(store.riskFlags.some((f) => f.flagType === 'invalid_vast_sequence'));
 
-    // Valid VAST sequence
     const { session: okSess, sessionToken: okTok } = await engine.startSession({
       userId: USER_A,
       templateId: TPL_VIDEO,
@@ -484,7 +559,6 @@ async function runTests() {
       await engine.recordHeartbeat({ sessionId: okSess.id, userId: USER_A, sessionToken: okTok, isVisible: true });
       await engine.recordEvent({ sessionId: okSess.id, userId: USER_A, sessionToken: okTok, eventName: evt, isVisible: true });
     }
-    // Reject regression after midpoint/complete
     await assert.rejects(
       () => engine.recordEvent({ sessionId: okSess.id, userId: USER_A, sessionToken: okTok, eventName: 'vast_firstQuartile' }),
       /عكس ترتيب أحداث الفيديو/
@@ -492,12 +566,12 @@ async function runTests() {
     const completed = await engine.attemptComplete({ sessionId: okSess.id, userId: USER_A, sessionToken: okTok, isVisible: true });
     assert.strictEqual(completed.completed, true);
     assert.strictEqual(completed.session.eligibilityResult, 'eligible_tracking_only');
-    console.log('✓ [10/15] VAST milestone order strictly enforced (invalid sequence blocked, valid completes)');
+    console.log('✓ [10/18] VAST milestone order strictly enforced (invalid sequence blocked, valid completes)');
   }
 
   // [Test 11] 1-to-1 YT Reward Claim Lock (prevents duplicate claim reuse across different postback IDs)
   {
-    const { store, engine, advanceSec } = makeStoreAndEngine();
+    const { engine, advanceSec } = makeStoreAndEngine();
     const { session, sessionToken } = await engine.startSession({ userId: USER_B, templateId: TPL_BANNER });
     for (let i = 0; i < 3; i++) {
       advanceSec(10);
@@ -528,13 +602,12 @@ async function runTests() {
     });
     assert.strictEqual(r2.accepted, false);
     assert.strictEqual(r2.reason, 'duplicate_yt_reward_claim');
-    console.log('✓ [11/15] Unique YT reward claim lock blocks reuse across different provider event IDs');
+    console.log('✓ [11/18] Unique YT reward claim lock blocks reuse across different provider event IDs');
   }
 
   // [Test 12] Rate limit, Frequency Cap & Daily User Cap enforcement
   {
     const { store, engine, advanceSec } = makeStoreAndEngine();
-    // Frequency cap = 10 min
     await engine.startSession({ userId: USER_A, templateId: TPL_CAP });
     await assert.rejects(
       () => engine.startSession({ userId: USER_A, templateId: TPL_CAP }),
@@ -543,19 +616,17 @@ async function runTests() {
     advanceSec(11 * 60);
     await engine.startSession({ userId: USER_A, templateId: TPL_CAP });
     advanceSec(11 * 60);
-    // Max daily per user = 2
     await assert.rejects(
       () => engine.startSession({ userId: USER_A, templateId: TPL_CAP }),
       /تم بلوغ الحد اليومي/
     );
     assert.ok(store.riskFlags.some((f) => f.flagType === 'velocity_anomaly'));
 
-    // Sliding window rate limiter
     const bucket = `rate-test-${Date.now()}`;
     assert.strictEqual(checkTrackingRateLimit(bucket, 2, 60_000, 1000), true);
     assert.strictEqual(checkTrackingRateLimit(bucket, 2, 60_000, 1001), true);
     assert.strictEqual(checkTrackingRateLimit(bucket, 2, 60_000, 1002), false);
-    console.log('✓ [12/15] Frequency cap, daily cap (velocity_anomaly), and sliding rate limiter enforced');
+    console.log('✓ [12/18] Frequency cap, daily cap (velocity_anomaly), and sliding rate limiter enforced');
   }
 
   // [Test 13] Real Express HTTP API RBAC & Route Guards (401/403/400/200)
@@ -597,7 +668,7 @@ async function runTests() {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    console.log('✓ [13/15] Real Express HTTP routes enforce Auth/Admin RBAC & Comfort public filtering');
+    console.log('✓ [13/18] Real Express HTTP routes enforce Auth/Admin RBAC & Comfort public filtering');
   }
 
   // [Test 14] Popunder block, disabled tracking block, and honest MigrationRequiredError contract
@@ -607,7 +678,7 @@ async function runTests() {
       () => engine.startSession({ userId: USER_A, templateId: TPL_POPUNDER }),
       /Popunder معطّلة تلقائياً/
     );
-    store.comfortSettings.trackingEnabledByFormat['banner'] = false;
+    store.comfortSettings.trackingEnabledByFormat['outstream_video'] = false;
     await assert.rejects(
       () => engine.startSession({ userId: USER_A, templateId: TPL_BANNER }),
       /التتبع معطّل حالياً/
@@ -615,7 +686,7 @@ async function runTests() {
     const migErr = new MigrationRequiredError('DB tables not migrated');
     assert.strictEqual(migErr.migrationRequired, true);
     assert.ok(migErr instanceof Error);
-    console.log('✓ [14/15] Popunder policy, disabled-format guard & honest MigrationRequiredError verified');
+    console.log('✓ [14/18] Popunder policy, disabled-format guard & honest MigrationRequiredError verified');
   }
 
   // [Test 15] YT Coin 1000-subunit & Double-Entry / Financial Ledger Isolation Check
@@ -643,10 +714,222 @@ async function runTests() {
         `Forbidden financial ledger table reference found: ${forbidden}`
       );
     }
-    console.log('✓ [15/15] YT Coin 1000-subunit math, double-entry balance & YER financial ledger isolation intact');
+    console.log('✓ [15/18] YT Coin 1000-subunit math, double-entry balance & YER financial ledger isolation intact');
   }
 
-  console.log('\nALL 15 SMART AD TRACKING & ANTI-FRAUD TESTS PASSED.');
+  // [Test 16] Strict Video/Link Allowlist vs Display Banners, Widgets, Multi-Format & ExoClick Separation
+  {
+    const { store, engine, advanceSec } = makeStoreAndEngine();
+    assert.strictEqual(isDisplayBannerAd({ adFormat: 'banner', sourceName: 'ExoClick' }), true);
+    assert.strictEqual(isDisplayBannerAd({ adFormat: 'mobile_banner' }), true);
+    assert.strictEqual(isDisplayBannerAd({ adFormat: 'instream_video', sourceName: 'VAST' }), false);
+
+    // Positive allowlist: ONLY Video & Link task formats may grant rewards
+    for (const allowedFmt of REWARD_ELIGIBLE_AD_FORMATS) {
+      assert.strictEqual(isRewardEligibleAd({ adFormat: allowedFmt }), true);
+      assert.strictEqual(isRewardEligibleTemplate({ adFormat: allowedFmt }), true);
+    }
+    // Negative check: Banners, Interstitials, Sticky, Popunder, Widgets, Native Cards, Multi-Format, Push & ExoClick
+    for (const nonRewardFmt of [
+      'banner',
+      'mobile_banner',
+      'sticky_banner',
+      'mobile_sticky_banner',
+      'desktop_interstitial',
+      'mobile_interstitial',
+      'instant_message',
+      'popunder',
+      'recommendation_widget',
+      'native_cards',
+      'push_notification',
+      'multi_format',
+    ] as const) {
+      assert.strictEqual(
+        isRewardEligibleAd({ adFormat: nonRewardFmt }),
+        false,
+        `Non-rewardable format must NOT qualify for YT Coin rewards: ${nonRewardFmt}`
+      );
+      assert.strictEqual(
+        isRewardEligibleTemplate({ adFormat: nonRewardFmt }),
+        false,
+        `Shared helper must reject non-rewardable format: ${nonRewardFmt}`
+      );
+    }
+    // Even if mis-tagged as video_player/outstream_video, ExoClick & image_banner must remain excluded
+    assert.strictEqual(
+      isRewardEligibleAd({ adFormat: 'outstream_video', sourceName: 'ExoClick' }),
+      false
+    );
+    assert.strictEqual(
+      isRewardEligibleAd({ adFormat: 'outstream_video', templateType: 'image_banner' }),
+      false
+    );
+
+    // Blocking tracking session creation on ExoClick & Display Banners
+    await assert.rejects(
+      () => engine.startSession({ userId: USER_A, templateId: TPL_EXOCLICK }),
+      /إعلانات البانر للعرض فقط/
+    );
+    await assert.rejects(
+      () => engine.startSession({ userId: USER_A, templateId: TPL_DISPLAY_BANNER }),
+      /إعلانات البانر للعرض فقط/
+    );
+
+    // Recommendation Widget / Native Cards / Multi-Format never inherit networkKey or S2S YT rewards
+    const widgetStart = await engine.startSession({ userId: USER_A, templateId: TPL_WIDGET });
+    assert.strictEqual(widgetStart.session.networkKey, null);
+    advanceSec(11);
+    const widgetDone = await engine.attemptComplete({
+      sessionId: widgetStart.session.id,
+      userId: USER_A,
+      sessionToken: widgetStart.sessionToken,
+      isVisible: true,
+    });
+    assert.strictEqual(widgetDone.completed, true);
+    assert.strictEqual(widgetDone.session.eligibilityResult, 'eligible_tracking_only');
+
+    const blockedWidgetPostback = await engine.recordVerifiedPostbackLinkage({
+      networkKey: 'adsterra',
+      providerEventId: 'evt-widget-blocked',
+      trackingSessionId: widgetStart.session.id,
+      ytAdSessionId: '44444444-4444-4444-8444-444444444444',
+      ytRewardClaimId: '66666666-6666-4666-8666-666666666666',
+      userId: USER_A,
+      signatureValid: true,
+      sanitizedPayload: {},
+    });
+    assert.strictEqual(blockedWidgetPostback.accepted, false);
+    assert.strictEqual(blockedWidgetPostback.reason, 'non_rewardable_ad_format');
+
+    // Even if a display banner session somehow existed, postback linkage must reject YT Coin crediting
+    const legacyBannerSessionId = '33333333-3333-4333-8333-333333333333';
+    const nowIso = new Date().toISOString();
+    await store.insertSession({
+      id: legacyBannerSessionId,
+      userId: USER_A,
+      templateId: TPL_EXOCLICK,
+      placementKey: 'mining_banner_gallery',
+      networkKey: 'adsterra',
+      adFormat: 'banner',
+      deviceType: 'mobile',
+      verificationMode: 'impression_only',
+      requiredWatchSec: 0,
+      startedAt: nowIso,
+      lastActivityAt: nowIso,
+      activeDurationSec: 0,
+      exitAt: null,
+      returnAt: null,
+      vastMilestones: [],
+      sessionStatus: 'completed',
+      verificationStatus: 'verified',
+      eligibilityResult: 'eligible_tracking_only',
+      rejectionReason: null,
+      ytAdSessionId: null,
+      ytRewardClaimId: null,
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      completedAt: nowIso,
+      createdAt: nowIso,
+      sessionTokenHash: '0'.repeat(64),
+      clientFingerprintHash: null,
+      requireActiveVisibility: false,
+      requiredVastEvents: [],
+      requireLinkReturn: false,
+      requireServerPostback: false,
+    });
+    const blockedBannerPostback = await engine.recordVerifiedPostbackLinkage({
+      networkKey: 'adsterra',
+      providerEventId: 'evt-banner-blocked',
+      trackingSessionId: legacyBannerSessionId,
+      ytAdSessionId: '44444444-4444-4444-8444-444444444444',
+      ytRewardClaimId: '55555555-5555-4555-8555-555555555555',
+      userId: USER_A,
+      signatureValid: true,
+      sanitizedPayload: {},
+    });
+    assert.strictEqual(blockedBannerPostback.accepted, false);
+    assert.strictEqual(blockedBannerPostback.reason, 'display_banner_non_rewardable');
+
+    // Code validator accepts clean ExoClick Zone 6104102 but rejects popunder / forced redirect in banners
+    const exoCode =
+      '<script async type="application/javascript" src="https://a.magsrv.com/ad-provider.js"></script>\n' +
+      '<ins class="eas6a97888e2" data-zoneid="6104102"></ins>\n' +
+      '<script>(AdProvider = window.AdProvider || []).push({"serve": {}});</script>';
+    assert.strictEqual(validateCodeContent(exoCode, 'network_code', 'banner'), exoCode);
+    assert.throws(
+      () => validateCodeContent('<script>window.top.location="https://evil.com"</script>', 'network_code', 'banner'),
+      /إعادة التوجيه القسري/
+    );
+    assert.throws(
+      () => validateCodeContent('<script src="https://cdn.example/popunder.js"></script>', 'network_code', 'banner'),
+      /Popunder/
+    );
+    console.log('✓ [16/18] Video/Link reward allowlist & Display Banner/Widget/ExoClick separation enforced');
+  }
+
+  // [Test 17] ExoClick Sandbox srcDoc single-script guard, MutationObserver & duplicate zone detection
+  {
+    const exoCode =
+      '<script async type="application/javascript" src="https://a.magsrv.com/ad-provider.js"></script>\n' +
+      '<ins class="eas6a97888e2" data-zoneid="6104102"></ins>\n' +
+      '<script>(AdProvider = window.AdProvider || []).push({"serve": {}});</script>';
+    assert.strictEqual(isExoClickCode(exoCode, 'ExoClick'), true);
+    assert.strictEqual(extractAdZoneKey({ codeContent: exoCode, sourceName: 'ExoClick' }), 'exoclick:zone:6104102');
+    assert.strictEqual(extractAdZoneSignature(exoCode, 'ExoClick'), 'exoclick:zone:6104102');
+
+    const srcDoc = buildMiningAdSrcDoc({
+      id: TPL_EXOCLICK,
+      sourceName: 'ExoClick',
+      templateType: 'network_code',
+      codeContent: exoCode,
+      width: 300,
+      height: 250,
+    });
+    assert.ok(srcDoc.includes('data-zoneid="6104102"'), 'Expected Zone 6104102 inside sandbox srcDoc');
+    assert.ok(srcDoc.includes('__ytExoAdProviderInit'), 'Expected single-init guard');
+    assert.ok(srcDoc.includes('__ytExoPushCalled'), 'Expected single AdProvider.push guard');
+    assert.ok(srcDoc.includes('data-yt-exoclick'), 'Expected single script tag attribute check');
+    assert.ok(srcDoc.includes('MutationObserver'), 'Expected fill detection MutationObserver');
+    assert.ok(srcDoc.includes('yt_mining_ad_status'), 'Expected postMessage status handshake');
+    assert.ok(!srcDoc.includes('allow-same-origin'), 'Must never include allow-same-origin in srcDoc');
+    assert.ok(
+      srcDoc.includes('http-equiv="Delegate-CH"') && srcDoc.includes('https://s.magsrv.com'),
+      'Expected ExoClick Delegate-CH Client Hints tag inside ExoClick srcDoc'
+    );
+
+    const indexHtmlPath = path.resolve(process.cwd(), 'index.html');
+    const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
+    assert.ok(indexHtml.includes('6a97888e-site-verification'), 'Expected ExoClick verification tag in index.html');
+    assert.ok(
+      indexHtml.includes('http-equiv="Delegate-CH"') &&
+        indexHtml.includes('Sec-CH-UA https://s.magsrv.com') &&
+        indexHtml.includes('Sec-CH-UA-Full-Version https://s.magsrv.com;'),
+      'Expected exact ExoClick Delegate-CH meta tag in index.html head'
+    );
+    console.log('✓ [17/18] ExoClick sandbox srcDoc & index.html enforce Delegate-CH, single script load, MutationObserver & zone dedup');
+  }
+
+  // [Test 18] Prepared ExoClick SQL migration contract & financial/ClixWall/Offerwall preservation check
+  {
+    const migPath = path.resolve(
+      process.cwd(),
+      'supabase/migrations/20261128000000_seed_exoclick_yementask_banner.sql'
+    );
+    assert.ok(fs.existsSync(migPath), 'Prepared ExoClick migration file must exist');
+    const sql = fs.readFileSync(migPath, 'utf8');
+    assert.ok(sql.includes('YemenTask_Website_Banner'));
+    assert.ok(sql.includes('6104102'));
+    assert.ok(sql.includes("'ExoClick'"));
+    assert.ok(sql.includes('300'));
+    assert.ok(sql.includes('250'));
+    assert.ok(sql.includes('NOT EXISTS'), 'Migration must guard against duplicate zone inserts');
+    assert.ok(sql.includes('tracking_enabled') && sql.includes('false'), 'Banner must disable task tracking');
+    for (const untouched of ['yt_coin.', 'financial_accounts', 'ledger_transactions', 'wallets', 'ad_partners', 'clixwall', 'offerwall']) {
+      assert.ok(!sql.toLowerCase().includes(untouched), `Prepared migration must not touch ${untouched}`);
+    }
+    console.log('✓ [18/18] Prepared ExoClick migration is idempotent, non-rewardable & isolated from ledgers');
+  }
+
+  console.log('\nALL 18 SMART AD TRACKING, EXOCLICK & ANTI-FRAUD TESTS PASSED.');
 }
 
 void runTests().catch((err) => {

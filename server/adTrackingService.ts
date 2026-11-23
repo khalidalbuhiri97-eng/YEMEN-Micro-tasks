@@ -2,8 +2,12 @@ import crypto from 'node:crypto';
 import { getSupabaseAdminClient, getSupabaseUserClient } from './supabaseClient.js';
 import {
   DEFAULT_COMFORT_SETTINGS,
+  DISPLAY_BANNER_FORMATS,
   MigrationRequiredError,
+  REWARD_ELIGIBLE_AD_FORMATS,
+  isDisplayBannerAd,
   isMissingTableOrColumnError,
+  isRewardEligibleAd,
   mapComfortRow,
   mapRuleRow,
 } from './miningAdsService.js';
@@ -16,6 +20,7 @@ import type {
   AdVerificationMode,
   AdminAdTrackingReport,
   MiningAdFormat,
+  MiningAdTemplateType,
   PushAdPreference,
 } from '../src/types/index.js';
 
@@ -60,7 +65,10 @@ export interface AdTemplateLookupRecord {
   id: string;
   title: string;
   placementKey: string;
+  templateType?: MiningAdTemplateType | null;
   adFormat: MiningAdFormat;
+  sourceName?: string | null;
+  codeContent?: string | null;
   ytNetworkKey: string | null;
   targetUrl: string | null;
   isActive: boolean;
@@ -212,6 +220,15 @@ export class AdTrackingEngine {
     if (template.adFormat === 'push_notification' && !settings.pushAdsEnabled) {
       throw new Error('إعلانات الإشعارات الاختيارية معطّلة حالياً من إعدادات المركز.');
     }
+    if (
+      isDisplayBannerAd({
+        adFormat: template.adFormat,
+        sourceName: template.sourceName,
+        codeContent: template.codeContent,
+      })
+    ) {
+      throw new Error('إعلانات البانر للعرض فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin.');
+    }
 
     const rule = await this.store.getCompletionRule(template.id, template.adFormat);
     const formatTrackingAllowed = settings.trackingEnabledByFormat?.[template.adFormat] !== false;
@@ -258,6 +275,18 @@ export class AdTrackingEngine {
     const expiresIso = new Date(nowMs + rule.sessionTtlSec * 1000).toISOString();
     const deviceType: 'desktop' | 'mobile' = input.deviceType === 'desktop' ? 'desktop' : 'mobile';
 
+    // Strict allowlist: ONLY Video & Link task formats may carry a YT Coin network linkage or S2S reward requirement
+    const rewardEligible = isRewardEligibleAd({
+      adFormat: template.adFormat,
+      templateType: template.templateType,
+      sourceName: template.sourceName,
+      codeContent: template.codeContent,
+    });
+    const effectiveNetworkKey = rewardEligible ? template.ytNetworkKey : null;
+    const effectiveRequirePostback = rewardEligible ? rule.requireServerPostback : false;
+    const effectiveVerificationMode: AdVerificationMode =
+      !rewardEligible && rule.verificationMode === 's2s_postback' ? 'dwell' : rule.verificationMode;
+
     const session: StoredTrackingSession = {
       id: sessionId,
       sessionTokenHash: hashToken(rawToken),
@@ -265,10 +294,10 @@ export class AdTrackingEngine {
       templateId: template.id,
       templateTitle: template.title,
       placementKey: template.placementKey,
-      networkKey: template.ytNetworkKey,
+      networkKey: effectiveNetworkKey,
       adFormat: template.adFormat,
       deviceType,
-      verificationMode: rule.verificationMode,
+      verificationMode: effectiveVerificationMode,
       requiredWatchSec: rule.requiredWatchSec,
       startedAt: startedIso,
       lastActivityAt: startedIso,
@@ -280,7 +309,7 @@ export class AdTrackingEngine {
       verificationStatus: 'pending',
       eligibilityResult: 'pending',
       rejectionReason: null,
-      ytAdSessionId: input.ytAdSessionId ?? null,
+      ytAdSessionId: rewardEligible ? (input.ytAdSessionId ?? null) : null,
       ytRewardClaimId: null,
       expiresAt: expiresIso,
       completedAt: null,
@@ -289,7 +318,7 @@ export class AdTrackingEngine {
       requireActiveVisibility: rule.requireActiveVisibility,
       requiredVastEvents: rule.requiredVastEvents,
       requireLinkReturn: rule.requireLinkReturn,
-      requireServerPostback: rule.requireServerPostback,
+      requireServerPostback: effectiveRequirePostback,
     };
 
     await this.store.insertSession(session);
@@ -297,13 +326,13 @@ export class AdTrackingEngine {
       sessionId,
       userId: input.userId,
       templateId: template.id,
-      networkKey: template.ytNetworkKey,
+      networkKey: effectiveNetworkKey,
       adFormat: template.adFormat,
       eventName: 'view_start',
       clientElapsedSec: 0,
       serverDeltaSec: 0,
       isVisible: true,
-      metadata: { deviceType, verificationMode: rule.verificationMode },
+      metadata: { deviceType, verificationMode: effectiveVerificationMode, rewardEligible },
       createdAt: startedIso,
     });
 
@@ -726,8 +755,9 @@ export class AdTrackingEngine {
       };
     }
 
-    // 4. Mark session completed atomically (YT Coin still NEVER granted by browser completion alone if S2S required!)
-    const requiresS2s = session.requireServerPostback || Boolean(session.networkKey);
+    // 4. Mark session completed atomically (YT Coin still NEVER granted by browser completion alone, and ONLY Video/Link task formats may qualify!)
+    const isRewardableFormat = REWARD_ELIGIBLE_AD_FORMATS.has(session.adFormat as MiningAdFormat);
+    const requiresS2s = isRewardableFormat && (session.requireServerPostback || Boolean(session.networkKey));
     const eligibilityResult: AdTrackingSessionRecord['eligibilityResult'] = requiresS2s
       ? 'eligible_for_yt_reward'
       : 'eligible_tracking_only';
@@ -830,6 +860,30 @@ export class AdTrackingEngine {
       return { accepted: false, reason: 'duplicate_yt_reward_claim' };
     }
 
+    const existing =
+      input.trackingSessionId && UUID_REGEX.test(input.trackingSessionId)
+        ? await this.store.getSessionById(input.trackingSessionId)
+        : null;
+
+    if (existing && !REWARD_ELIGIBLE_AD_FORMATS.has(existing.adFormat as MiningAdFormat)) {
+      const reason = DISPLAY_BANNER_FORMATS.has(existing.adFormat as MiningAdFormat)
+        ? 'display_banner_non_rewardable'
+        : 'non_rewardable_ad_format';
+      await this.store.insertPostbackAudit({
+        networkKey: input.networkKey,
+        providerEventId: input.providerEventId,
+        trackingSessionId: input.trackingSessionId,
+        ytAdSessionId: input.ytAdSessionId,
+        userId: input.userId,
+        signatureValid: true,
+        processingStatus: 'rejected',
+        rejectionReason: reason,
+        sanitizedPayload: input.sanitizedPayload,
+        receivedAt: nowIso,
+      });
+      return { accepted: false, reason };
+    }
+
     await this.store.insertPostbackAudit({
       networkKey: input.networkKey,
       providerEventId: input.providerEventId,
@@ -843,31 +897,28 @@ export class AdTrackingEngine {
       receivedAt: nowIso,
     });
 
-    if (input.trackingSessionId && UUID_REGEX.test(input.trackingSessionId)) {
-      const existing = await this.store.getSessionById(input.trackingSessionId);
-      if (existing && !existing.ytRewardClaimId) {
-        await this.store.updateSession(existing.id, {
-          eligibilityResult: 'credited',
-          verificationStatus: 'verified',
-          sessionStatus: existing.sessionStatus === 'started' ? 'completed' : existing.sessionStatus,
-          ytAdSessionId: input.ytAdSessionId || existing.ytAdSessionId,
-          ytRewardClaimId: input.ytRewardClaimId,
-          completedAt: existing.completedAt || nowIso,
-        });
-        await this.store.insertEvent({
-          sessionId: existing.id,
-          userId: existing.userId,
-          templateId: existing.templateId,
-          networkKey: input.networkKey,
-          adFormat: existing.adFormat,
-          eventName: 'reward_approved',
-          clientElapsedSec: 0,
-          serverDeltaSec: 0,
-          isVisible: true,
-          metadata: { providerEventId: input.providerEventId, ytRewardClaimId: input.ytRewardClaimId },
-          createdAt: nowIso,
-        });
-      }
+    if (existing && !existing.ytRewardClaimId) {
+      await this.store.updateSession(existing.id, {
+        eligibilityResult: 'credited',
+        verificationStatus: 'verified',
+        sessionStatus: existing.sessionStatus === 'started' ? 'completed' : existing.sessionStatus,
+        ytAdSessionId: input.ytAdSessionId || existing.ytAdSessionId,
+        ytRewardClaimId: input.ytRewardClaimId,
+        completedAt: existing.completedAt || nowIso,
+      });
+      await this.store.insertEvent({
+        sessionId: existing.id,
+        userId: existing.userId,
+        templateId: existing.templateId,
+        networkKey: input.networkKey,
+        adFormat: existing.adFormat,
+        eventName: 'reward_approved',
+        clientElapsedSec: 0,
+        serverDeltaSec: 0,
+        isVisible: true,
+        metadata: { providerEventId: input.providerEventId, ytRewardClaimId: input.ytRewardClaimId },
+        createdAt: nowIso,
+      });
     }
 
     return { accepted: true };
@@ -956,7 +1007,7 @@ class SupabaseAdTrackingStore implements AdTrackingStore {
   async getTemplateById(templateId: string): Promise<AdTemplateLookupRecord | null> {
     const { data, error } = await this.db
       .from('mining_ad_templates')
-      .select('id,title,placement_key,ad_format,yt_network_key,target_url,is_active,tracking_enabled')
+      .select('id,title,placement_key,template_type,ad_format,source_name,code_content,yt_network_key,target_url,is_active,tracking_enabled')
       .eq('id', templateId)
       .maybeSingle();
     if (error) {
@@ -972,7 +1023,10 @@ class SupabaseAdTrackingStore implements AdTrackingStore {
       id: String(data.id),
       title: String(data.title || ''),
       placementKey: String(data.placement_key || ''),
+      templateType: (data.template_type ?? null) as MiningAdTemplateType | null,
       adFormat: String(data.ad_format || 'banner') as MiningAdFormat,
+      sourceName: data.source_name ?? null,
+      codeContent: data.code_content ?? null,
       ytNetworkKey: data.yt_network_key ?? null,
       targetUrl: data.target_url ?? null,
       isActive: Boolean(data.is_active),
