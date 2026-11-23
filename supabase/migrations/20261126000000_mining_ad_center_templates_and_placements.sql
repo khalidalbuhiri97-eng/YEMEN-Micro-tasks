@@ -130,11 +130,11 @@ CREATE INDEX IF NOT EXISTS idx_mining_ad_templates_lookup
 -- 3. Row-Level Security & Grants
 GRANT SELECT ON public.mining_ad_placements TO anon, authenticated;
 GRANT SELECT ON public.mining_ad_placements TO anon, authenticated;
-GRANT ALL ON public.mining_ad_placements TO service_role;
+GRANT ALL ON public.mining_ad_placements TO authenticated, service_role;
 
 GRANT SELECT ON public.mining_ad_templates TO anon, authenticated;
 GRANT SELECT ON public.mining_ad_templates TO anon, authenticated;
-GRANT ALL ON public.mining_ad_templates TO service_role;
+GRANT ALL ON public.mining_ad_templates TO authenticated, service_role;
 
 ALTER TABLE public.mining_ad_placements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.mining_ad_templates ENABLE ROW LEVEL SECURITY;
