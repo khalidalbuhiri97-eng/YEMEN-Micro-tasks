@@ -48,8 +48,9 @@ export function createOfferwallGgHandlers(deps: {
   const getOfferWallUrl = async (req: AuthRequest, res: Response) => {
     try {
       const userId = req.user?.id;
-      const secret = process.env[SECRET_ENV] || 'offerwall_gg_production_secret_2026_yementask';
+      const secret = process.env[SECRET_ENV];
       if (!userId) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
+      if (!secret) return res.status(503).json({ error: 'تكامل Offerwall.GG غير مكتمل: متغير OFFERWALL_GG_SECRET غير مضبوط على الخادم.' });
 
       const params: Record<string, string> = { appId: PUBLIC_KEY, userId };
       const canonical = Object.keys(params).sort().map((key) => `${key}=${params[key]}`).join('&');
