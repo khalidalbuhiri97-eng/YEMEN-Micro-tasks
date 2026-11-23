@@ -686,7 +686,7 @@ export const YtCoinMiningCard: React.FC<{
   const [adminDailyTapLimit, setAdminDailyTapLimit] = useState<string>('1000');
   const [adminDailyAdLimit, setAdminDailyAdLimit] = useState<string>('20');
   const [adminDailyCapStartYt, setAdminDailyCapStartYt] = useState<string>('1000');
-  const [adminDailyCapMaxYt, setAdminDailyCapMaxYt] = useState<string>('1000000');
+  const [adminDailyCapMaxYt, setAdminDailyCapMaxYt] = useState<string>('10000');
 
   // Wallet Modals & States
   const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
@@ -799,10 +799,10 @@ export const YtCoinMiningCard: React.FC<{
           setAdminDailyAdLimit(String(Math.max(0, Math.floor(Number(s.daily_ad_limit) || 0))));
         }
         setAdminDailyCapStartYt(
-          pickAdminStr(s.daily_cap_start_yt, s.daily_cap_start_units ?? s.daily_global_cap_units, '1000')
+          pickAdminStr(s.daily_cap_start_yt, s.daily_cap_start_units ?? s.daily_global_cap_units ?? s.dailyCapUnits, '1000')
         );
         setAdminDailyCapMaxYt(
-          pickAdminStr(s.daily_cap_max_yt, s.daily_cap_max_units ?? s.daily_global_cap_max_units, '1000000')
+          pickAdminStr(s.daily_cap_max_yt, s.daily_cap_max_units ?? s.daily_global_cap_max_units ?? s.dailyCapMaxUnits, '10000')
         );
       }
     } catch (err: any) {
