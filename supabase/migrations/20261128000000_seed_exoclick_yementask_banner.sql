@@ -86,7 +86,7 @@ SELECT
   NULL,
   true,
   false,
-  true
+  false
 WHERE NOT EXISTS (
   SELECT 1
   FROM public.mining_ad_templates
