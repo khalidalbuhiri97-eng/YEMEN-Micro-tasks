@@ -274,7 +274,6 @@ function normalizeSummary(raw: unknown): NormalizedYtCoinSummary {
     'wallet_balance_yt',
     'available_yt',
     'available_balance_yt',
-    'balance',
   ]);
   if (balanceYt === null) {
     const atomicBalance = pickNumber(sources, ['balanceUnits', 'balance_units', 'balance_atomic', 'atomic_balance']);
