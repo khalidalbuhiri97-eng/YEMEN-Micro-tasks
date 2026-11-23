@@ -203,26 +203,37 @@ export function assertBalancedYtJournalEntries(entries: YtJournalEntryDraft[]): 
  * - 10000 units -> "10"
  * - 100000000 YT -> "100,000,000"
  */
+/**
+ * Formats YT with a fixed number of decimal places (3 by default).
+ * Examples:
+ * - 700 sub-units -> "0.700"
+ * - 500 sub-units -> "0.500"
+ * - 10 sub-units -> "0.010"
+ * - 1 sub-unit -> "0.001"
+ * - 10000 sub-units -> "10.000"
+ */
 export function formatYt(value: number | string | null | undefined, maxDecimals = YT_MAX_DECIMALS): string {
-  if (value === null || value === undefined || value === '') return '0';
+  if (value === null || value === undefined || value === '') {
+    return (0).toFixed(Math.min(YT_MAX_DECIMALS, Math.max(0, maxDecimals)));
+  }
   let dec: Decimal;
   try {
     dec = new Decimal(String(value).trim());
   } catch {
-    return '0';
+    return (0).toFixed(Math.min(YT_MAX_DECIMALS, Math.max(0, maxDecimals)));
   }
-  if (!dec.isFinite()) return '0';
+  if (!dec.isFinite()) {
+    return (0).toFixed(Math.min(YT_MAX_DECIMALS, Math.max(0, maxDecimals)));
+  }
 
   const clampedDecimals = Math.min(YT_MAX_DECIMALS, Math.max(0, maxDecimals));
   const rounded = dec.toDecimalPlaces(clampedDecimals, Decimal.ROUND_HALF_UP);
   const fixed = rounded.toFixed(clampedDecimals);
-  const neg = fixed.startsWith('-');
-  const unsigned = neg ? fixed.slice(1) : fixed;
-  const [intPart, fracRaw = ''] = unsigned.split('.');
-  const fracTrimmed = fracRaw.replace(/0+$/, '');
-  const groupedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  const isZero = /^0+$/.test(intPart) && fracTrimmed.length === 0;
-  return `${neg && !isZero ? '-' : ''}${groupedInt}${fracTrimmed ? `.${fracTrimmed}` : ''}`;
+  const neg = fixed.startsWith('-') && !rounded.isZero();
+  const unsigned = fixed.startsWith('-') ? fixed.slice(1) : fixed;
+  const [intPart, fracPart = ''] = unsigned.split('.');
+  const groupedInt = intPart.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+  return `${neg ? '-' : ''}${groupedInt}${clampedDecimals > 0 ? `.${fracPart}` : ''}`;
 }
 
 export function formatYtUnits(
