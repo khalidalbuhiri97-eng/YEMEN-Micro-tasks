@@ -35,6 +35,7 @@ import {
 } from './ytCoinAdHandlers.js';
 import { miningAdsService, MigrationRequiredError } from './miningAdsService.js';
 import { adTrackingService, checkTrackingRateLimit } from './adTrackingService.js';
+import { universalTaskTrackingService } from './universalTaskTrackingService.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.vip').trim().replace(/\/$/, '');
@@ -1213,6 +1214,39 @@ app.post('/api/tasks/:id/execution-session/ping', authMiddleware, async (req: Au
     res.json({ success: true, session });
   } catch (err: any) {
     res.status(400).json({ error: err.message || 'تعذر تحديث مدة التنفيذ.' });
+  }
+});
+
+app.post('/api/universal-tracking/start', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { targetId, targetType, requiredSeconds } = req.body || {};
+    if (!targetId) return res.status(400).json({ error: 'معرف الهدف مطلوب.' });
+    const session = await universalTaskTrackingService.startSession({
+      userId: req.user.id,
+      targetId: String(targetId),
+      targetType: targetType || 'task',
+      requiredSeconds: requiredSeconds ? Number(requiredSeconds) : 30,
+    });
+    res.json({ success: true, session });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر بدء جلسة التتبع التلقائي.' });
+  }
+});
+
+app.post('/api/universal-tracking/ping', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { sessionId, targetId, deltaSeconds, isActive } = req.body || {};
+    if (!sessionId || !targetId) return res.status(400).json({ error: 'معرف الجلسة والهدف مطلوبان.' });
+    const session = await universalTaskTrackingService.pingSession({
+      userId: req.user.id,
+      sessionId: String(sessionId),
+      targetId: String(targetId),
+      deltaSeconds: deltaSeconds ? Number(deltaSeconds) : 3,
+      isActive: isActive !== false,
+    });
+    res.json({ success: true, session });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'تعذر تحديث جلسة التتبع.' });
   }
 });
 

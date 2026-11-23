@@ -798,10 +798,14 @@ export const MiningAdTemplateCard: React.FC<{
   const [trackingSession, setTrackingSession] = useState<AdTrackingSessionRecord | null>(null);
   const [sessionToken, setSessionToken] = useState<string>('');
   const [trackingBusy, setTrackingBusy] = useState<boolean>(false);
+  const [isInViewport, setIsInViewport] = useState<boolean>(false);
   const [pageVisible, setPageVisible] = useState<boolean>(() =>
     typeof document === 'undefined' ? true : document.visibilityState === 'visible'
   );
   const [localActiveTick, setLocalActiveTick] = useState<number>(0);
+  const localActiveTickRef = useRef<number>(0);
+  const autoStartedRef = useRef<boolean>(false);
+  const autoCompletedRef = useRef<boolean>(false);
 
   const safeTargetUrl = useMemo(() => sanitizeHttpHref(template.targetUrl), [template.targetUrl]);
   const safeMediaUrl = useMemo(() => sanitizeHttpHref(template.mediaUrl), [template.mediaUrl]);
@@ -813,27 +817,36 @@ export const MiningAdTemplateCard: React.FC<{
 
   useEffect(() => {
     setImageBroken(false);
+    impressionTrackedRef.current = false;
+    autoStartedRef.current = false;
+    autoCompletedRef.current = false;
+    localActiveTickRef.current = 0;
+    setLocalActiveTick(0);
+    setTrackingSession(null);
+    setSessionToken('');
   }, [template.id, template.mediaUrl]);
 
   useEffect(() => {
-    if (isPreview || duplicateZoneBlocked || impressionTrackedRef.current) return;
-    // Wait until async network banner actually filled before recording impression
+    if (isPreview || duplicateZoneBlocked) return;
+    // Wait until async network banner actually filled before recording impression or starting session
     if (isExoClickBanner && adLoadStatus !== 'loaded') return;
     const el = cardRef.current;
     if (!el || typeof IntersectionObserver === 'undefined') {
-      impressionTrackedRef.current = true;
-      void api.trackMiningAdImpression(template.id).catch(() => {});
+      setIsInViewport(true);
+      if (!impressionTrackedRef.current) {
+        impressionTrackedRef.current = true;
+        void api.trackMiningAdImpression(template.id).catch(() => {});
+      }
       return;
     }
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
-          if (!impressionTrackedRef.current) {
-            impressionTrackedRef.current = true;
-            void api.trackMiningAdImpression(template.id).catch(() => {});
-          }
-          observer.disconnect();
+        const visibleInView = entries.some((entry) => entry.isIntersecting);
+        setIsInViewport(visibleInView);
+        if (visibleInView && !impressionTrackedRef.current) {
+          impressionTrackedRef.current = true;
+          void api.trackMiningAdImpression(template.id).catch(() => {});
         }
       },
       { threshold: 0.25 }
@@ -869,7 +882,11 @@ export const MiningAdTemplateCard: React.FC<{
     }
     const tickTimer = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
-        setLocalActiveTick((s) => s + 1);
+        setLocalActiveTick((s) => {
+          const next = s + 1;
+          localActiveTickRef.current = next;
+          return next;
+        });
       }
     }, 1000);
 
@@ -879,7 +896,7 @@ export const MiningAdTemplateCard: React.FC<{
         .sendAdTrackingHeartbeat(trackingSession.id, {
           sessionToken,
           isVisible: visible,
-          clientElapsedSec: localActiveTick,
+          clientElapsedSec: localActiveTickRef.current,
         })
         .then((res) => {
           if (res?.session) setTrackingSession(res.session);
@@ -893,10 +910,12 @@ export const MiningAdTemplateCard: React.FC<{
     };
   }, [trackingSession?.id, trackingSession?.sessionStatus, sessionToken]);
 
-  const startOrGetTrackingSession = async (): Promise<AdTrackingSessionRecord | null> => {
+  const startOrGetTrackingSession = async (options?: {
+    silent?: boolean;
+  }): Promise<AdTrackingSessionRecord | null> => {
     if (isPreview) return null;
     if (!user) {
-      openAuthModal('login');
+      if (!options?.silent) openAuthModal('login');
       return null;
     }
     if (trackingSession && !['expired', 'rejected'].includes(trackingSession.sessionStatus)) {
@@ -910,15 +929,65 @@ export const MiningAdTemplateCard: React.FC<{
       });
       setTrackingSession(res.session);
       setSessionToken(res.sessionToken);
+      localActiveTickRef.current = 0;
       setLocalActiveTick(0);
+      autoCompletedRef.current = false;
+
+      if (isDisplayBanner || isExoClickBanner) {
+        void api
+          .sendAdTrackingEvent(res.session.id, {
+            sessionToken: res.sessionToken,
+            eventName: 'impression',
+            isVisible: typeof document === 'undefined' ? true : document.visibilityState === 'visible',
+            clientElapsedSec: 0,
+            metadata: {
+              zoneKey: zoneKey || null,
+              source: template.sourceName || 'direct',
+            },
+          })
+          .catch(() => {});
+      }
       return res.session;
     } catch (err: any) {
-      showToast(err?.message || 'تعذر بدء جلسة التتبع الخادمية.', 'error');
+      if (!options?.silent) {
+        showToast(err?.message || 'تعذر بدء جلسة التتبع الخادمية.', 'error');
+      }
       return null;
     } finally {
       setTrackingBusy(false);
     }
   };
+
+  // Auto-start server-side 30s view tracking once an active display banner (e.g. ExoClick 6104102) loads and enters viewport
+  useEffect(() => {
+    if (
+      isPreview ||
+      compact ||
+      duplicateZoneBlocked ||
+      !user ||
+      !isDisplayBanner ||
+      !template.trackingEnabled ||
+      !isInViewport ||
+      autoStartedRef.current ||
+      trackingSession
+    ) {
+      return;
+    }
+    if (isExoClickBanner && adLoadStatus !== 'loaded') return;
+    autoStartedRef.current = true;
+    void startOrGetTrackingSession({ silent: true });
+  }, [
+    isPreview,
+    compact,
+    duplicateZoneBlocked,
+    user,
+    isDisplayBanner,
+    isExoClickBanner,
+    adLoadStatus,
+    template.trackingEnabled,
+    isInViewport,
+    trackingSession,
+  ]);
 
   const handleEmitVastEvent = async (
     eventName:
@@ -947,7 +1016,7 @@ export const MiningAdTemplateCard: React.FC<{
     }
   };
 
-  const handleCompleteTracking = async () => {
+  const handleCompleteTracking = async (options?: { silent?: boolean }) => {
     if (!trackingSession) return;
     setTrackingBusy(true);
     try {
@@ -956,13 +1025,67 @@ export const MiningAdTemplateCard: React.FC<{
         isVisible: document.visibilityState === 'visible',
       });
       setTrackingSession(res.session);
-      showToast(res.message, res.completed ? 'success' : 'error');
+      if (!options?.silent) {
+        showToast(res.message, res.completed ? 'success' : 'error');
+      }
     } catch (err: any) {
-      showToast(err?.message || 'تعذر التحقق من إكمال الإعلان.', 'error');
+      if (!options?.silent) {
+        showToast(err?.message || 'تعذر التحقق من إكمال الإعلان.', 'error');
+      }
     } finally {
       setTrackingBusy(false);
     }
   };
+
+  // Auto-verify 30s dwell completion for tracked display banners once active watch requirement is met
+  useEffect(() => {
+    if (
+      isPreview ||
+      compact ||
+      !isDisplayBanner ||
+      !trackingSession ||
+      trackingSession.verificationMode !== 'dwell' ||
+      ['completed', 'rejected', 'expired'].includes(trackingSession.sessionStatus) ||
+      autoCompletedRef.current ||
+      !pageVisible
+    ) {
+      return;
+    }
+    const targetSec = trackingSession.requiredWatchSec ?? template.completionRule?.requiredWatchSec ?? 30;
+    if (targetSec <= 0 || localActiveTick < targetSec) return;
+
+    autoCompletedRef.current = true;
+    void (async () => {
+      try {
+        if (trackingSession.activeDurationSec < targetSec) {
+          const hbRes = await api.sendAdTrackingHeartbeat(trackingSession.id, {
+            sessionToken,
+            isVisible: document.visibilityState === 'visible',
+            clientElapsedSec: localActiveTickRef.current,
+          });
+          if (hbRes?.session) {
+            setTrackingSession(hbRes.session);
+            if (hbRes.session.activeDurationSec + 0.5 < targetSec) {
+              autoCompletedRef.current = false;
+              return;
+            }
+          }
+        }
+        await handleCompleteTracking({ silent: true });
+      } catch {
+        autoCompletedRef.current = false;
+      }
+    })();
+  }, [
+    isPreview,
+    compact,
+    isDisplayBanner,
+    trackingSession,
+    template.completionRule?.requiredWatchSec,
+    localActiveTick,
+    pageVisible,
+    sessionToken,
+  ]);
 
   const handleExternalLinkVisit = async () => {
     if (!safeTargetUrl || isPreview) return;
@@ -1047,7 +1170,10 @@ export const MiningAdTemplateCard: React.FC<{
             ? Layers
             : Code2;
 
-  const requiredSec = trackingSession?.requiredWatchSec ?? template.completionRule?.requiredWatchSec ?? 15;
+  const requiredSec =
+    trackingSession?.requiredWatchSec ??
+    template.completionRule?.requiredWatchSec ??
+    (isDisplayBanner ? 30 : 15);
   const serverActiveSec = Math.max(trackingSession?.activeDurationSec ?? 0, localActiveTick);
 
   return (
@@ -1284,14 +1410,18 @@ export const MiningAdTemplateCard: React.FC<{
         </div>
       )}
 
-      {/* Honest Server-Side Dwell / Completion Tracker Strip (STRICTLY hidden on Display Banners) */}
-      {!isPreview && !compact && !isDisplayBanner && template.trackingEnabled && (
+      {/* Server-Side Dwell / Completion Tracker Strip (tracked banners log 30s views without YT Coin rewards) */}
+      {!isPreview && !compact && template.trackingEnabled && (!isExoClickBanner || adLoadStatus === 'loaded') && (
         <div className="mt-2.5 pt-2.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px]">
           {!trackingSession ? (
             <>
               <span className="text-gray-400 flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>تتبع خادمي للبقاء النشط ({requiredSec} ثانية)</span>
+                <span>
+                  {isDisplayBanner
+                    ? `توثيق ظهور ومشاهدة الإعلان (${requiredSec || 30} ثانية · بدون مكافأة YT)`
+                    : `تتبع خادمي للبقاء النشط (${requiredSec} ثانية)`}
+                </span>
               </span>
               <button
                 type="button"
@@ -1313,7 +1443,9 @@ export const MiningAdTemplateCard: React.FC<{
                     ? 'تم اعتماد المكافأة عبر S2S'
                     : trackingSession.eligibilityResult === 'eligible_for_yt_reward'
                       ? 'مؤهل بانتظار S2S'
-                      : 'مكتمل التتبع'}
+                      : isDisplayBanner
+                        ? 'مكتمل التتبع (عرض موثق بدون مكافأة YT)'
+                        : 'مكتمل التتبع'}
                 </span>
               </span>
             </div>

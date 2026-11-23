@@ -554,7 +554,7 @@ function mapTemplateRow(row: any, rulesByTemplateId?: Map<string, AdCompletionRu
     ytNetworkKey: isRewardEligible ? (row.yt_network_key ?? row.ytNetworkKey ?? null) : null,
     rewardEventType: isRewardEligible && (evRaw === 'click' || evRaw === 'view') ? evRaw : null,
     isDismissible: row.is_dismissible === undefined ? true : Boolean(row.is_dismissible),
-    trackingEnabled: isBanner ? false : rawTrackingEnabled,
+    trackingEnabled: rawTrackingEnabled,
     isActive: Boolean(row.is_active ?? row.isActive ?? true),
     completionRule: rulesByTemplateId?.get(id) ?? null,
     createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
@@ -1014,7 +1014,7 @@ export const miningAdsService = {
           ? 'view'
           : null;
     const isDismissible = params.isDismissible !== false;
-    const trackingEnabled = isBanner ? false : params.trackingEnabled !== false;
+    const trackingEnabled = params.trackingEnabled !== false;
     const isActive = params.isActive !== false;
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
@@ -1074,9 +1074,8 @@ export const miningAdsService = {
       let ruleRecord: AdCompletionRule | null = null;
       if (params.completionRule) {
         const cr = params.completionRule;
-        const requestedMode = isBanner
-          ? 'impression_only'
-          : cr.verificationMode || (adFormat === 'external_link' ? 'link_return' : 'dwell');
+        const requestedMode =
+          cr.verificationMode || (adFormat === 'external_link' ? 'link_return' : 'dwell');
         const safeMode = !isRewardEligible && requestedMode === 's2s_postback' ? 'dwell' : requestedMode;
         const { data: ruleData, error: ruleErr } = await db
           .from('ad_completion_rules')
@@ -1084,17 +1083,22 @@ export const miningAdsService = {
             {
               template_id: id,
               ad_format: adFormat,
-              tracking_enabled: isBanner ? false : (cr.trackingEnabled ?? trackingEnabled),
+              tracking_enabled: cr.trackingEnabled ?? trackingEnabled,
               verification_mode: safeMode,
-              required_watch_sec: isBanner ? 0 : Math.max(0, Math.min(600, Math.round(Number(cr.requiredWatchSec ?? 15) || 0))),
-              require_active_visibility: isBanner ? false : cr.requireActiveVisibility !== false,
+              required_watch_sec: Math.max(
+                0,
+                Math.min(600, Math.round(Number(cr.requiredWatchSec ?? (isBanner ? 30 : 15)) || 0))
+              ),
+              require_active_visibility: cr.requireActiveVisibility !== false,
               required_vast_events: Array.isArray(cr.requiredVastEvents) && cr.requiredVastEvents.length > 0
                 ? cr.requiredVastEvents
-                : ['start', 'complete'],
+                : isBanner
+                  ? []
+                  : ['start', 'complete'],
               require_link_return: isBanner ? false : Boolean(cr.requireLinkReturn),
               require_server_postback: isRewardEligible ? Boolean(cr.requireServerPostback) : false,
               session_ttl_sec: Math.max(60, Math.min(7200, Math.round(Number(cr.sessionTtlSec ?? 900) || 900))),
-              max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(cr.maxDailyPerUser ?? 20) || 20))),
+              max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(cr.maxDailyPerUser ?? 25) || 25))),
               frequency_cap_minutes: Math.max(0, Math.min(1440, Math.round(Number(cr.frequencyCapMinutes ?? 0) || 0))),
               updated_at: now,
             },
@@ -1269,11 +1273,7 @@ export const miningAdsService = {
         }
       }
 
-      if (effIsBanner) {
-        updates.yt_network_key = null;
-        updates.reward_event_type = null;
-        updates.tracking_enabled = false;
-      } else if (!effRewardEligible) {
+      if (effIsBanner || !effRewardEligible) {
         updates.yt_network_key = null;
         updates.reward_event_type = null;
       }
@@ -1289,7 +1289,7 @@ export const miningAdsService = {
       let ruleRecord: AdCompletionRule | null = null;
       if (params.completionRule) {
         const cr = params.completionRule;
-        const requestedMode = effIsBanner ? 'impression_only' : (cr.verificationMode || 'dwell');
+        const requestedMode = cr.verificationMode || 'dwell';
         const safeMode = !effRewardEligible && requestedMode === 's2s_postback' ? 'dwell' : requestedMode;
         const { data: ruleData, error: ruleErr } = await db
           .from('ad_completion_rules')
@@ -1297,17 +1297,22 @@ export const miningAdsService = {
             {
               template_id: id,
               ad_format: data.ad_format,
-              tracking_enabled: effIsBanner ? false : (cr.trackingEnabled ?? Boolean(data.tracking_enabled)),
+              tracking_enabled: cr.trackingEnabled ?? Boolean(data.tracking_enabled),
               verification_mode: safeMode,
-              required_watch_sec: effIsBanner ? 0 : Math.max(0, Math.min(600, Math.round(Number(cr.requiredWatchSec ?? 15) || 0))),
-              require_active_visibility: effIsBanner ? false : cr.requireActiveVisibility !== false,
+              required_watch_sec: Math.max(
+                0,
+                Math.min(600, Math.round(Number(cr.requiredWatchSec ?? (effIsBanner ? 30 : 15)) || 0))
+              ),
+              require_active_visibility: cr.requireActiveVisibility !== false,
               required_vast_events: Array.isArray(cr.requiredVastEvents) && cr.requiredVastEvents.length > 0
                 ? cr.requiredVastEvents
-                : ['start', 'complete'],
+                : effIsBanner
+                  ? []
+                  : ['start', 'complete'],
               require_link_return: effIsBanner ? false : Boolean(cr.requireLinkReturn),
               require_server_postback: effRewardEligible ? Boolean(cr.requireServerPostback) : false,
               session_ttl_sec: Math.max(60, Math.min(7200, Math.round(Number(cr.sessionTtlSec ?? 900) || 900))),
-              max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(cr.maxDailyPerUser ?? 20) || 20))),
+              max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(cr.maxDailyPerUser ?? 25) || 25))),
               frequency_cap_minutes: Math.max(0, Math.min(1440, Math.round(Number(cr.frequencyCapMinutes ?? 0) || 0))),
               updated_at: now,
             },
@@ -1412,27 +1417,31 @@ export const miningAdsService = {
         .eq('ad_format', rule.adFormat)
         .maybeSingle();
 
-      const safeMode = isBannerFmt
-        ? 'impression_only'
-        : !isRewardEligibleFmt && rule.verificationMode === 's2s_postback'
+      const safeMode =
+        !isRewardEligibleFmt && rule.verificationMode === 's2s_postback'
           ? 'dwell'
           : (rule.verificationMode || 'dwell');
 
       const payload = {
         template_id: null,
         ad_format: rule.adFormat,
-        tracking_enabled: isBannerFmt ? false : rule.trackingEnabled !== false,
+        tracking_enabled: rule.trackingEnabled !== false,
         verification_mode: safeMode,
-        required_watch_sec: isBannerFmt ? 0 : Math.max(0, Math.min(600, Math.round(Number(rule.requiredWatchSec ?? 15) || 0))),
-        require_active_visibility: isBannerFmt ? false : rule.requireActiveVisibility !== false,
+        required_watch_sec: Math.max(
+          0,
+          Math.min(600, Math.round(Number(rule.requiredWatchSec ?? (isBannerFmt ? 30 : 15)) || 0))
+        ),
+        require_active_visibility: rule.requireActiveVisibility !== false,
         required_vast_events:
           Array.isArray(rule.requiredVastEvents) && rule.requiredVastEvents.length > 0
             ? rule.requiredVastEvents
-            : ['start', 'complete'],
+            : isBannerFmt
+              ? []
+              : ['start', 'complete'],
         require_link_return: isBannerFmt ? false : Boolean(rule.requireLinkReturn),
         require_server_postback: isRewardEligibleFmt ? Boolean(rule.requireServerPostback) : false,
         session_ttl_sec: Math.max(60, Math.min(7200, Math.round(Number(rule.sessionTtlSec ?? 900) || 900))),
-        max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(rule.maxDailyPerUser ?? 20) || 20))),
+        max_daily_per_user: Math.max(0, Math.min(500, Math.round(Number(rule.maxDailyPerUser ?? 25) || 25))),
         frequency_cap_minutes: Math.max(0, Math.min(1440, Math.round(Number(rule.frequencyCapMinutes ?? 0) || 0))),
         updated_at: now,
       };

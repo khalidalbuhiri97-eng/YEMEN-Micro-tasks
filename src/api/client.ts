@@ -355,6 +355,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  startUniversalTracking: (payload: { targetId: string; targetType?: string; requiredSeconds?: number }) =>
+    request<{ success: boolean; session: any }>('/universal-tracking/start', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  pingUniversalTracking: (payload: { sessionId: string; targetId: string; deltaSeconds?: number; isActive?: boolean }) =>
+    request<{ success: boolean; session: any }>('/universal-tracking/ping', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getUploadSignedUrl: (payload: { taskId: string; fileName: string; contentType: string; fileSize: number }) =>
     request<{ signedUrl: string; token: string; path: string }>('/upload/signed-url', { method: 'POST', body: JSON.stringify(payload) }),
   getViewSignedUrl: (storagePath: string) =>

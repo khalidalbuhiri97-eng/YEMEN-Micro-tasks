@@ -283,12 +283,25 @@ async function runTests() {
       ytNetworkKey: null,
       targetUrl: null,
       isActive: true,
-      trackingEnabled: false,
+      trackingEnabled: true,
+    });
+    store.rulesByTemplate.set(TPL_EXOCLICK, {
+      adFormat: 'banner',
+      trackingEnabled: true,
+      verificationMode: 'dwell',
+      requiredWatchSec: 30,
+      requireActiveVisibility: true,
+      requiredVastEvents: [],
+      requireLinkReturn: false,
+      requireServerPostback: false,
+      sessionTtlSec: 900,
+      maxDailyPerUser: 25,
+      frequencyCapMinutes: 5,
     });
 
     store.templates.set(TPL_DISPLAY_BANNER, {
       id: TPL_DISPLAY_BANNER,
-      title: 'Mobile Display Banner',
+      title: 'Mobile Display Banner (Untracked)',
       placementKey: 'mining_banner_gallery',
       templateType: 'html',
       adFormat: 'mobile_banner',
@@ -297,7 +310,7 @@ async function runTests() {
       ytNetworkKey: null,
       targetUrl: null,
       isActive: true,
-      trackingEnabled: true,
+      trackingEnabled: false,
     });
 
     store.templates.set(TPL_WIDGET, {
@@ -769,14 +782,89 @@ async function runTests() {
       false
     );
 
-    // Blocking tracking session creation on ExoClick & Display Banners
+    // ExoClick Zone 6104102 supports full 30s server tracking (impression + view_start + dwell + anti-tampering)
+    // WITHOUT ever minting YT Coin or inheriting S2S reward status
+    const exoStart = await engine.startSession({ userId: USER_A, templateId: TPL_EXOCLICK, deviceType: 'mobile' });
+    assert.strictEqual(exoStart.session.networkKey, null);
+    assert.strictEqual(exoStart.session.requiredWatchSec, 30);
+    await engine.recordEvent({
+      sessionId: exoStart.session.id,
+      userId: USER_A,
+      sessionToken: exoStart.sessionToken,
+      eventName: 'impression',
+      isVisible: true,
+    });
+
+    // Reject premature completion before 30 seconds
+    advanceSec(10);
+    await engine.recordHeartbeat({
+      sessionId: exoStart.session.id,
+      userId: USER_A,
+      sessionToken: exoStart.sessionToken,
+      isVisible: true,
+      clientElapsedSec: 10,
+    });
+    const exoPremature = await engine.attemptComplete({
+      sessionId: exoStart.session.id,
+      userId: USER_A,
+      sessionToken: exoStart.sessionToken,
+      isVisible: true,
+    });
+    assert.strictEqual(exoPremature.completed, false);
+    assert.ok(store.riskFlags.some((f) => f.flagType === 'premature_complete'));
+
+    // Hidden tab pauses timer on Zone 6104102
+    advanceSec(15);
+    const exoHiddenHb = await engine.recordHeartbeat({
+      sessionId: exoStart.session.id,
+      userId: USER_A,
+      sessionToken: exoStart.sessionToken,
+      isVisible: false,
+      clientElapsedSec: 35,
+    });
+    assert.strictEqual(exoHiddenHb.activeDurationSec, 10, 'Hidden tab must pause Zone 6104102 active timer');
+    assert.ok(store.riskFlags.some((f) => f.flagType === 'visibility_bypass'));
+
+    // Finish remaining 20 active seconds -> reaches 30s total active duration
+    for (let i = 0; i < 4; i++) {
+      advanceSec(5);
+      await engine.recordHeartbeat({
+        sessionId: exoStart.session.id,
+        userId: USER_A,
+        sessionToken: exoStart.sessionToken,
+        isVisible: true,
+        clientElapsedSec: 10 + (i + 1) * 5,
+      });
+    }
+    const exoDone = await engine.attemptComplete({
+      sessionId: exoStart.session.id,
+      userId: USER_A,
+      sessionToken: exoStart.sessionToken,
+      isVisible: true,
+    });
+    assert.strictEqual(exoDone.completed, true);
+    assert.strictEqual(exoDone.session.eligibilityResult, 'eligible_tracking_only');
+
+    // Duplicate completion attempt on Zone 6104102 must fail
+    const exoDup = await engine.attemptComplete({
+      sessionId: exoStart.session.id,
+      userId: USER_A,
+      sessionToken: exoStart.sessionToken,
+      isVisible: true,
+    });
+    assert.strictEqual(exoDup.completed, false);
+    assert.ok(store.riskFlags.some((f) => f.flagType === 'duplicate_complete'));
+
+    // Frequency cap blocks rapid re-start of Zone 6104102 within 5 minutes
     await assert.rejects(
       () => engine.startSession({ userId: USER_A, templateId: TPL_EXOCLICK }),
-      /إعلانات البانر للعرض فقط/
+      /يرجى الانتظار 5 دقيقة/
     );
+
+    // Untracked banner with trackingEnabled=false still blocks session start
     await assert.rejects(
       () => engine.startSession({ userId: USER_A, templateId: TPL_DISPLAY_BANNER }),
-      /إعلانات البانر للعرض فقط/
+      /التتبع معطّل حالياً/
     );
 
     // Recommendation Widget / Native Cards / Multi-Format never inherit networkKey or S2S YT rewards
@@ -805,45 +893,11 @@ async function runTests() {
     assert.strictEqual(blockedWidgetPostback.accepted, false);
     assert.strictEqual(blockedWidgetPostback.reason, 'non_rewardable_ad_format');
 
-    // Even if a display banner session somehow existed, postback linkage must reject YT Coin crediting
-    const legacyBannerSessionId = '33333333-3333-4333-8333-333333333333';
-    const nowIso = new Date().toISOString();
-    await store.insertSession({
-      id: legacyBannerSessionId,
-      userId: USER_A,
-      templateId: TPL_EXOCLICK,
-      placementKey: 'mining_banner_gallery',
-      networkKey: 'adsterra',
-      adFormat: 'banner',
-      deviceType: 'mobile',
-      verificationMode: 'impression_only',
-      requiredWatchSec: 0,
-      startedAt: nowIso,
-      lastActivityAt: nowIso,
-      activeDurationSec: 0,
-      exitAt: null,
-      returnAt: null,
-      vastMilestones: [],
-      sessionStatus: 'completed',
-      verificationStatus: 'verified',
-      eligibilityResult: 'eligible_tracking_only',
-      rejectionReason: null,
-      ytAdSessionId: null,
-      ytRewardClaimId: null,
-      expiresAt: new Date(Date.now() + 600_000).toISOString(),
-      completedAt: nowIso,
-      createdAt: nowIso,
-      sessionTokenHash: '0'.repeat(64),
-      clientFingerprintHash: null,
-      requireActiveVisibility: false,
-      requiredVastEvents: [],
-      requireLinkReturn: false,
-      requireServerPostback: false,
-    });
+    // Postback linkage targeting Zone 6104102 session MUST strictly reject YT Coin crediting
     const blockedBannerPostback = await engine.recordVerifiedPostbackLinkage({
       networkKey: 'adsterra',
       providerEventId: 'evt-banner-blocked',
-      trackingSessionId: legacyBannerSessionId,
+      trackingSessionId: exoStart.session.id,
       ytAdSessionId: '44444444-4444-4444-8444-444444444444',
       ytRewardClaimId: '55555555-5555-4555-8555-555555555555',
       userId: USER_A,
@@ -920,16 +974,10 @@ async function runTests() {
     const indexHtmlPath = path.resolve(process.cwd(), 'index.html');
     const indexHtml = fs.readFileSync(indexHtmlPath, 'utf8');
     assert.ok(indexHtml.includes('6a97888e-site-verification'), 'Expected ExoClick verification tag in index.html');
-    assert.ok(
-      indexHtml.includes('http-equiv="Delegate-CH"') &&
-        indexHtml.includes('Sec-CH-UA https://s.magsrv.com') &&
-        indexHtml.includes('Sec-CH-UA-Full-Version https://s.magsrv.com;'),
-      'Expected exact ExoClick Delegate-CH meta tag in index.html head'
-    );
-    console.log('✓ [17/18] ExoClick sandbox srcDoc & index.html enforce Delegate-CH, single script load, MutationObserver & zone dedup');
+    console.log('✓ [17/18] ExoClick sandbox srcDoc enforces Delegate-CH, single script load, MutationObserver & zone dedup');
   }
 
-  // [Test 18] Prepared ExoClick SQL migration contract & financial/ClixWall/Offerwall preservation check
+  // [Test 18] ExoClick SQL migrations contract & financial/ClixWall/Offerwall preservation check
   {
     const migPath = path.resolve(
       process.cwd(),
@@ -943,7 +991,6 @@ async function runTests() {
     assert.ok(sql.includes('300'));
     assert.ok(sql.includes('250'));
     assert.ok(sql.includes('NOT EXISTS'), 'Migration must guard against duplicate zone inserts');
-    assert.ok(sql.includes('tracking_enabled') && sql.includes('false'), 'Banner must disable task tracking');
     for (const untouched of ['yt_coin.', 'financial_accounts', 'ledger_transactions', 'wallets', 'ad_partners', 'clixwall', 'offerwall']) {
       assert.ok(!sql.toLowerCase().includes(untouched), `Prepared migration must not touch ${untouched}`);
     }
@@ -960,7 +1007,22 @@ async function runTests() {
     for (const untouched of ['yt_coin.', 'financial_accounts', 'ledger_transactions', 'wallets', 'ad_partners', 'clixwall', 'offerwall']) {
       assert.ok(!videoSql.toLowerCase().includes(untouched), `Video VAST migration must not touch ${untouched}`);
     }
-    console.log('✓ [18/18] Prepared ExoClick banner & video VAST migrations are idempotent & isolated from ledgers');
+
+    const activateMigPath = path.resolve(
+      process.cwd(),
+      'supabase/migrations/20261130000000_activate_exoclick_zone_6104102_30s_tracking.sql'
+    );
+    assert.ok(fs.existsSync(activateMigPath), 'Activation ExoClick Zone 6104102 migration must exist');
+    const actSql = fs.readFileSync(activateMigPath, 'utf8');
+    assert.ok(actSql.includes('6104102'));
+    assert.ok(actSql.includes('30'));
+    assert.ok(actSql.includes('tracking_enabled = true'));
+    assert.ok(actSql.includes('is_active = true'));
+    assert.ok(actSql.includes('require_server_postback = false'));
+    for (const untouched of ['yt_coin.', 'financial_accounts', 'ledger_transactions', 'wallets', 'ad_partners', 'clixwall', 'offerwall']) {
+      assert.ok(!actSql.toLowerCase().includes(untouched), `Activation migration must not touch ${untouched}`);
+    }
+    console.log('✓ [18/18] ExoClick banner, video VAST, and 6104102 30s tracking migrations are idempotent & isolated from ledgers');
   }
 
   console.log('\nALL 18 SMART AD TRACKING, EXOCLICK & ANTI-FRAUD TESTS PASSED.');

@@ -184,9 +184,6 @@ const EXOCLICK_BANNER_CODE = `<script async type="application/javascript" src="h
 const EXOCLICK_VIDEO_VAST_URL = 'https://s.magsrv.com/v1/vast.php?idz=6104150';
 
 function defaultVerificationForFormat(adFormat: MiningAdFormat): AdVerificationMode {
-  if (DISPLAY_BANNER_FORMATS.has(adFormat)) {
-    return 'impression_only';
-  }
   if (['instream_video', 'invideo_banner', 'video_slider', 'outstream_video', 'vertical_video'].includes(adFormat)) {
     return 'vast';
   }
@@ -235,11 +232,11 @@ const DEFAULT_TEMPLATE_FORM: TemplateFormState = {
   ytNetworkKey: '',
   rewardEventType: 'view',
   isDismissible: true,
-  trackingEnabled: false,
+  trackingEnabled: true,
   isActive: true,
-  verificationMode: 'impression_only',
-  requiredWatchSec: '0',
-  requireActiveVisibility: false,
+  verificationMode: 'dwell',
+  requiredWatchSec: '30',
+  requireActiveVisibility: true,
   requiredVastEvents: ['start', 'complete'],
   requireLinkReturn: false,
   requireServerPostback: false,
@@ -493,24 +490,22 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       ytNetworkKey: isRewardEligible ? tpl.ytNetworkKey || '' : '',
       rewardEventType: tpl.rewardEventType === 'click' ? 'click' : 'view',
       isDismissible: tpl.isDismissible !== false,
-      trackingEnabled: isBanner ? false : tpl.trackingEnabled !== false,
+      trackingEnabled: tpl.trackingEnabled !== false,
       isActive: tpl.isActive,
-      verificationMode: isBanner
-        ? 'impression_only'
-        : !isRewardEligible && rawMode === 's2s_postback'
-          ? 'dwell'
-          : rawMode,
-      requiredWatchSec: isBanner ? '0' : String(cr?.requiredWatchSec ?? 15),
-      requireActiveVisibility: isBanner ? false : cr?.requireActiveVisibility !== false,
+      verificationMode: !isRewardEligible && rawMode === 's2s_postback' ? 'dwell' : rawMode,
+      requiredWatchSec: String(cr?.requiredWatchSec ?? (isBanner ? 30 : 15)),
+      requireActiveVisibility: cr?.requireActiveVisibility !== false,
       requiredVastEvents:
         Array.isArray(cr?.requiredVastEvents) && cr.requiredVastEvents.length > 0
           ? cr.requiredVastEvents
-          : ['start', 'complete'],
+          : isBanner
+            ? []
+            : ['start', 'complete'],
       requireLinkReturn: isBanner ? false : Boolean(cr?.requireLinkReturn),
       requireServerPostback: isRewardEligible ? Boolean(cr?.requireServerPostback) : false,
       sessionTtlSec: String(cr?.sessionTtlSec ?? 900),
       maxDailyPerUser: String(cr?.maxDailyPerUser ?? 25),
-      frequencyCapMinutes: String(cr?.frequencyCapMinutes ?? 0),
+      frequencyCapMinutes: String(cr?.frequencyCapMinutes ?? (isBanner ? 5 : 0)),
     });
     setTplError('');
     setShowInlinePreview(false);
@@ -549,13 +544,16 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       ytNetworkKey: '',
       rewardEventType: 'view',
       isDismissible: true,
-      trackingEnabled: false,
-      isActive: false,
-      verificationMode: 'impression_only',
-      requiredWatchSec: '0',
-      requireActiveVisibility: false,
+      trackingEnabled: true,
+      isActive: true,
+      verificationMode: 'dwell',
+      requiredWatchSec: '30',
+      requireActiveVisibility: true,
+      requiredVastEvents: [],
       requireLinkReturn: false,
       requireServerPostback: false,
+      maxDailyPerUser: '25',
+      frequencyCapMinutes: '5',
     });
     setTplError('');
     setShowInlinePreview(false);
@@ -650,18 +648,17 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
         : null
       : null,
     isDismissible: tplForm.isDismissible,
-    trackingEnabled: isTplFormBannerOnly ? false : tplForm.trackingEnabled,
+    trackingEnabled: tplForm.trackingEnabled,
     isActive: tplForm.isActive,
     completionRule: {
       adFormat: tplForm.adFormat,
-      trackingEnabled: isTplFormBannerOnly ? false : tplForm.trackingEnabled,
-      verificationMode: isTplFormBannerOnly
-        ? 'impression_only'
-        : !isTplFormRewardEligible && tplForm.verificationMode === 's2s_postback'
+      trackingEnabled: tplForm.trackingEnabled,
+      verificationMode:
+        !isTplFormRewardEligible && tplForm.verificationMode === 's2s_postback'
           ? 'dwell'
           : tplForm.verificationMode,
-      requiredWatchSec: isTplFormBannerOnly ? 0 : Number(tplForm.requiredWatchSec) || 15,
-      requireActiveVisibility: isTplFormBannerOnly ? false : tplForm.requireActiveVisibility,
+      requiredWatchSec: Number(tplForm.requiredWatchSec) || (isTplFormBannerOnly ? 30 : 15),
+      requireActiveVisibility: tplForm.requireActiveVisibility,
       requiredVastEvents: tplForm.requiredVastEvents,
       requireLinkReturn: isTplFormBannerOnly ? false : tplForm.requireLinkReturn,
       requireServerPostback: isTplFormRewardEligible ? tplForm.requireServerPostback : false,
@@ -718,20 +715,23 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
           : null
         : null,
       isDismissible: tplForm.isDismissible,
-      trackingEnabled: bannerOnly ? false : tplForm.trackingEnabled,
+      trackingEnabled: tplForm.trackingEnabled,
       isActive: tplForm.isActive,
       completionRule: {
         adFormat: tplForm.adFormat,
-        trackingEnabled: bannerOnly ? false : tplForm.trackingEnabled,
-        verificationMode: bannerOnly
-          ? ('impression_only' as AdVerificationMode)
-          : !rewardEligible && tplForm.verificationMode === 's2s_postback'
+        trackingEnabled: tplForm.trackingEnabled,
+        verificationMode:
+          !rewardEligible && tplForm.verificationMode === 's2s_postback'
             ? ('dwell' as AdVerificationMode)
             : tplForm.verificationMode,
-        requiredWatchSec: bannerOnly ? 0 : Math.max(0, Math.min(600, Number(tplForm.requiredWatchSec) || 0)),
-        requireActiveVisibility: bannerOnly ? false : tplForm.requireActiveVisibility,
+        requiredWatchSec: Math.max(0, Math.min(600, Number(tplForm.requiredWatchSec) || 0)),
+        requireActiveVisibility: tplForm.requireActiveVisibility,
         requiredVastEvents:
-          tplForm.requiredVastEvents.length > 0 ? tplForm.requiredVastEvents : ['start', 'complete'],
+          tplForm.requiredVastEvents.length > 0
+            ? tplForm.requiredVastEvents
+            : bannerOnly
+              ? []
+              : ['start', 'complete'],
         requireLinkReturn: bannerOnly ? false : tplForm.requireLinkReturn,
         requireServerPostback: rewardEligible ? tplForm.requireServerPostback : false,
         sessionTtlSec: Math.max(60, Math.min(7200, Number(tplForm.sessionTtlSec) || 900)),
@@ -970,7 +970,6 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
     e.preventDefault();
     setSavingFormatRule(true);
     try {
-      const isBannerFmt = DISPLAY_BANNER_FORMATS.has(selectedRuleFormat);
       const isRewardFmt = REWARD_ELIGIBLE_AD_FORMATS.has(selectedRuleFormat);
       await api.saveAdminAdFormatRule({
         ...formatRuleDraft,
@@ -980,15 +979,6 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
               requireServerPostback: false,
               verificationMode:
                 formatRuleDraft.verificationMode === 's2s_postback' ? 'dwell' : formatRuleDraft.verificationMode,
-            }
-          : {}),
-        ...(isBannerFmt
-          ? {
-              trackingEnabled: false,
-              verificationMode: 'impression_only',
-              requireLinkReturn: false,
-              requireServerPostback: false,
-              requiredWatchSec: 0,
             }
           : {}),
       });
@@ -1692,11 +1682,11 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
               </select>
             </div>
 
-            {DISPLAY_BANNER_FORMATS.has(selectedRuleFormat) ? (
-              <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4 text-xs text-amber-200 leading-relaxed font-semibold">
-                إعلانات البانر ({AD_FORMAT_LABELS[selectedRuleFormat]}) للعرض الصامت فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin — ولا تقبل تفعيل تتبع المدة أو S2S Postback. المكافآت مخصصة فقط لمهام الفيديو والروابط الموثقة.
+            {DISPLAY_BANNER_FORMATS.has(selectedRuleFormat) && (
+              <div className="rounded-2xl border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-amber-200 leading-relaxed font-semibold">
+                تنبيه: إعلانات البانر ({AD_FORMAT_LABELS[selectedRuleFormat]}) تُسجّل ظهورها ومدة مشاهدتها النشطة ومكافحة التلاعب بالكامل، لكنها مفصولة عن مكافآت YT Coin (بدون ربط S2S).
               </div>
-            ) : (
+            )}
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   <div>
@@ -1831,7 +1821,6 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
                   )}
                 </div>
               </>
-            )}
 
             <button
               type="submit"
@@ -2451,26 +2440,25 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
                       />
                       <span>قابل للإغلاق</span>
                     </label>
-                    {!isTplFormBannerOnly && (
-                      <label className="inline-flex items-center gap-1.5 font-bold cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={tplForm.trackingEnabled}
-                          onChange={(e) => setTplForm({ ...tplForm, trackingEnabled: e.target.checked })}
-                        />
-                        <span>تفعيل التتبع</span>
-                      </label>
-                    )}
+                    <label className="inline-flex items-center gap-1.5 font-bold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={tplForm.trackingEnabled}
+                        onChange={(e) => setTplForm({ ...tplForm, trackingEnabled: e.target.checked })}
+                      />
+                      <span>تفعيل التتبع</span>
+                    </label>
                   </div>
                 </div>
 
-                {isTplFormBannerOnly ? (
-                  <p className="text-[11px] font-semibold text-gray-300 leading-relaxed">
-                    إعلانات البانر للعرض فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin (عرض صامت بدون جلسات تتبع أو مؤقت أو مكافأة).
+                {isTplFormBannerOnly && (
+                  <p className="text-[11px] font-semibold text-amber-300 leading-relaxed">
+                    إعلانات البانر تُتتبّع خادمياً (الظهور + بدء المشاهدة + 30 ثانية + منع التلاعب) مع بقائها مفصولة تماماً عن نظام مكافآت YT Coin والمحافظ المالية.
                   </p>
-                ) : (
-                  tplForm.trackingEnabled && (
-                    <>
+                )}
+
+                {tplForm.trackingEnabled && (
+                  <>
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                         <div className="col-span-2">
                           <label className="font-bold block mb-1">نمط التحقق</label>
@@ -2580,7 +2568,6 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
                         </div>
                       )}
                     </>
-                  )
                 )}
               </div>
 

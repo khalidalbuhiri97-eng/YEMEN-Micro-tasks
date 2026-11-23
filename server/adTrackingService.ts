@@ -132,11 +132,12 @@ function hashToken(raw: string): string {
 function defaultRuleForFormat(adFormat: MiningAdFormat, settings: AdCenterComfortSettings): AdCompletionRule {
   const isVideo = ['instream_video', 'invideo_banner', 'video_slider', 'outstream_video', 'vertical_video'].includes(adFormat);
   const isLink = adFormat === 'external_link';
+  const isBanner = DISPLAY_BANNER_FORMATS.has(adFormat);
   return {
     adFormat,
     trackingEnabled: settings.trackingEnabledByFormat[adFormat] !== false,
     verificationMode: isVideo ? 'vast' : isLink ? 'link_return' : 'dwell',
-    requiredWatchSec: isVideo ? 15 : isLink ? 10 : 15,
+    requiredWatchSec: isBanner ? 30 : isVideo ? 15 : isLink ? 10 : 15,
     requireActiveVisibility: true,
     requiredVastEvents: isVideo ? ['start', 'complete'] : [],
     requireLinkReturn: isLink,
@@ -219,15 +220,6 @@ export class AdTrackingEngine {
     }
     if (template.adFormat === 'push_notification' && !settings.pushAdsEnabled) {
       throw new Error('إعلانات الإشعارات الاختيارية معطّلة حالياً من إعدادات المركز.');
-    }
-    if (
-      isDisplayBannerAd({
-        adFormat: template.adFormat,
-        sourceName: template.sourceName,
-        codeContent: template.codeContent,
-      })
-    ) {
-      throw new Error('إعلانات البانر للعرض فقط ومفصولة تماماً عن نظام المهام ومكافآت YT Coin.');
     }
 
     const rule = await this.store.getCompletionRule(template.id, template.adFormat);
@@ -756,7 +748,9 @@ export class AdTrackingEngine {
     }
 
     // 4. Mark session completed atomically (YT Coin still NEVER granted by browser completion alone, and ONLY Video/Link task formats may qualify!)
-    const isRewardableFormat = REWARD_ELIGIBLE_AD_FORMATS.has(session.adFormat as MiningAdFormat);
+    const isRewardableFormat =
+      REWARD_ELIGIBLE_AD_FORMATS.has(session.adFormat as MiningAdFormat) &&
+      !isDisplayBannerAd({ adFormat: session.adFormat });
     const requiresS2s = isRewardableFormat && (session.requireServerPostback || Boolean(session.networkKey));
     const eligibilityResult: AdTrackingSessionRecord['eligibilityResult'] = requiresS2s
       ? 'eligible_for_yt_reward'
