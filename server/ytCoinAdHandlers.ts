@@ -75,17 +75,21 @@ export async function getYtCoinAdCenter(req: AuthenticatedRequest, res: Response
 
     const connectedNetworks = enrichedNetworks.filter((n) => n.isConnected);
 
+    const adClickRewardUnits = Math.max(1, Math.floor(Number(raw.adClickRewardUnits ?? 10) || 10));
+    const adViewRewardUnits = Math.max(1, Math.floor(Number(raw.adViewRewardUnits ?? 10) || 10));
+    const totalAdEarnedUnits = Math.max(0, Math.floor(Number(raw.totalAdEarnedUnits ?? 0) || 0));
+
     return res.json({
       adCenter: {
-        unitScale: 1000,
-        adClickRewardUnits: Number(raw.adClickRewardUnits ?? 10),
-        adClickRewardYt: Number(raw.adClickRewardYt ?? 0.01),
-        adViewRewardUnits: Number(raw.adViewRewardUnits ?? 10),
-        adViewRewardYt: Number(raw.adViewRewardYt ?? 0.01),
+        unitScale: Number(raw.unitScale ?? raw.partsPerYt ?? 1000) || 1000,
+        adClickRewardUnits,
+        adClickRewardYt: unitsToYt(adClickRewardUnits),
+        adViewRewardUnits,
+        adViewRewardYt: unitsToYt(adViewRewardUnits),
         dailyAdLimit: Number(raw.dailyAdLimit ?? 20),
         adsToday: Number(raw.adsToday ?? 0),
-        totalAdEarnedUnits: Number(raw.totalAdEarnedUnits ?? 0),
-        totalAdEarnedYt: Number(raw.totalAdEarnedYt ?? 0),
+        totalAdEarnedUnits,
+        totalAdEarnedYt: unitsToYt(totalAdEarnedUnits),
         availableAdsCount: connectedNetworks.length,
         hasConnectedNetwork: connectedNetworks.length > 0,
         connectedNetworks,

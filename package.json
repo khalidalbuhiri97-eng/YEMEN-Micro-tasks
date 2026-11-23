@@ -12,7 +12,9 @@
     "lint": "tsc --noEmit",
     "generate:icons": "node scripts/generate-pwa-icons.js",
     "test:financial": "tsx server/financialTest.ts",
-    "test:clixwall": "tsx server/clixwallTest.ts"
+    "test:clixwall": "tsx server/clixwallTest.ts",
+    "test:yt-coin": "tsx server/ytCoinTest.ts",
+    "test:password-reset": "tsx server/passwordResetTest.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

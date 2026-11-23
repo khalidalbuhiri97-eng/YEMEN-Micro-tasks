@@ -786,8 +786,11 @@ export const api = {
     }),
 
   getAdminYtCoinSummary: () => request<{ summary: any }>('/admin/yt-coin/summary'),
+  getAdminYtCoinIntegrity: () =>
+    request<{ integrity: any; migrationRequired?: boolean; message?: string }>('/admin/yt-coin/integrity'),
   updateAdminYtCoinConfig: (payload: {
     miningEnabled?: boolean;
+    maxSupplyYt?: number;
     baseRewardYt?: number;
     tapRewardYt?: number;
     adClickRewardYt?: number;
@@ -801,6 +804,34 @@ export const api = {
   }) =>
     request<{ config: any }>('/admin/yt-coin/config', {
       method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  updateAdminYtCoinTreasury: (
+    treasuryKey: string,
+    payload: {
+      labelAr?: string;
+      allocatedYt?: number;
+      isLocked?: boolean;
+      approvedForDistribution?: boolean;
+      vestingSchedule?: Record<string, any> | null;
+    }
+  ) =>
+    request<{ treasury: any }>(`/admin/yt-coin/treasuries/${encodeURIComponent(treasuryKey)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  getAdminYtCoinAccounts: (search?: string, limit = 30) =>
+    request<{ accounts: any[]; migrationRequired?: boolean }>(
+      `/admin/yt-coin/accounts?limit=${encodeURIComponent(String(limit))}${search ? `&search=${encodeURIComponent(search)}` : ''}`
+    ),
+  adjustAdminYtCoinWallet: (payload: {
+    userId: string;
+    newBalanceYt: number;
+    reason?: string;
+    clearPendingAudit?: boolean;
+  }) =>
+    request<{ account: any }>('/admin/yt-coin/accounts/adjust', {
+      method: 'POST',
       body: JSON.stringify(payload),
     }),
   upsertAdminYtCoinAdNetwork: (payload: {

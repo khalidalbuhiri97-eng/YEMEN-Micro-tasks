@@ -87,6 +87,10 @@
       "destination": "/api/index?__path=:path*"
     },
     {
+      "source": "/reset-password",
+      "destination": "/index.html"
+    },
+    {
       "source": "/((?!api(?:/|$)|\\.well-known(?:/|$)|app\\.apk$).*)",
       "destination": "/index.html"
     }

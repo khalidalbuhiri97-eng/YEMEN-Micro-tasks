@@ -25,10 +25,24 @@ import { SplashScreen } from './components/common/SplashScreen.tsx';
 import { HomeShortcutsStrip } from './components/home/HomeShortcutsStrip.tsx';
 import { YtCoinMiningCard } from './components/home/YtCoinMiningCard.tsx';
 import { EarnFromAdsView } from './components/ads/EarnFromAdsView.tsx';
+import { ResetPasswordPage } from './components/auth/ResetPasswordPage.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
+function isResetPasswordLocation(): boolean {
+  if (typeof window === 'undefined') return false;
+  const normalizedPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  if (normalizedPath === '/reset-password') return true;
+  return (
+    window.location.hash.includes('type=recovery') ||
+    window.location.search.includes('type=recovery')
+  );
+}
+
 function MainApp() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, openAuthModal } = useAuth();
+  const [isResetPasswordRoute, setIsResetPasswordRoute] = useState<boolean>(() =>
+    isResetPasswordLocation()
+  );
   const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin'>('home');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -82,6 +96,39 @@ function MainApp() {
     setSelectedCategory(cat);
     setCurrentTab('tasks');
   };
+
+  useEffect(() => {
+    const syncRoute = () => {
+      setIsResetPasswordRoute(isResetPasswordLocation());
+    };
+    const handleNavigateReset = () => setIsResetPasswordRoute(true);
+    window.addEventListener('popstate', syncRoute);
+    window.addEventListener('kasb:navigate_reset_password', handleNavigateReset);
+    return () => {
+      window.removeEventListener('popstate', syncRoute);
+      window.removeEventListener('kasb:navigate_reset_password', handleNavigateReset);
+    };
+  }, []);
+
+  const exitResetPasswordRoute = (openLogin = false) => {
+    if (typeof window !== 'undefined') {
+      window.history.replaceState({}, document.title, '/');
+    }
+    setIsResetPasswordRoute(false);
+    setCurrentTab('home');
+    if (openLogin) {
+      openAuthModal('login');
+    }
+  };
+
+  if (isResetPasswordRoute) {
+    return (
+      <ResetPasswordPage
+        onGoHome={() => exitResetPasswordRoute(false)}
+        onGoLogin={() => exitResetPasswordRoute(true)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors overflow-x-hidden w-full max-w-full">

@@ -9,7 +9,7 @@ import {
 } from '../api/client.ts';
 import type { UserProfile, UserWallet } from '../types/index.ts';
 import { AuthModal } from '../components/auth/AuthModal.tsx';
-import { supabase } from '../api/supabase.ts';
+import { supabase, markRecoveryEventDetected } from '../api/supabase.ts';
 import { ConfirmModal, type ConfirmModalVariant } from '../components/common/ConfirmModal.tsx';
 import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
 import {
@@ -48,7 +48,7 @@ interface AuthContextType {
   refreshUser: () => Promise<void>;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
   toast: { message: string; type: 'success' | 'error' | 'info' } | null;
-  openAuthModal: (mode?: 'login' | 'register' | 'owner') => void;
+  openAuthModal: (mode?: 'login' | 'register' | 'owner' | 'forgot') => void;
   closeAuthModal: () => void;
   openConfirmModal: (options: ConfirmActionOptions) => void;
 }
@@ -324,9 +324,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      const currentPath =
+        typeof window !== 'undefined' ? window.location.pathname.replace(/\/+$/, '') : '';
+      const isResetPath = currentPath === '/reset-password';
+      const hasRecoveryQueryOrHash =
+        typeof window !== 'undefined' &&
+        (window.location.hash.includes('type=recovery') ||
+          window.location.search.includes('type=recovery'));
+
       if (event === 'PASSWORD_RECOVERY') {
-        setAuthMode('reset');
-        setIsAuthOpen(true);
+        markRecoveryEventDetected();
+        setIsAuthOpen(false);
+        if (typeof window !== 'undefined') {
+          if (!isResetPath) {
+            window.history.replaceState({}, document.title, '/reset-password');
+          }
+          window.dispatchEvent(new CustomEvent('kasb:navigate_reset_password'));
+        }
+        return;
+      }
+
+      // Let ResetPasswordPage handle /reset-password and recovery callbacks cleanly
+      if (isResetPath || hasRecoveryQueryOrHash) {
         return;
       }
 
@@ -357,7 +376,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, [loadCurrentUser, showToast]);
 
-  const openAuthModal = (mode: 'login' | 'register' | 'owner' = 'login') => {
+  const openAuthModal = (mode: 'login' | 'register' | 'owner' | 'forgot' = 'login') => {
     setAuthMode(mode);
     setIsAuthOpen(true);
   };

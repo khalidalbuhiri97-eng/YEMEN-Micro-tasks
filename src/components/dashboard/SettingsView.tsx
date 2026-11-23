@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { api } from '../../api/client.ts';
-import { supabase } from '../../api/supabase.ts';
+import { supabase, PASSWORD_RESET_REDIRECT_URL } from '../../api/supabase.ts';
 import { EmailVerificationBanner } from '../common/EmailVerificationBanner.tsx';
 import {
   User,
@@ -16,17 +16,6 @@ import {
   Phone,
   MapPin,
 } from 'lucide-react';
-
-const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.vip';
-
-function resolveAuthRedirectOrigin(): string {
-  if (typeof window === 'undefined') return CANONICAL_SITE_ORIGIN;
-  const host = window.location.hostname.toLowerCase();
-  if (host === 'yemen-microtasks.vip' || host === 'www.yemen-microtasks.vip') {
-    return CANONICAL_SITE_ORIGIN;
-  }
-  return window.location.origin;
-}
 
 export const SettingsView: React.FC = () => {
   const { user, logout, refreshUser, showToast, openConfirmModal } = useAuth();
@@ -135,7 +124,7 @@ export const SettingsView: React.FC = () => {
     setSuccessMsg('');
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
-        redirectTo: `${resolveAuthRedirectOrigin()}/`,
+        redirectTo: PASSWORD_RESET_REDIRECT_URL,
       });
       if (error) throw error;
       setSuccessMsg('تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني.');

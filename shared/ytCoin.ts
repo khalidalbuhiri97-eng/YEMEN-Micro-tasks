@@ -5,7 +5,7 @@ import Decimal from 'decimal.js';
  * - Final Max Supply Cap: 100,000,000 YT
  * - Precision: 1 YT = 1,000 integer sub-units (BIGINT)
  * - Smallest Unit: 1 sub-unit = 0.001 YT
- * - Storage, ledger math, and transfers inside yt_coin use BIGINT integer units only.
+ * - Storage, ledger math, journal entries, and transfers inside yt_coin use BIGINT integer units only.
  */
 
 export const YT_SUBUNITS_PER_YT = 1000;
@@ -17,6 +17,18 @@ export const YT_DEFAULT_DAILY_REWARD_UNITS = 500; // 0.5 YT
 export const YT_DEFAULT_AD_CLICK_REWARD_UNITS = 10; // 0.01 YT
 export const YT_DEFAULT_AD_VIEW_REWARD_UNITS = 10; // 0.01 YT
 export const YT_DEFAULT_TAP_REWARD_UNITS = 10; // 0.01 YT
+
+export type YtJournalSide = 'debit' | 'credit';
+
+export interface YtJournalEntryDraft {
+  accountScope: 'treasury' | 'user' | 'control';
+  accountKey: string;
+  userId?: string | null;
+  treasuryKey?: string | null;
+  side: YtJournalSide;
+  amountUnits: number;
+  memo?: string;
+}
 
 export interface YtTokenomicsAllocationSpec {
   key: string;
@@ -139,6 +151,50 @@ export function ytToUnitsStrict(
 }
 
 /**
+ * Validates that a set of YT Coin journal entries is strictly balanced in integer sub-units (BIGINT).
+ * Throws `'YT Coin journal transaction is not balanced'` on any mismatch, single-sided entry, or invalid sub-unit.
+ */
+export function assertBalancedYtJournalEntries(entries: YtJournalEntryDraft[]): {
+  totalDebitUnits: number;
+  totalCreditUnits: number;
+  lineCount: number;
+} {
+  if (!Array.isArray(entries) || entries.length < 2) {
+    throw new Error('YT Coin journal transaction is not balanced');
+  }
+
+  let totalDebitUnits = 0;
+  let totalCreditUnits = 0;
+
+  for (const entry of entries) {
+    if (!entry || (entry.side !== 'debit' && entry.side !== 'credit')) {
+      throw new Error('YT Coin journal transaction is not balanced');
+    }
+    if (!Number.isSafeInteger(entry.amountUnits) || entry.amountUnits <= 0) {
+      throw new Error('YT Coin journal transaction is not balanced');
+    }
+    if (entry.side === 'debit') {
+      totalDebitUnits += entry.amountUnits;
+    } else {
+      totalCreditUnits += entry.amountUnits;
+    }
+    if (!Number.isSafeInteger(totalDebitUnits) || !Number.isSafeInteger(totalCreditUnits)) {
+      throw new Error('YT Coin journal transaction amount overflow.');
+    }
+  }
+
+  if (totalDebitUnits <= 0 || totalCreditUnits <= 0 || totalDebitUnits !== totalCreditUnits) {
+    throw new Error('YT Coin journal transaction is not balanced');
+  }
+
+  return {
+    totalDebitUnits,
+    totalCreditUnits,
+    lineCount: entries.length,
+  };
+}
+
+/**
  * Formats a YT numeric value naturally with no trailing zeros and max 3 decimal places.
  * Examples:
  * - 500 units -> "0.5"
@@ -180,5 +236,31 @@ export function formatYtUnits(
     return formatYt(dec.div(YT_SUBUNITS_PER_YT).toFixed(YT_MAX_DECIMALS), maxDecimals);
   } catch {
     return '0';
+  }
+}
+
+export function ytToIntegerParts(value: number | string | null | undefined): number {
+  if (value === null || value === undefined || value === '') return 0;
+  try {
+    const dec = new Decimal(String(value).trim());
+    if (!dec.isFinite()) return 0;
+    return dec.times(YT_SUBUNITS_PER_YT).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toNumber();
+  } catch {
+    return 0;
+  }
+}
+
+export function formatPartsLabel(parts: number | string | bigint | null | undefined): string {
+  if (parts === null || parts === undefined || parts === '') return '0 جزء';
+  try {
+    const dec = new Decimal(typeof parts === 'bigint' ? parts.toString() : String(parts).trim());
+    if (!dec.isFinite()) return '0 جزء';
+    const intVal = Math.trunc(dec.toNumber());
+    const grouped = Math.abs(intVal).toLocaleString('en-US');
+    const sign = intVal < 0 ? '-' : '';
+    const unitWord = Math.abs(intVal) >= 3 && Math.abs(intVal) <= 10 ? 'أجزاء' : 'جزء';
+    return `${sign}${grouped} ${unitWord}`;
+  } catch {
+    return '0 جزء';
   }
 }

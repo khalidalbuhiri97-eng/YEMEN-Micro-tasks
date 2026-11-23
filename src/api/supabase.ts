@@ -19,6 +19,9 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.warn('⚠️ تنبيه أمني: متغيرات الاتصال بـ Supabase غير مضبوطة. يرجى إضافة VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY في ملف .env أو إعدادات Vercel.');
 }
 
+export const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.vip';
+export const PASSWORD_RESET_REDIRECT_URL = `${CANONICAL_SITE_ORIGIN}/reset-password`;
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
@@ -26,6 +29,53 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: true,
   },
 });
+
+const RECOVERY_SESSION_FLAG = 'kasb_password_recovery_active';
+let recoveryEventDetected = false;
+
+export function markRecoveryEventDetected(): void {
+  recoveryEventDetected = true;
+  if (typeof window !== 'undefined') {
+    try {
+      window.sessionStorage.setItem(RECOVERY_SESSION_FLAG, '1');
+    } catch {
+      // ignore storage errors
+    }
+  }
+}
+
+export function clearRecoveryEventDetected(): void {
+  recoveryEventDetected = false;
+  if (typeof window !== 'undefined') {
+    try {
+      window.sessionStorage.removeItem(RECOVERY_SESSION_FLAG);
+    } catch {
+      // ignore storage errors
+    }
+  }
+}
+
+export function hasRecoveryEventDetected(): boolean {
+  if (recoveryEventDetected) return true;
+  if (typeof window !== 'undefined') {
+    try {
+      return window.sessionStorage.getItem(RECOVERY_SESSION_FLAG) === '1';
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+if (typeof window !== 'undefined') {
+  supabase.auth.onAuthStateChange((event) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      markRecoveryEventDetected();
+    } else if (event === 'SIGNED_OUT') {
+      clearRecoveryEventDetected();
+    }
+  });
+}
 
 /**
  * Diagnostic helper to verify Supabase connection state and return human-readable status

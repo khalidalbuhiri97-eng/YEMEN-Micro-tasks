@@ -21,11 +21,16 @@ import {
   Check,
   Loader2,
   AlertTriangle,
+  Wallet,
+  Search,
+  X,
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
 import {
+  formatPartsLabel,
   formatYt,
+  unitsToYt,
   ytToUnitsStrict,
   YT_MAX_SUPPLY_YT,
   YT_SUBUNITS_PER_YT,
@@ -109,6 +114,7 @@ const METRIC_LABELS: Record<string, string> = {
   economy_version: 'إصدار اقتصاد العملة',
   unit_scale: 'مقياس الأجزاء (1 YT = جزء)',
   max_supply_yt: 'سقف الإصدار النهائي (YT)',
+  rewards_treasury_allocated_yt: 'إجمالي مخصص مكافآت المستخدمين (YT)',
   rewards_treasury_balance_yt: 'المتبقي من مخصص مكافآت المستخدمين (YT)',
   circulating_supply_yt: 'المتداول الفعلي الموزّع (YT)',
   total_mined_yt: 'إجمالي المقيد بالمكافآت (YT)',
@@ -126,6 +132,7 @@ const METRIC_LABELS: Record<string, string> = {
   daily_ad_limit: 'الحد اليومي للإعلانات',
   daily_cap_start_yt: 'السقف اليومي الابتدائي (YT)',
   daily_cap_max_yt: 'الحد الأقصى للسقف اليومي (YT)',
+  exchange_rate_yer_per_yt: 'السعر المرجعي (ر.ي / YT)',
   mining_enabled: 'حالة منظومة التعدين',
   swap_enabled: 'التبديل المباشر مع يمن تاسك',
   updated_at: 'آخر تحديث',
@@ -152,15 +159,45 @@ export const YtCoinAdminView: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Admin Config Form State
+  // Admin Economy Config Form State (populated live from server)
   const [savingConfig, setSavingConfig] = useState<boolean>(false);
   const [cfgMiningEnabled, setCfgMiningEnabled] = useState<boolean>(true);
-  const [cfgBaseRewardYt, setCfgBaseRewardYt] = useState<string>('0.5');
-  const [cfgTapRewardYt, setCfgTapRewardYt] = useState<string>('0.01');
-  const [cfgAdClickRewardYt, setCfgAdClickRewardYt] = useState<string>('0.01');
-  const [cfgAdViewRewardYt, setCfgAdViewRewardYt] = useState<string>('0.01');
-  const [cfgDailyTapLimit, setCfgDailyTapLimit] = useState<string>('1000');
-  const [cfgDailyAdLimit, setCfgDailyAdLimit] = useState<string>('20');
+  const [cfgMaxSupplyYt, setCfgMaxSupplyYt] = useState<string>('');
+  const [cfgBaseRewardYt, setCfgBaseRewardYt] = useState<string>('');
+  const [cfgTapRewardYt, setCfgTapRewardYt] = useState<string>('');
+  const [cfgAdClickRewardYt, setCfgAdClickRewardYt] = useState<string>('');
+  const [cfgAdViewRewardYt, setCfgAdViewRewardYt] = useState<string>('');
+  const [cfgDailyTapLimit, setCfgDailyTapLimit] = useState<string>('');
+  const [cfgDailyAdLimit, setCfgDailyAdLimit] = useState<string>('');
+  const [cfgDailyCapStartYt, setCfgDailyCapStartYt] = useState<string>('');
+  const [cfgDailyCapMaxYt, setCfgDailyCapMaxYt] = useState<string>('');
+  const [cfgExchangeRateYerPerYt, setCfgExchangeRateYerPerYt] = useState<string>('');
+
+  // Editable Treasury Allocations State
+  const [editingTreasury, setEditingTreasury] = useState<{
+    treasuryKey: string;
+    labelAr: string;
+    allocatedYt: string;
+    distributedYt: number;
+    isLocked: boolean;
+    approvedForDistribution: boolean;
+  } | null>(null);
+  const [savingTreasury, setSavingTreasury] = useState<boolean>(false);
+
+  // User YT Coin Wallets Management State
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState<boolean>(false);
+  const [accountSearch, setAccountSearch] = useState<string>('');
+  const [editingWallet, setEditingWallet] = useState<{
+    userId: string;
+    fullName: string;
+    walletAddress: string;
+    currentBalanceYt: number;
+    newBalanceYt: string;
+    reason: string;
+    clearPendingAudit: boolean;
+  } | null>(null);
+  const [savingWallet, setSavingWallet] = useState<boolean>(false);
 
   // Ad Networks Management State
   const [showNetworkForm, setShowNetworkForm] = useState<boolean>(false);
@@ -168,6 +205,26 @@ export const YtCoinAdminView: React.FC = () => {
   const [savingNetwork, setSavingNetwork] = useState<boolean>(false);
   const [deletingNetworkId, setDeletingNetworkId] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Double-entry Journal Integrity Verification State
+  const [integrity, setIntegrity] = useState<any>(null);
+  const [integrityLoading, setIntegrityLoading] = useState<boolean>(false);
+  const [integrityMigrationRequired, setIntegrityMigrationRequired] = useState<boolean>(false);
+  const [integrityMessage, setIntegrityMessage] = useState<string | null>(null);
+
+  const loadAccounts = useCallback(async (search = '') => {
+    setAccountsLoading(true);
+    try {
+      const res = await api.getAdminYtCoinAccounts(search, 30);
+      if (Array.isArray(res?.accounts)) {
+        setAccounts(res.accounts);
+      }
+    } catch {
+      // Fallback gracefully if summary.accounts already provided
+    } finally {
+      setAccountsLoading(false);
+    }
+  }, []);
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
@@ -179,23 +236,38 @@ export const YtCoinAdminView: React.FC = () => {
       if (s && typeof s === 'object') {
         const scale = Number(s.unit_scale) > 0 ? Number(s.unit_scale) : YT_SUBUNITS_PER_YT;
         if (typeof s.mining_enabled === 'boolean') setCfgMiningEnabled(s.mining_enabled);
-        setCfgBaseRewardYt(
-          formatYt(s.base_reward_yt ?? Number(s.base_reward_units ?? 500) / scale).replace(/,/g, '')
-        );
-        setCfgTapRewardYt(
-          formatYt(s.tap_reward_yt ?? Number(s.tap_reward_units ?? 10) / scale).replace(/,/g, '')
-        );
-        setCfgAdClickRewardYt(
-          formatYt(s.ad_click_reward_yt ?? Number(s.ad_click_reward_units ?? 10) / scale).replace(/,/g, '')
-        );
-        setCfgAdViewRewardYt(
-          formatYt(s.ad_view_reward_yt ?? Number(s.ad_view_reward_units ?? 10) / scale).replace(/,/g, '')
-        );
+
+        const toInputStr = (directVal: unknown, unitVal: unknown): string => {
+          if (directVal !== undefined && directVal !== null && directVal !== '') {
+            const n = Number(directVal);
+            if (Number.isFinite(n)) return formatYt(n).replace(/,/g, '');
+          }
+          if (unitVal !== undefined && unitVal !== null && unitVal !== '') {
+            const u = Number(unitVal);
+            if (Number.isFinite(u)) return formatYt(u / scale).replace(/,/g, '');
+          }
+          return '';
+        };
+
+        setCfgMaxSupplyYt(toInputStr(s.max_supply_yt, s.max_supply_units));
+        setCfgBaseRewardYt(toInputStr(s.base_reward_yt, s.base_reward_units));
+        setCfgTapRewardYt(toInputStr(s.tap_reward_yt, s.tap_reward_units));
+        setCfgAdClickRewardYt(toInputStr(s.ad_click_reward_yt, s.ad_click_reward_units));
+        setCfgAdViewRewardYt(toInputStr(s.ad_view_reward_yt, s.ad_view_reward_units));
+        setCfgDailyCapStartYt(toInputStr(s.daily_cap_start_yt, s.daily_cap_start_units));
+        setCfgDailyCapMaxYt(toInputStr(s.daily_cap_max_yt, s.daily_cap_max_units));
+
         if (s.daily_tap_limit !== undefined && s.daily_tap_limit !== null) {
           setCfgDailyTapLimit(String(Math.max(0, Math.floor(Number(s.daily_tap_limit) || 0))));
         }
         if (s.daily_ad_limit !== undefined && s.daily_ad_limit !== null) {
           setCfgDailyAdLimit(String(Math.max(0, Math.floor(Number(s.daily_ad_limit) || 0))));
+        }
+        if (s.exchange_rate_yer_per_yt !== undefined && s.exchange_rate_yer_per_yt !== null) {
+          setCfgExchangeRateYerPerYt(String(Number(s.exchange_rate_yer_per_yt)));
+        }
+        if (Array.isArray(s.accounts)) {
+          setAccounts(s.accounts);
         }
       }
     } catch (err: any) {
@@ -205,9 +277,25 @@ export const YtCoinAdminView: React.FC = () => {
     }
   }, []);
 
+  const loadIntegrity = useCallback(async () => {
+    setIntegrityLoading(true);
+    try {
+      const res = await api.getAdminYtCoinIntegrity();
+      setIntegrity(res?.integrity ?? null);
+      setIntegrityMigrationRequired(Boolean(res?.migrationRequired));
+      setIntegrityMessage(res?.message || null);
+    } catch (err: any) {
+      setIntegrityMessage(err?.message || 'تعذر فحص توازن القيود.');
+    } finally {
+      setIntegrityLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadSummary();
-  }, [loadSummary]);
+    void loadAccounts('');
+    void loadIntegrity();
+  }, [loadSummary, loadAccounts, loadIntegrity]);
 
   const parsed = useMemo(() => {
     const root = asRecord(summary);
@@ -215,12 +303,23 @@ export const YtCoinAdminView: React.FC = () => {
 
     const unitScale = pickNumber([root], ['unit_scale', 'unitScale']) ?? YT_SUBUNITS_PER_YT;
 
+    const treasuries = pickArray([root], ['treasuries']).filter((r) => asRecord(r) !== null);
+    const userRewardsRow = treasuries.find((t: any) => t?.treasury_key === 'YT-USER-REWARDS') || null;
+
     const rewardsPoolRemainingYt = pickYtUnits(
-      [root],
-      ['rewards_treasury_balance_yt', 'pool_remaining_yt'],
-      ['rewards_treasury_balance_units', 'pool_remaining_units'],
+      [root, userRewardsRow],
+      ['rewards_treasury_balance_yt', 'pool_remaining_yt', 'balance_yt'],
+      ['rewards_treasury_balance_units', 'pool_remaining_units', 'balance_units'],
       unitScale
     );
+    const rewardsAllocatedYt =
+      pickYtUnits(
+        [root, userRewardsRow],
+        ['rewards_treasury_allocated_yt', 'allocated_yt'],
+        ['rewards_treasury_allocated_units', 'allocated_units'],
+        unitScale
+      ) ?? 0;
+
     const circulatingSupplyYt = pickYtUnits(
       [root],
       ['circulating_supply_yt', 'total_mined_yt'],
@@ -237,10 +336,17 @@ export const YtCoinAdminView: React.FC = () => {
     const adsToday = pickNumber([root], ['today_ads_count']);
     const updatedAt = pickString([root], ['updated_at']);
 
-    const treasuries = pickArray([root], ['treasuries']).filter((r) => asRecord(r) !== null);
     const adNetworks = pickArray([root], ['ad_networks']).filter((r) => asRecord(r) !== null);
     const recentClaims = pickArray([root], ['recent_claims']).filter((r) => asRecord(r) !== null);
     const recentAdEvents = pickArray([root], ['recent_ad_events']).filter((r) => asRecord(r) !== null);
+
+    const totalTreasuryAllocatedYt = treasuries.reduce((acc, t: any) => {
+      const val =
+        t?.allocated_yt !== undefined && t?.allocated_yt !== null
+          ? Number(t.allocated_yt)
+          : Number(t?.allocated_units ?? 0) / unitScale;
+      return acc + (Number.isFinite(val) ? val : 0);
+    }, 0);
 
     const scalarEntries: Array<{ key: string; label: string; value: string }> = [];
     for (const [k, v] of Object.entries(root)) {
@@ -252,26 +358,31 @@ export const YtCoinAdminView: React.FC = () => {
         displayVal = `${formatYt(v / unitScale)} YT (${v.toLocaleString('en-US')} جزء)`;
         displayLabel = METRIC_LABELS[k.replace(/_units$|Units$/, '_yt')] || k;
       } else if (typeof v === 'number') {
-        displayVal = k === 'unit_scale' ? '1,000' : formatYt(v);
+        displayVal = k === 'unit_scale' ? v.toLocaleString('en-US') : formatYt(v);
       } else if (k.endsWith('_at')) {
         displayVal = formatDateTime(v);
       }
       scalarEntries.push({ key: k, label: displayLabel, value: displayVal });
     }
 
-    const userRewardsCapYt = 30_000_000;
     const rewardsDistributedYt =
-      rewardsPoolRemainingYt !== null ? Math.max(0, userRewardsCapYt - rewardsPoolRemainingYt) : null;
-    const poolPct =
-      rewardsDistributedYt !== null
-        ? Math.min(100, Math.max(0, (rewardsDistributedYt / userRewardsCapYt) * 100))
+      rewardsPoolRemainingYt !== null && rewardsAllocatedYt > 0
+        ? Math.max(0, rewardsAllocatedYt - rewardsPoolRemainingYt)
         : null;
+    const poolPct =
+      rewardsDistributedYt !== null && rewardsAllocatedYt > 0
+        ? Math.min(100, Math.max(0, (rewardsDistributedYt / rewardsAllocatedYt) * 100))
+        : null;
+    const rewardsSharePct = maxSupplyYt > 0 ? (rewardsAllocatedYt / maxSupplyYt) * 100 : 0;
 
     return {
       unitScale,
       rewardsPoolRemainingYt,
+      rewardsAllocatedYt,
+      rewardsSharePct,
       circulatingSupplyYt,
       maxSupplyYt,
+      totalTreasuryAllocatedYt,
       todayMinedYt,
       activeMiners,
       pendingAuditAccounts,
@@ -292,29 +403,110 @@ export const YtCoinAdminView: React.FC = () => {
     e.preventDefault();
     if (savingConfig) return;
     try {
+      const serverMaxSupplyUnits = parsed
+        ? Math.round(parsed.maxSupplyYt * YT_SUBUNITS_PER_YT)
+        : null;
+
+      const maxSupplyUnits = ytToUnitsStrict(cfgMaxSupplyYt, {
+        fieldLabel: 'سقف الإصدار الكلي',
+        minUnits: 1000,
+        maxUnits: Number.MAX_SAFE_INTEGER,
+      });
       const baseUnits = ytToUnitsStrict(cfgBaseRewardYt, { fieldLabel: 'مكافأة الدخول اليومي', minUnits: 1 });
       const tapUnits = ytToUnitsStrict(cfgTapRewardYt, { fieldLabel: 'مكافأة النقر', minUnits: 1 });
       const clickUnits = ytToUnitsStrict(cfgAdClickRewardYt, { fieldLabel: 'مكافأة النقرة الإعلانية', minUnits: 1 });
       const viewUnits = ytToUnitsStrict(cfgAdViewRewardYt, { fieldLabel: 'مكافأة مشاهدة الإعلان', minUnits: 1 });
+      const dailyCapStartUnits = ytToUnitsStrict(cfgDailyCapStartYt, {
+        fieldLabel: 'السقف اليومي الابتدائي',
+        minUnits: 1,
+        maxUnits: Number.MAX_SAFE_INTEGER,
+      });
+      const dailyCapMaxUnits = ytToUnitsStrict(cfgDailyCapMaxYt, {
+        fieldLabel: 'الحد الأقصى للسقف اليومي',
+        minUnits: 1,
+        maxUnits: Number.MAX_SAFE_INTEGER,
+      });
       const dailyTapLimit = Math.max(0, Math.floor(Number(cfgDailyTapLimit) || 0));
       const dailyAdLimit = Math.max(0, Math.floor(Number(cfgDailyAdLimit) || 0));
+      const exchangeRate = Number(cfgExchangeRateYerPerYt);
+      if (!Number.isFinite(exchangeRate) || exchangeRate <= 0) {
+        throw new Error('قيمة السعر المرجعي يجب أن تكون أكبر من صفر.');
+      }
 
       setSavingConfig(true);
       await api.updateAdminYtCoinConfig({
         miningEnabled: cfgMiningEnabled,
-        baseRewardYt: baseUnits / YT_SUBUNITS_PER_YT,
-        tapRewardYt: tapUnits / YT_SUBUNITS_PER_YT,
-        adClickRewardYt: clickUnits / YT_SUBUNITS_PER_YT,
-        adViewRewardYt: viewUnits / YT_SUBUNITS_PER_YT,
+        ...(serverMaxSupplyUnits !== maxSupplyUnits ? { maxSupplyYt: unitsToYt(maxSupplyUnits) } : {}),
+        baseRewardYt: unitsToYt(baseUnits),
+        tapRewardYt: unitsToYt(tapUnits),
+        adClickRewardYt: unitsToYt(clickUnits),
+        adViewRewardYt: unitsToYt(viewUnits),
         dailyTapLimit,
         dailyAdLimit,
+        dailyCapStartYt: unitsToYt(dailyCapStartUnits),
+        dailyCapMaxYt: unitsToYt(dailyCapMaxUnits),
+        exchangeRateYerPerYt: exchangeRate,
       });
-      showToast('تم تحديث إعدادات ومعدلات YT Coin في Supabase بنجاح.', 'success');
+      showToast('تم حفظ وتخزين جميع إعدادات ومعدلات YT Coin على الخادم بنجاح.', 'success');
       await loadSummary();
     } catch (err: any) {
-      showToast(err?.message || 'تعذر حفظ الإعدادات.', 'error');
+      showToast(err?.message || 'تعذر حفظ الإعدادات على الخادم.', 'error');
     } finally {
       setSavingConfig(false);
+    }
+  };
+
+  const handleSaveTreasury = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTreasury || savingTreasury) return;
+    try {
+      const allocatedUnits = ytToUnitsStrict(editingTreasury.allocatedYt, {
+        allowZero: true,
+        fieldLabel: 'المخصص الكلي (YT)',
+        minUnits: 0,
+        maxUnits: Number.MAX_SAFE_INTEGER,
+      });
+      setSavingTreasury(true);
+      await api.updateAdminYtCoinTreasury(editingTreasury.treasuryKey, {
+        labelAr: editingTreasury.labelAr.trim(),
+        allocatedYt: unitsToYt(allocatedUnits),
+        isLocked: editingTreasury.isLocked,
+        approvedForDistribution: editingTreasury.approvedForDistribution,
+      });
+      showToast('تم تعديل وتخزين بيانات المخصص في الخادم بنجاح.', 'success');
+      setEditingTreasury(null);
+      await loadSummary();
+    } catch (err: any) {
+      showToast(err?.message || 'تعذر حفظ تعديل الخزينة.', 'error');
+    } finally {
+      setSavingTreasury(false);
+    }
+  };
+
+  const handleSaveWalletAdjust = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWallet || savingWallet) return;
+    try {
+      const newBalanceUnits = ytToUnitsStrict(editingWallet.newBalanceYt, {
+        allowZero: true,
+        fieldLabel: 'الرصيد الجديد (YT)',
+        minUnits: 0,
+        maxUnits: Number.MAX_SAFE_INTEGER,
+      });
+      setSavingWallet(true);
+      await api.adjustAdminYtCoinWallet({
+        userId: editingWallet.userId,
+        newBalanceYt: unitsToYt(newBalanceUnits),
+        reason: editingWallet.reason.trim() || undefined,
+        clearPendingAudit: editingWallet.clearPendingAudit,
+      });
+      showToast('تم تعديل رصيد المحفظة وتوثيقه في الخادم بنجاح.', 'success');
+      setEditingWallet(null);
+      await Promise.all([loadSummary(), loadAccounts(accountSearch), loadIntegrity()]);
+    } catch (err: any) {
+      showToast(err?.message || 'تعذر تعديل رصيد المحفظة.', 'error');
+    } finally {
+      setSavingWallet(false);
     }
   };
 
@@ -340,8 +532,8 @@ export const YtCoinAdminView: React.FC = () => {
         secretEnvKey: networkForm.secretEnvKey.trim() || 'YT_COIN_AD_POSTBACK_SECRET',
         placementUrl: networkForm.placementUrl.trim() || null,
         adType: networkForm.adType,
-        rewardClickYt: clickUnits / YT_SUBUNITS_PER_YT,
-        rewardViewYt: viewUnits / YT_SUBUNITS_PER_YT,
+        rewardClickYt: unitsToYt(clickUnits),
+        rewardViewYt: unitsToYt(viewUnits),
         dailyUserLimit: Math.max(0, Math.floor(Number(networkForm.dailyUserLimit) || 0)),
         isActive: networkForm.isActive,
       });
@@ -417,26 +609,26 @@ export const YtCoinAdminView: React.FC = () => {
           </span>
           <div className="min-w-0">
             <h2 className="text-base sm:text-lg font-extrabold text-slate-900 dark:text-white flex flex-wrap items-center gap-2">
-              <span>إدارة اقتصاد وخزينة YT Coin</span>
+              <span>إدارة اقتصاد وخزينة ومحافظ YT Coin</span>
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
                 <ShieldCheck className="w-3 h-3" />
-                BIGINT • 1 YT = 1,000 جزء • سقف 100M
+                BIGINT • 1 YT = {(parsed?.unitScale ?? YT_SUBUNITS_PER_YT).toLocaleString('en-US')} جزء • السقف {formatNum(parsed?.maxSupplyYt ?? null, 0)} YT
               </span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              إدارة سقف الـ 100 مليون YT، التخصيصات المعتمدة والمقفلة، معدلات المكافآت، والشبكات الإعلانية الموثقة.
+              تعديل وحفظ جميع الأرقام والإعدادات وسقف الإصدار والتخصيصات وأرصدة المحافظ مباشرة في الخادم.
             </p>
           </div>
         </div>
 
         <button
           type="button"
-          onClick={() => void loadSummary()}
+          onClick={() => void Promise.all([loadSummary(), loadAccounts(accountSearch)])}
           disabled={loading}
           className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 text-xs font-bold transition-colors disabled:opacity-60 cursor-pointer"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          <span>تحديث المؤشرات</span>
+          <span>تحديث من الخادم</span>
         </button>
       </div>
 
@@ -460,10 +652,53 @@ export const YtCoinAdminView: React.FC = () => {
         <div className="rounded-2xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 p-4 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2.5">
           <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
           <span>
-            يوجد <strong className="font-mono">{parsed.pendingAuditAccounts}</strong> حساباً بأرصدة قديمة بانتظار المطابقة اليدوية (pending_audit) — تم الاحتفاظ بها كما هي دون تصفير أو تحويل تلقائي.
+            يوجد <strong className="font-mono">{parsed.pendingAuditAccounts}</strong> حساباً بأرصدة قديمة بانتظار المطابقة (pending_audit) — يمكنك مراجعتها وتعديلها من جدول المحافظ أدناه.
           </span>
         </div>
       )}
+
+      {/* Double-Entry Journal Balance Verification Panel */}
+      <div
+        className={`rounded-2xl border p-4 text-xs flex flex-wrap items-center justify-between gap-3 ${
+          integrityMigrationRequired
+            ? 'border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200'
+            : integrity?.isBalanced
+              ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/25 text-emerald-900 dark:text-emerald-200'
+              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
+        }`}
+      >
+        <div className="space-y-1">
+          <div className="font-extrabold flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              فحص توازن قيود YT Coin (المدين = الدائن • 1 YT = 1,000 جزء)
+            </span>
+          </div>
+          {integrityMigrationRequired ? (
+            <p className="text-[11px]">{integrityMessage}</p>
+          ) : integrity ? (
+            <p className="text-[11px] font-mono">
+              {integrity.isBalanced ? 'متوازن 100% ✓' : 'غير متوازن!'} • المعاملات:{' '}
+              {Number(integrity.totalPostedJournalTx ?? 0).toLocaleString('en-US')} • المدين:{' '}
+              {formatPartsLabel(integrity.totalDebitUnits ?? 0)} • الدائن:{' '}
+              {formatPartsLabel(integrity.totalCreditUnits ?? 0)}
+            </p>
+          ) : (
+            <p className="text-[11px] text-slate-500">
+              {integrityMessage || 'اضغط لفحص توازن قيود دفتر YT Coin في قاعدة البيانات.'}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => void loadIntegrity()}
+          disabled={integrityLoading}
+          className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white px-3 py-1.5 font-bold cursor-pointer disabled:opacity-60"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${integrityLoading ? 'animate-spin' : ''}`} />
+          <span>فحص التوازن الآن</span>
+        </button>
+      </div>
 
       {loading && !parsed ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 animate-pulse">
@@ -473,7 +708,7 @@ export const YtCoinAdminView: React.FC = () => {
         </div>
       ) : parsed ? (
         <>
-          {/* Primary KPI Cards */}
+          {/* Primary Live KPI Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-2xl border border-amber-200/80 dark:border-amber-500/25 bg-white dark:bg-slate-900 p-4 shadow-sm">
               <div className="flex items-center justify-between text-xs font-bold text-amber-700 dark:text-amber-400">
@@ -487,7 +722,7 @@ export const YtCoinAdminView: React.FC = () => {
                 <span className="text-xs font-bold text-amber-600">YT</span>
               </div>
               <p className="text-[11px] text-slate-500 mt-1 font-mono tabular-nums">
-                المخصص: 30,000,000 YT (30%)
+                المخصص الحالي: {formatNum(parsed.rewardsAllocatedYt)} YT ({parsed.rewardsSharePct.toFixed(1)}%)
               </p>
             </div>
 
@@ -525,17 +760,17 @@ export const YtCoinAdminView: React.FC = () => {
 
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300">
-                <span>سقف الإصدار النهائي</span>
+                <span>سقف الإصدار الكلي (المُخزّن)</span>
                 <Layers className="w-4 h-4" />
               </div>
               <div className="mt-2 flex items-baseline gap-1.5">
                 <strong className="text-xl font-black font-mono tabular-nums text-slate-900 dark:text-white">
-                  {formatNum(parsed.maxSupplyYt, 0)}
+                  {formatNum(parsed.maxSupplyYt, 3)}
                 </strong>
                 <span className="text-xs font-bold text-amber-600">YT</span>
               </div>
-              <p className="text-[11px] text-slate-500 mt-1">
-                أصغر وحدة: 0.001 YT (1,000 جزء/عملة)
+              <p className="text-[11px] text-slate-500 mt-1 font-mono">
+                إجمالي المخصصات: {formatNum(parsed.totalTreasuryAllocatedYt)} YT
               </p>
             </div>
           </div>
@@ -545,7 +780,7 @@ export const YtCoinAdminView: React.FC = () => {
             <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm space-y-2">
               <div className="flex items-center justify-between text-xs font-bold">
                 <span className="text-slate-700 dark:text-slate-200">
-                  نسبة التوزيع الفعلي من مخصص مكافآت المستخدمين (30 مليون YT)
+                  نسبة التوزيع الفعلي من مخصص مكافآت المستخدمين ({formatNum(parsed.rewardsAllocatedYt)} YT)
                 </span>
                 <span className="font-mono tabular-nums text-amber-700 dark:text-amber-400">
                   {parsed.poolPct.toFixed(3)}%
@@ -560,78 +795,7 @@ export const YtCoinAdminView: React.FC = () => {
             </div>
           )}
 
-          {/* 4 Tokenomics Allocations Table */}
-          {parsed.treasuries.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
-              <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Vault className="w-4 h-4 text-amber-600" />
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                    تخصيصات سقف الـ 100 مليون YT (لا تُحسب متداولة قبل الاعتماد والتوزيع)
-                  </h3>
-                </div>
-                <span className="text-[11px] font-mono text-slate-500">المجموع ≤ 100,000,000 YT</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-right text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800">
-                    <tr>
-                      <th className="py-2.5 px-4 font-bold">الحساب / المخصص</th>
-                      <th className="py-2.5 px-4 font-bold">المخصص الكلي (YT)</th>
-                      <th className="py-2.5 px-4 font-bold">الموزّع فعلياً (YT)</th>
-                      <th className="py-2.5 px-4 font-bold">المتبقي (YT)</th>
-                      <th className="py-2.5 px-4 font-bold">القفل والاعتماد</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {parsed.treasuries.map((t: any, idx: number) => (
-                      <tr key={String(t.treasury_key ?? idx)}>
-                        <td className="py-2.5 px-4">
-                          <div className="font-bold text-slate-800 dark:text-slate-100">
-                            {t.label_ar || t.treasury_key}
-                          </div>
-                          <div className="text-[10px] font-mono text-slate-400">{t.treasury_key}</div>
-                        </td>
-                        <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-slate-900 dark:text-white">
-                          {formatNum(t.allocated_yt ?? Number(t.allocated_units ?? 0) / parsed.unitScale)} YT
-                        </td>
-                        <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-emerald-700 dark:text-emerald-400">
-                          {formatNum(t.distributed_yt ?? Number(t.distributed_units ?? 0) / parsed.unitScale)} YT
-                        </td>
-                        <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-amber-700 dark:text-amber-400">
-                          {formatNum(t.balance_yt ?? Number(t.balance_units ?? 0) / parsed.unitScale)} YT
-                        </td>
-                        <td className="py-2.5 px-4">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {t.is_locked ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
-                                <Lock className="w-3 h-3" /> مقفل باستحقاق
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-bold">
-                                <Unlock className="w-3 h-3" /> غير مقفل
-                              </span>
-                            )}
-                            {t.approved_for_distribution ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
-                                معتمد للتوزيع
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] font-bold">
-                                غير متداول بعد
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Admin Reward Rates Config Form */}
+          {/* Editable Economy Config Form */}
           <form
             onSubmit={(e) => void handleSaveConfig(e)}
             className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4"
@@ -640,7 +804,7 @@ export const YtCoinAdminView: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-emerald-600" />
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  ضبط معدلات المكافآت والحدود اليومية (تقبل حتى 3 خانات عشرية)
+                  تعديل وحفظ أرقام الاقتصاد والمكافآت والحدود في الخادم
                 </h3>
               </div>
               <button
@@ -659,7 +823,20 @@ export const YtCoinAdminView: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
               <div className="space-y-1">
                 <label className="font-bold text-slate-600 dark:text-slate-300 block">
-                  مكافأة الدخول اليومي (YT — الافتراضي 0.5)
+                  سقف الإصدار الكلي للعملة (YT)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  step={0.001}
+                  value={cfgMaxSupplyYt}
+                  onChange={(e) => setCfgMaxSupplyYt(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="font-bold text-slate-600 dark:text-slate-300 block">
+                  مكافأة الدخول اليومي (YT)
                 </label>
                 <input
                   type="number"
@@ -672,7 +849,20 @@ export const YtCoinAdminView: React.FC = () => {
               </div>
               <div className="space-y-1">
                 <label className="font-bold text-slate-600 dark:text-slate-300 block">
-                  مكافأة النقرة الإعلانية المؤهلة (YT — الافتراضي 0.01)
+                  مكافأة النقر المباشر (YT)
+                </label>
+                <input
+                  type="number"
+                  min={0.001}
+                  step={0.001}
+                  value={cfgTapRewardYt}
+                  onChange={(e) => setCfgTapRewardYt(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="font-bold text-slate-600 dark:text-slate-300 block">
+                  مكافأة النقرة الإعلانية المؤهلة (YT)
                 </label>
                 <input
                   type="number"
@@ -685,7 +875,7 @@ export const YtCoinAdminView: React.FC = () => {
               </div>
               <div className="space-y-1">
                 <label className="font-bold text-slate-600 dark:text-slate-300 block">
-                  مكافأة مشاهدة الإعلان المؤهلة (YT — الافتراضي 0.01)
+                  مكافأة مشاهدة الإعلان المؤهلة (YT)
                 </label>
                 <input
                   type="number"
@@ -698,14 +888,14 @@ export const YtCoinAdminView: React.FC = () => {
               </div>
               <div className="space-y-1">
                 <label className="font-bold text-slate-600 dark:text-slate-300 block">
-                  مكافأة النقر المباشر (YT — الافتراضي 0.01)
+                  السعر المرجعي للعملة (ر.ي لكل 1 YT)
                 </label>
                 <input
                   type="number"
-                  min={0.001}
-                  step={0.001}
-                  value={cfgTapRewardYt}
-                  onChange={(e) => setCfgTapRewardYt(e.target.value)}
+                  min={0.000001}
+                  step="any"
+                  value={cfgExchangeRateYerPerYt}
+                  onChange={(e) => setCfgExchangeRateYerPerYt(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono font-bold text-slate-900 dark:text-white"
                 />
               </div>
@@ -735,6 +925,32 @@ export const YtCoinAdminView: React.FC = () => {
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono font-bold text-slate-900 dark:text-white"
                 />
               </div>
+              <div className="space-y-1">
+                <label className="font-bold text-slate-600 dark:text-slate-300 block">
+                  السقف اليومي الابتدائي للمنصة (YT)
+                </label>
+                <input
+                  type="number"
+                  min={0.001}
+                  step={0.001}
+                  value={cfgDailyCapStartYt}
+                  onChange={(e) => setCfgDailyCapStartYt(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="font-bold text-slate-600 dark:text-slate-300 block">
+                  الحد الأقصى للسقف اليومي للمنصة (YT)
+                </label>
+                <input
+                  type="number"
+                  min={0.001}
+                  step={0.001}
+                  value={cfgDailyCapMaxYt}
+                  onChange={(e) => setCfgDailyCapMaxYt(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono font-bold text-slate-900 dark:text-white"
+                />
+              </div>
             </div>
 
             <div className="flex justify-end">
@@ -744,10 +960,404 @@ export const YtCoinAdminView: React.FC = () => {
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs cursor-pointer"
               >
                 {savingConfig ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                <span>حفظ معدلات المكافآت</span>
+                <span>حفظ وتخزين الإعدادات في الخادم</span>
               </button>
             </div>
           </form>
+
+          {/* Editable System Treasury Allocations Table */}
+          {parsed.treasuries.length > 0 && (
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+              <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Vault className="w-4 h-4 text-amber-600" />
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    إدارة وتعديل تخصيصات الخزينة (سقف الخادم: {formatNum(parsed.maxSupplyYt)} YT)
+                  </h3>
+                </div>
+                <span className="text-[11px] font-mono text-slate-500">
+                  المخصص حالياً: {formatNum(parsed.totalTreasuryAllocatedYt)} / {formatNum(parsed.maxSupplyYt)} YT
+                </span>
+              </div>
+
+              {editingTreasury && (
+                <form
+                  onSubmit={(e) => void handleSaveTreasury(e)}
+                  className="p-4 bg-amber-50/70 dark:bg-amber-950/25 border-b border-amber-200 dark:border-amber-800 space-y-3 text-xs"
+                >
+                  <div className="flex items-center justify-between">
+                    <strong className="text-slate-900 dark:text-white">
+                      تعديل مخصص: <span className="font-mono text-amber-700 dark:text-amber-400">{editingTreasury.treasuryKey}</span>
+                    </strong>
+                    <button
+                      type="button"
+                      onClick={() => setEditingTreasury(null)}
+                      className="text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">الاسم الظاهر</label>
+                      <input
+                        type="text"
+                        required
+                        value={editingTreasury.labelAr}
+                        onChange={(e) => setEditingTreasury({ ...editingTreasury, labelAr: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        المخصص الكلي (YT) — الحد الأدنى الموزّع: {formatNum(editingTreasury.distributedYt)}
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        min={editingTreasury.distributedYt}
+                        step={0.001}
+                        value={editingTreasury.allocatedYt}
+                        onChange={(e) => setEditingTreasury({ ...editingTreasury, allocatedYt: e.target.value })}
+                        className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono font-bold"
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200 pt-5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingTreasury.isLocked}
+                        onChange={(e) => setEditingTreasury({ ...editingTreasury, isLocked: e.target.checked })}
+                      />
+                      <span>حساب مقفل (Locked)</span>
+                    </label>
+                    <label className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200 pt-5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingTreasury.approvedForDistribution}
+                        onChange={(e) =>
+                          setEditingTreasury({ ...editingTreasury, approvedForDistribution: e.target.checked })
+                        }
+                      />
+                      <span>معتمد للتوزيع الفعلي</span>
+                    </label>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingTreasury(null)}
+                      className="px-3.5 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold cursor-pointer"
+                    >
+                      إلغاء
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={savingTreasury}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold cursor-pointer disabled:opacity-60"
+                    >
+                      {savingTreasury ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      <span>حفظ التعديل في الخادم</span>
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <th className="py-2.5 px-4 font-bold">الحساب / المخصص</th>
+                      <th className="py-2.5 px-4 font-bold">المخصص الكلي (YT)</th>
+                      <th className="py-2.5 px-4 font-bold">الموزّع فعلياً (YT)</th>
+                      <th className="py-2.5 px-4 font-bold">المتبقي (YT)</th>
+                      <th className="py-2.5 px-4 font-bold">القفل والاعتماد</th>
+                      <th className="py-2.5 px-4 font-bold">إجراء</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {parsed.treasuries.map((t: any, idx: number) => {
+                      const allocYt =
+                        t.allocated_yt !== undefined && t.allocated_yt !== null
+                          ? Number(t.allocated_yt)
+                          : Number(t.allocated_units ?? 0) / parsed.unitScale;
+                      const distYt =
+                        t.distributed_yt !== undefined && t.distributed_yt !== null
+                          ? Number(t.distributed_yt)
+                          : Number(t.distributed_units ?? 0) / parsed.unitScale;
+                      const balYt =
+                        t.balance_yt !== undefined && t.balance_yt !== null
+                          ? Number(t.balance_yt)
+                          : Number(t.balance_units ?? 0) / parsed.unitScale;
+
+                      return (
+                        <tr key={String(t.treasury_key ?? idx)}>
+                          <td className="py-2.5 px-4">
+                            <div className="font-bold text-slate-800 dark:text-slate-100">
+                              {t.label_ar || t.treasury_key}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400">{t.treasury_key}</div>
+                          </td>
+                          <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-slate-900 dark:text-white">
+                            {formatNum(allocYt)} YT
+                          </td>
+                          <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-emerald-700 dark:text-emerald-400">
+                            {formatNum(distYt)} YT
+                          </td>
+                          <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-amber-700 dark:text-amber-400">
+                            {formatNum(balYt)} YT
+                          </td>
+                          <td className="py-2.5 px-4">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {t.is_locked ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold">
+                                  <Lock className="w-3 h-3" /> مقفل باستحقاق
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-bold">
+                                  <Unlock className="w-3 h-3" /> غير مقفل
+                                </span>
+                              )}
+                              {t.approved_for_distribution ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                                  معتمد للتوزيع
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 text-[10px] font-bold">
+                                  غير متداول بعد
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-4">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditingTreasury({
+                                  treasuryKey: String(t.treasury_key),
+                                  labelAr: String(t.label_ar || t.treasury_key),
+                                  allocatedYt: formatYt(allocYt).replace(/,/g, ''),
+                                  distributedYt: distYt,
+                                  isLocked: Boolean(t.is_locked),
+                                  approvedForDistribution: Boolean(t.approved_for_distribution),
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 font-bold hover:bg-amber-100 cursor-pointer"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>تعديل</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* User YT Coin Wallets Management */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Wallet className="w-4 h-4 text-emerald-600" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    إدارة وتعديل أرصدة محافظ المستخدمين (YT Coin)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    بحث وتعديل الرصيد الفعلي لأي محفظة مستخدم وتخزين التعديل في دفتر العملة وسجل التدقيق بالخادم.
+                  </p>
+                </div>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void loadAccounts(accountSearch);
+                }}
+                className="flex items-center gap-2"
+              >
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={accountSearch}
+                    onChange={(e) => setAccountSearch(e.target.value)}
+                    placeholder="ابحث بالاسم، الهاتف، أو yt1..."
+                    className="pr-8 pl-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs w-52 sm:w-64"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={accountsLoading}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer disabled:opacity-60"
+                >
+                  {accountsLoading ? 'جاري البحث...' : 'بحث'}
+                </button>
+              </form>
+            </div>
+
+            {editingWallet && (
+              <form
+                onSubmit={(e) => void handleSaveWalletAdjust(e)}
+                className="p-4 bg-emerald-50/70 dark:bg-emerald-950/25 border-b border-emerald-200 dark:border-emerald-800 space-y-3 text-xs"
+              >
+                <div className="flex items-center justify-between">
+                  <strong className="text-slate-900 dark:text-white">
+                    تعديل رصيد محفظة: {editingWallet.fullName} ({editingWallet.walletAddress})
+                  </strong>
+                  <button
+                    type="button"
+                    onClick={() => setEditingWallet(null)}
+                    className="text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      الرصيد الجديد (YT) — الحالي: {formatNum(editingWallet.currentBalanceYt)} YT
+                    </label>
+                    <input
+                      type="number"
+                      required
+                      min={0}
+                      step={0.001}
+                      value={editingWallet.newBalanceYt}
+                      onChange={(e) => setEditingWallet({ ...editingWallet, newBalanceYt: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">سبب التعديل / المرجع</label>
+                    <input
+                      type="text"
+                      placeholder="مثال: تسوية أو مكافأة إدارية"
+                      value={editingWallet.reason}
+                      onChange={(e) => setEditingWallet({ ...editingWallet, reason: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-200 pt-5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editingWallet.clearPendingAudit}
+                      onChange={(e) => setEditingWallet({ ...editingWallet, clearPendingAudit: e.target.checked })}
+                    />
+                    <span>اعتماد حالة المحفظة (verified)</span>
+                  </label>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingWallet(null)}
+                    className="px-3.5 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold cursor-pointer"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingWallet}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold cursor-pointer disabled:opacity-60"
+                  >
+                    {savingWallet ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                    <span>حفظ الرصيد الجديد</span>
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {accounts.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-500">
+                {accountsLoading ? 'جاري تحميل المحافظ من الخادم...' : 'لا توجد محافظ مطابقة حالياً.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 border-b border-slate-200 dark:border-slate-800">
+                    <tr>
+                      <th className="py-2.5 px-4 font-bold">المستخدم / العنوان</th>
+                      <th className="py-2.5 px-4 font-bold">الرصيد الحالي (YT)</th>
+                      <th className="py-2.5 px-4 font-bold">إجمالي المكتسب</th>
+                      <th className="py-2.5 px-4 font-bold">أرباح الإعلانات</th>
+                      <th className="py-2.5 px-4 font-bold">حالة التدقيق</th>
+                      <th className="py-2.5 px-4 font-bold">تعديل</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {accounts.map((acc: any, idx: number) => {
+                      const balYt =
+                        acc.balance_yt !== undefined && acc.balance_yt !== null
+                          ? Number(acc.balance_yt)
+                          : Number(acc.balance_units ?? 0) / parsed.unitScale;
+                      const lifeYt =
+                        acc.lifetime_earned_yt !== undefined && acc.lifetime_earned_yt !== null
+                          ? Number(acc.lifetime_earned_yt)
+                          : Number(acc.lifetime_earned_units ?? 0) / parsed.unitScale;
+                      const adYt =
+                        acc.ad_earned_yt !== undefined && acc.ad_earned_yt !== null
+                          ? Number(acc.ad_earned_yt)
+                          : Number(acc.ad_earned_units ?? 0) / parsed.unitScale;
+
+                      return (
+                        <tr key={String(acc.user_id ?? idx)}>
+                          <td className="py-2.5 px-4">
+                            <div className="font-bold text-slate-800 dark:text-slate-100">
+                              {acc.full_name || acc.phone || acc.email || String(acc.user_id || '').slice(0, 8)}
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400" dir="ltr">
+                              {acc.wallet_address}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-slate-900 dark:text-white">
+                            {formatNum(balYt)} YT
+                          </td>
+                          <td className="py-2.5 px-4 font-mono tabular-nums text-emerald-700 dark:text-emerald-400 font-bold">
+                            {formatNum(lifeYt)} YT
+                          </td>
+                          <td className="py-2.5 px-4 font-mono tabular-nums text-sky-700 dark:text-sky-400 font-bold">
+                            {formatNum(adYt)} YT
+                          </td>
+                          <td className="py-2.5 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                acc.migration_audit_status === 'pending_audit'
+                                  ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                                  : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                              }`}
+                            >
+                              {acc.migration_audit_status === 'pending_audit' ? 'بانتظار المطابقة' : 'موثّقة'}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-4">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setEditingWallet({
+                                  userId: String(acc.user_id),
+                                  fullName: String(acc.full_name || acc.phone || acc.wallet_address),
+                                  walletAddress: String(acc.wallet_address),
+                                  currentBalanceYt: balYt,
+                                  newBalanceYt: formatYt(balYt).replace(/,/g, ''),
+                                  reason: '',
+                                  clearPendingAudit: true,
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 font-bold hover:bg-emerald-100 cursor-pointer"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>تعديل الرصيد</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
 
           {/* Verified Ad Networks Manager */}
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-sm space-y-4">
@@ -1068,7 +1678,7 @@ export const YtCoinAdminView: React.FC = () => {
           {parsed.scalarEntries.length > 0 && (
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-4 shadow-sm space-y-3">
               <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">ملخص المؤشرات التفصيلية</h3>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">ملخص المؤشرات المخزنة في الخادم</h3>
                 {parsed.updatedAt && (
                   <span className="text-[11px] text-slate-500 flex items-center gap-1">
                     <Clock className="w-3.5 h-3.5" />

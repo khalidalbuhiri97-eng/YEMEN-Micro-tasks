@@ -36,6 +36,7 @@ import {
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.vip').trim().replace(/\/$/, '');
+const PASSWORD_RESET_REDIRECT_URL = 'https://yemen-microtasks.vip/reset-password';
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
 export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -2732,7 +2733,7 @@ app.post('/api/admin/users/:id/reset-password', adminMiddleware, async (req: Aut
       type: 'recovery',
       email,
       options: {
-        redirectTo: `${AUTH_REDIRECT_URL}/`,
+        redirectTo: PASSWORD_RESET_REDIRECT_URL,
       },
     });
     if (linkErr) throw linkErr;
@@ -4364,9 +4365,13 @@ app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedR
     if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
     const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
 
-    const parseOptUnits = (raw: unknown, label: string): number | null => {
+    const parseOptUnits = (raw: unknown, label: string, maxUnitsOverride?: number): number | null => {
       if (raw === undefined || raw === null || raw === '') return null;
-      return ytToUnitsStrict(raw, { fieldLabel: label, minUnits: 1 });
+      return ytToUnitsStrict(raw, {
+        fieldLabel: label,
+        minUnits: 1,
+        ...(maxUnitsOverride ? { maxUnits: maxUnitsOverride } : {}),
+      });
     };
 
     const parseIntOpt = (raw: unknown, label: string): number | null => {
@@ -4385,8 +4390,9 @@ app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedR
     const adViewRewardUnits = parseOptUnits(body.adViewRewardYt ?? body.adRewardYt, 'مكافأة مشاهدة الإعلان');
     const dailyTapLimit = parseIntOpt(body.dailyTapLimit, 'الحد اليومي للنقرات');
     const dailyAdLimit = parseIntOpt(body.dailyAdLimit, 'الحد اليومي للإعلانات');
-    const dailyCapStartUnits = parseOptUnits(body.dailyCapStartYt, 'السقف اليومي الابتدائي');
-    const dailyCapMaxUnits = parseOptUnits(body.dailyCapMaxYt, 'الحد الأقصى للسقف اليومي');
+    const dailyCapStartUnits = parseOptUnits(body.dailyCapStartYt, 'السقف اليومي الابتدائي', Number.MAX_SAFE_INTEGER);
+    const dailyCapMaxUnits = parseOptUnits(body.dailyCapMaxYt, 'الحد الأقصى للسقف اليومي', Number.MAX_SAFE_INTEGER);
+    const maxSupplyUnits = parseOptUnits(body.maxSupplyYt, 'سقف الإصدار الكلي', Number.MAX_SAFE_INTEGER);
     const swapEnabled = typeof body.swapEnabled === 'boolean' ? body.swapEnabled : null;
 
     let exchangeRateYerPerYt: number | null = null;
@@ -4398,7 +4404,7 @@ app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedR
       exchangeRateYerPerYt = rate;
     }
 
-    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('admin_update_yt_coin_config', {
+    const baseArgs = {
       p_mining_enabled: miningEnabled,
       p_base_reward_units: baseRewardUnits,
       p_tap_reward_units: tapRewardUnits,
@@ -4410,7 +4416,29 @@ app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedR
       p_daily_cap_max_units: dailyCapMaxUnits,
       p_swap_enabled: swapEnabled,
       p_exchange_rate_yer_per_yt: exchangeRateYerPerYt,
+    };
+
+    const userClient = getSupabaseUserClient(req.authToken);
+    let { data, error } = await userClient.rpc('admin_update_yt_coin_config', {
+      ...baseArgs,
+      p_max_supply_units: maxSupplyUnits,
     });
+
+    if (
+      error &&
+      (error.code === 'PGRST202' || String(error.message || '').includes('Could not find the function'))
+    ) {
+      if (maxSupplyUnits !== null) {
+        return res.status(400).json({
+          error:
+            'لتعديل سقف الإصدار الكلي وتخصيصات الخزينة، يرجى تطبيق ملف الترحيل 20261124000000_yt_coin_admin_editable_treasury_and_wallets.sql في Supabase أولاً.',
+        });
+      }
+      const fallback = await userClient.rpc('admin_update_yt_coin_config', baseArgs);
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (error) throw error;
     return res.json({ config: data });
   } catch (err: any) {
@@ -4419,9 +4447,139 @@ app.put('/api/admin/yt-coin/config', adminMiddleware, async (req: AuthenticatedR
   }
 });
 
+app.put('/api/admin/yt-coin/treasuries/:treasuryKey', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
+    const treasuryKey = String(req.params.treasuryKey || '').trim();
+    if (!treasuryKey) return res.status(400).json({ error: 'مفتاح حساب الخزينة مطلوب.' });
+
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const labelAr = typeof body.labelAr === 'string' && body.labelAr.trim() ? body.labelAr.trim() : null;
+    const allocatedUnits =
+      body.allocatedYt !== undefined && body.allocatedYt !== null && body.allocatedYt !== ''
+        ? ytToUnitsStrict(body.allocatedYt, {
+            allowZero: true,
+            fieldLabel: 'المخصص الكلي (YT)',
+            minUnits: 0,
+            maxUnits: Number.MAX_SAFE_INTEGER,
+          })
+        : null;
+    const isLocked = typeof body.isLocked === 'boolean' ? body.isLocked : null;
+    const approvedForDistribution =
+      typeof body.approvedForDistribution === 'boolean' ? body.approvedForDistribution : null;
+    const vestingSchedule =
+      body.vestingSchedule && typeof body.vestingSchedule === 'object' ? body.vestingSchedule : null;
+
+    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('admin_update_yt_coin_treasury', {
+      p_treasury_key: treasuryKey,
+      p_label_ar: labelAr,
+      p_allocated_units: allocatedUnits,
+      p_is_locked: isLocked,
+      p_approved_for_distribution: approvedForDistribution,
+      p_vesting_schedule: vestingSchedule,
+    });
+    if (error) {
+      if (error.code === 'PGRST202' || String(error.message || '').includes('Could not find the function')) {
+        return res.status(400).json({
+          error:
+            'يرجى تطبيق ملف الترحيل 20261124000000_yt_coin_admin_editable_treasury_and_wallets.sql في Supabase لتفعيل تعديل تخصيصات الخزينة.',
+        });
+      }
+      throw error;
+    }
+    return res.json({ treasury: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_TREASURY_UPDATE', apiRoute: '/api/admin/yt-coin/treasuries' });
+    return res.status(400).json({ error: err?.message || 'تعذر تحديث مخصص الخزينة.' });
+  }
+});
+
+app.get('/api/admin/yt-coin/accounts', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : null;
+    const limitRaw = Number(req.query.limit ?? 30);
+    const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 100) : 30;
+
+    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('admin_list_yt_coin_accounts', {
+      p_search: search || null,
+      p_limit: limit,
+    });
+    if (error) {
+      if (error.code === 'PGRST202' || String(error.message || '').includes('Could not find the function')) {
+        return res.json({ accounts: [], migrationRequired: true });
+      }
+      throw error;
+    }
+    return res.json({ accounts: Array.isArray((data as any)?.accounts) ? (data as any).accounts : [] });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_ACCOUNTS_LIST', apiRoute: '/api/admin/yt-coin/accounts' });
+    return res.status(400).json({ error: err?.message || 'تعذر تحميل قائمة محافظ YT Coin.' });
+  }
+});
+
+app.post('/api/admin/yt-coin/accounts/adjust', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const userId = String(body.userId || '').trim();
+    if (!userId) return res.status(400).json({ error: 'معرّف المستخدم مطلوب.' });
+
+    const newBalanceUnits = ytToUnitsStrict(body.newBalanceYt, {
+      allowZero: true,
+      fieldLabel: 'الرصيد الجديد (YT)',
+      minUnits: 0,
+      maxUnits: Number.MAX_SAFE_INTEGER,
+    });
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : null;
+    const clearPendingAudit = typeof body.clearPendingAudit === 'boolean' ? body.clearPendingAudit : true;
+
+    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('admin_adjust_yt_coin_wallet', {
+      p_user_id: userId,
+      p_new_balance_units: newBalanceUnits,
+      p_reason: reason,
+      p_clear_pending_audit: clearPendingAudit,
+    });
+    if (error) {
+      if (error.code === 'PGRST202' || String(error.message || '').includes('Could not find the function')) {
+        return res.status(400).json({
+          error:
+            'يرجى تطبيق ملف الترحيل 20261124000000_yt_coin_admin_editable_treasury_and_wallets.sql في Supabase لتفعيل تعديل أرصدة المحافظ.',
+        });
+      }
+      throw error;
+    }
+    return res.json({ account: data });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_WALLET_ADJUST', apiRoute: '/api/admin/yt-coin/accounts/adjust' });
+    return res.status(400).json({ error: err?.message || 'تعذر تعديل رصيد المحفظة.' });
+  }
+});
+
 app.post('/api/admin/yt-coin/ad-networks', adminMiddleware, adminUpsertYtCoinAdNetwork);
 app.put('/api/admin/yt-coin/ad-networks', adminMiddleware, adminUpsertYtCoinAdNetwork);
 app.delete('/api/admin/yt-coin/ad-networks/:id', adminMiddleware, adminDeleteYtCoinAdNetwork);
+
+app.get('/api/admin/yt-coin/integrity', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.authToken) return res.status(401).json({ error: 'جلسة الإدارة مطلوبة.' });
+    const { data, error } = await getSupabaseUserClient(req.authToken).rpc('admin_verify_yt_coin_ledger_integrity');
+    if (error) {
+      if (error.code === 'PGRST202' || String(error.message || '').includes('Could not find the function')) {
+        return res.json({
+          integrity: null,
+          migrationRequired: true,
+          message: 'يرجى تطبيق ملف الترحيل 20261125000000_yt_coin_balanced_journal_and_repair.sql في Supabase لتفعيل فحص توازن القيود.',
+        });
+      }
+      throw error;
+    }
+    return res.json({ integrity: data, migrationRequired: false });
+  } catch (err: any) {
+    await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_INTEGRITY', apiRoute: '/api/admin/yt-coin/integrity' });
+    return res.status(400).json({ error: err?.message || 'تعذر التحقق من توازن دفتر YT Coin.' });
+  }
+});
 
 app.get('/api/clixwall/offerwall-url', authMiddleware, clixwallHandlers.getOfferWallUrl);
 app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);

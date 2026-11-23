@@ -1,20 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { api } from '../../api/client.ts';
-import { supabase } from '../../api/supabase.ts';
+import { supabase, PASSWORD_RESET_REDIRECT_URL } from '../../api/supabase.ts';
 import { GeoLocationSelector, type GeoSingleValue } from '../common/GeoLocationSelector.tsx';
 import { X, Lock, Phone, User, Mail, ArrowRight, Shield, Eye, EyeOff, Building2, Send } from 'lucide-react';
-
-const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.vip';
-
-function resolveAuthRedirectOrigin(): string {
-  if (typeof window === 'undefined') return CANONICAL_SITE_ORIGIN;
-  const host = window.location.hostname.toLowerCase();
-  if (host === 'yemen-microtasks.vip' || host === 'www.yemen-microtasks.vip') {
-    return CANONICAL_SITE_ORIGIN;
-  }
-  return window.location.origin;
-}
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -32,6 +21,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordConfirm, setShowPasswordConfirm] = useState(false);
   const [fullName, setFullName] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [phone, setPhone] = useState('');
@@ -78,17 +68,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
           throw new Error('أدخل البريد الإلكتروني المسجل في حسابك.');
         }
         const { error: resetError } = await supabase.auth.resetPasswordForEmail(recoveryEmail, {
-          redirectTo: `${resolveAuthRedirectOrigin()}/`,
+          redirectTo: PASSWORD_RESET_REDIRECT_URL,
         });
         if (resetError) throw resetError;
-        setSuccessMessage('إذا كان البريد مسجلاً، فستصلك رسالة تحتوي رابطاً آمناً لإعادة تعيين كلمة المرور. تحقق من الوارد والرسائل غير المرغوب فيها.');
+        setSuccessMessage('إذا كان البريد مسجلاً، فستصلك رسالة تحتوي رابطاً آمناً لإعادة تعيين كلمة المرور على النطاق الرسمي. تحقق من الوارد والرسائل غير المرغوب فيها.');
         return;
       } else if (mode === 'reset') {
         if (password.length < 8) throw new Error('يجب أن تتكون كلمة المرور الجديدة من 8 أحرف على الأقل.');
         if (password !== passwordConfirm) throw new Error('تأكيد كلمة المرور غير مطابق.');
         const { data: userData } = await supabase.auth.getUser();
-        const { error: updateError } = await supabase.auth.updateUser({ password });
-        if (updateError) throw updateError;
+        const { data: updatedData, error: updateError } = await supabase.auth.updateUser({ password });
+        if (updateError || !updatedData?.user) {
+          throw updateError || new Error('تعذر تحديث كلمة المرور.');
+        }
         const recoveredEmail = userData.user?.email || '';
         await supabase.auth.signOut({ scope: 'local' });
         setPassword('');
@@ -164,6 +156,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                 ? 'بوابة دخول مالك المنصة المعتمد'
                 : mode === 'login'
                 ? 'تسجيل الدخول إلى Yemen Task'
+                : mode === 'forgot'
+                ? 'استعادة كلمة المرور'
+                : mode === 'reset'
+                ? 'تعيين كلمة مرور جديدة'
                 : userType === 'advertiser'
                 ? 'إنشاء حساب معلن جديد'
                 : 'إنشاء حساب مستخدم جديد'}
@@ -173,6 +169,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
                 ? 'تسجيل الدخول الحصري المخصص للمشرف ومالك النظام'
                 : mode === 'login'
                 ? 'أدخل بيانات حسابك للانتقال مباشرة إلى لوحة حسابك'
+                : mode === 'forgot'
+                ? 'أدخل بريدك الإلكتروني لإرسال رابط آمن لإعادة تعيين كلمة المرور'
+                : mode === 'reset'
+                ? 'أدخل كلمة المرور الجديدة وتأكيدها لحسابك'
                 : userType === 'advertiser'
                 ? 'إدارة الحملات الإعلانية الممولة والترويج لأنشطتك'
                 : 'انضم للمنصة وابدأ في إنجاز المهام وكسب الريال اليمني'}
@@ -401,7 +401,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, defaultMo
           {mode === 'reset' && (
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">تأكيد كلمة المرور الجديدة</label>
-              <input type="password" required minLength={8} value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} placeholder="أعد كتابة كلمة المرور" className="w-full px-3 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100" />
+              <div className="relative">
+                <Lock className="absolute right-3 top-2.5 w-4 h-4 text-slate-400" />
+                <input
+                  type={showPasswordConfirm ? 'text' : 'password'}
+                  required
+                  minLength={8}
+                  value={passwordConfirm}
+                  onChange={(e) => setPasswordConfirm(e.target.value)}
+                  placeholder="أعد كتابة كلمة المرور"
+                  className="w-full pr-9 pl-10 py-2 text-xs sm:text-sm bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-slate-100 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordConfirm(!showPasswordConfirm)}
+                  className="absolute left-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 focus:outline-none"
+                  aria-label={showPasswordConfirm ? 'إخفاء تأكيد كلمة المرور' : 'إظهار تأكيد كلمة المرور'}
+                >
+                  {showPasswordConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
           )}
 
