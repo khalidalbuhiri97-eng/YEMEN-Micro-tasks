@@ -1319,7 +1319,10 @@ export const YtCoinAdminView: React.FC = () => {
                             </div>
                           </td>
                           <td className="py-2.5 px-4 font-mono tabular-nums font-bold text-slate-900 dark:text-white">
-                            {formatNum(balYt)} YT
+                            <div>{formatNum(balYt)} YT</div>
+                            <div className="mt-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                              {formatPartsLabel(acc.balance_units ?? Math.round(balYt * parsed.unitScale))}
+                            </div>
                           </td>
                           <td className="py-2.5 px-4 font-mono tabular-nums text-emerald-700 dark:text-emerald-400 font-bold">
                             {formatNum(lifeYt)} YT
