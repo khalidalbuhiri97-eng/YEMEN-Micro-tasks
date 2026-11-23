@@ -677,18 +677,20 @@ export const YtCoinAdminView: React.FC = () => {
           {integrityMigrationRequired ? (
             <p className="text-[11px]">{integrityMessage}</p>
           ) : integrity ? (
-            <p className="text-[11px] font-mono">
-              {integrity.isBalanced ? 'متوازن 100% ✓' : 'غير متوازن!'} • المعاملات:{' '}
-              {Number(integrity.totalPostedJournalTx ?? 0).toLocaleString('en-US')} • المدين:{' '}
-              {formatPartsLabel(integrity.totalDebitUnits ?? 0)} • الدائن:{' '}
-              {formatPartsLabel(integrity.totalCreditUnits ?? 0)}
-            </p>
-            {integrity.adRewards && (
-              <p className="text-[11px] font-mono mt-1">
-                مكافآت الإعلانات — النقر: {Number(integrity.adRewards.click?.events ?? 0).toLocaleString('en-US')} حدث / {formatPartsLabel(integrity.adRewards.click?.rewardParts ?? 0)}،
-                المشاهدة: {Number(integrity.adRewards.view?.events ?? 0).toLocaleString('en-US')} حدث / {formatPartsLabel(integrity.adRewards.view?.rewardParts ?? 0)}
+            <>
+              <p className="text-[11px] font-mono">
+                {integrity.isBalanced ? 'متوازن 100% ✓' : 'غير متوازن!'} • المعاملات:{' '}
+                {Number(integrity.totalPostedJournalTx ?? 0).toLocaleString('en-US')} • المدين:{' '}
+                {formatPartsLabel(integrity.totalDebitUnits ?? 0)} • الدائن:{' '}
+                {formatPartsLabel(integrity.totalCreditUnits ?? 0)}
               </p>
-            )}
+              {integrity.adRewards && (
+                <p className="text-[11px] font-mono mt-1">
+                  مكافآت الإعلانات — النقر: {Number(integrity.adRewards.click?.events ?? 0).toLocaleString('en-US')} حدث / {formatPartsLabel(integrity.adRewards.click?.rewardParts ?? 0)}،
+                  المشاهدة: {Number(integrity.adRewards.view?.events ?? 0).toLocaleString('en-US')} حدث / {formatPartsLabel(integrity.adRewards.view?.rewardParts ?? 0)}
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-[11px] text-slate-500">
               {integrityMessage || 'اضغط لفحص توازن قيود دفتر YT Coin في قاعدة البيانات.'}
