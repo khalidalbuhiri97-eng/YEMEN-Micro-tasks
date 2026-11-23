@@ -93,7 +93,7 @@ export const DEFAULT_COMFORT_SETTINGS: AdCenterComfortSettings = {
   maxAnimatedAdsInView: 1,
   cooldownAfterDismissSec: 120,
   minSpacingPx: 16,
-  pushAdsEnabled: true,
+  pushAdsEnabled: false,
   defaultSessionTtlSec: 900,
   defaultMaxDailyPerUser: 25,
   trackingEnabledByFormat: {
@@ -112,7 +112,7 @@ export const DEFAULT_COMFORT_SETTINGS: AdCenterComfortSettings = {
     vertical_video: true,
     recommendation_widget: true,
     native_cards: true,
-    push_notification: true,
+    push_notification: false,
     multi_format: true,
     external_link: true,
   },
@@ -457,7 +457,7 @@ export function mapComfortRow(row: any): AdCenterComfortSettings {
     maxAnimatedAdsInView: Math.max(0, Math.min(3, Number(row.max_animated_ads_in_view ?? row.maxAnimatedAdsInView ?? 1))),
     cooldownAfterDismissSec: Math.max(0, Math.min(86400, Number(row.cooldown_after_dismiss_sec ?? row.cooldownAfterDismissSec ?? 120))),
     minSpacingPx: Math.max(8, Math.min(96, Number(row.min_spacing_px ?? row.minSpacingPx ?? 16))),
-    pushAdsEnabled: Boolean(row.push_ads_enabled ?? row.pushAdsEnabled ?? true),
+    pushAdsEnabled: Boolean(row.push_ads_enabled ?? row.pushAdsEnabled ?? false),
     defaultSessionTtlSec: Math.max(60, Math.min(7200, Number(row.default_session_ttl_sec ?? row.defaultSessionTtlSec ?? 900))),
     defaultMaxDailyPerUser: Math.max(0, Math.min(500, Number(row.default_max_daily_per_user ?? row.defaultMaxDailyPerUser ?? 25))),
     trackingEnabledByFormat:

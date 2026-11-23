@@ -129,8 +129,10 @@ CREATE INDEX IF NOT EXISTS idx_mining_ad_templates_lookup
 
 -- 3. Row-Level Security & Grants
 GRANT SELECT ON public.mining_ad_placements TO anon, authenticated;
+GRANT SELECT ON public.mining_ad_placements TO anon, authenticated;
 GRANT ALL ON public.mining_ad_placements TO authenticated, service_role;
 
+GRANT SELECT ON public.mining_ad_templates TO anon, authenticated;
 GRANT SELECT ON public.mining_ad_templates TO anon, authenticated;
 GRANT ALL ON public.mining_ad_templates TO authenticated, service_role;
 
@@ -200,7 +202,8 @@ END;
 $function$;
 
 REVOKE ALL ON FUNCTION public.increment_mining_ad_impression(UUID) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.increment_mining_ad_impression(UUID) TO anon, authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION public.increment_mining_ad_impression(UUID) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.increment_mining_ad_impression(UUID) TO service_role;
 
 -- 5. Seed ONLY Structural Ad Placements (Zero dummy or test ads in mining_ad_templates)
 INSERT INTO public.mining_ad_placements (
