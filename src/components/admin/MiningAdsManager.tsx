@@ -548,7 +548,7 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       rewardEventType: 'view',
       isDismissible: true,
       trackingEnabled: false,
-      isActive: true,
+      isActive: false,
       verificationMode: 'impression_only',
       requiredWatchSec: '0',
       requireActiveVisibility: false,
