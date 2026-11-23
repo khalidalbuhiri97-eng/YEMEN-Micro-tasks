@@ -3,9 +3,22 @@
  */
 
 import type {
+  AdCenterComfortSettings,
+  AdCompletionRule,
   AdPartner,
   AdPartnerCodeType,
   AdPartnerRotationMode,
+  AdTrackingEventName,
+  AdTrackingSessionRecord,
+  AdminAdTrackingReport,
+  MiningAdDeviceTarget,
+  MiningAdFormat,
+  MiningAdPageScope,
+  MiningAdPlacement,
+  MiningAdSlotType,
+  MiningAdTemplate,
+  MiningAdTemplateType,
+  PushAdPreference,
   SmartLinkAttempt,
   SurveyAttempt,
   SurveyItem,
@@ -947,6 +960,237 @@ export const api = {
     request<{ success: boolean; storageMode?: string }>(`/admin/ad-partners/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
+
+  // Mining Ad Center (Placements, Templates, Comfort Settings & Server-Side Tracking)
+  getPublicMiningAds: (filters?: {
+    placementKey?: string;
+    pageScope?: string;
+    templateType?: string;
+    deviceType?: 'desktop' | 'mobile';
+  }) => {
+    const params = new URLSearchParams();
+    if (filters?.placementKey) params.set('placementKey', filters.placementKey);
+    if (filters?.pageScope) params.set('pageScope', filters.pageScope);
+    if (filters?.templateType) params.set('templateType', filters.templateType);
+    if (filters?.deviceType) params.set('deviceType', filters.deviceType);
+    const qs = params.toString();
+    return request<{
+      placements: MiningAdPlacement[];
+      templates: MiningAdTemplate[];
+      comfortSettings?: AdCenterComfortSettings;
+      storageMode?: 'supabase' | 'unmigrated';
+    }>(`/mining-ads/public${qs ? `?${qs}` : ''}`);
+  },
+  trackMiningAdImpression: (templateId: string) =>
+    request<{ tracked: boolean; impressionsCount: number }>('/mining-ads/impression', {
+      method: 'POST',
+      body: JSON.stringify({ templateId }),
+    }),
+  startAdTrackingSession: (payload: {
+    templateId: string;
+    deviceType: 'desktop' | 'mobile';
+    ytAdSessionId?: string | null;
+  }) =>
+    request<{
+      session: AdTrackingSessionRecord;
+      sessionToken: string;
+      trackingEnabled: boolean;
+    }>('/ad-tracking/session/start', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  sendAdTrackingHeartbeat: (
+    sessionId: string,
+    payload: { sessionToken?: string; isVisible: boolean; clientElapsedSec: number }
+  ) =>
+    request<{ session: AdTrackingSessionRecord }>(
+      `/ad-tracking/session/${encodeURIComponent(sessionId)}/heartbeat`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  sendAdTrackingEvent: (
+    sessionId: string,
+    payload: {
+      sessionToken?: string;
+      eventName: AdTrackingEventName;
+      isVisible?: boolean;
+      clientElapsedSec?: number;
+      metadata?: Record<string, any>;
+    }
+  ) =>
+    request<{ session: AdTrackingSessionRecord }>(
+      `/ad-tracking/session/${encodeURIComponent(sessionId)}/event`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  completeAdTrackingSession: (
+    sessionId: string,
+    payload: { sessionToken?: string; isVisible?: boolean }
+  ) =>
+    request<{ completed: boolean; session: AdTrackingSessionRecord; message: string }>(
+      `/ad-tracking/session/${encodeURIComponent(sessionId)}/complete`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  getMyAdTrackingHistory: () =>
+    request<{ sessions: AdTrackingSessionRecord[]; storageMode?: 'supabase' | 'unmigrated' }>(
+      '/ad-tracking/history'
+    ),
+  getMyPushAdPreference: () =>
+    request<{ preference: PushAdPreference; storageMode?: 'supabase' | 'unmigrated' }>(
+      '/ad-tracking/push-preference'
+    ),
+  updateMyPushAdPreference: (payload: { optedIn: boolean; frequencyPerDay?: number }) =>
+    request<{ success: boolean; preference: PushAdPreference; storageMode?: 'supabase' }>(
+      '/ad-tracking/push-preference',
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    ),
+  getAdminMiningAds: () =>
+    request<{
+      placements: MiningAdPlacement[];
+      templates: MiningAdTemplate[];
+      comfortSettings?: AdCenterComfortSettings;
+      completionRules?: AdCompletionRule[];
+      storageMode?: 'supabase' | 'unmigrated';
+    }>('/admin/mining-ads'),
+  upsertAdminMiningAdPlacement: (payload: {
+    id?: string;
+    placementKey: string;
+    titleAr: string;
+    descriptionAr?: string | null;
+    pageScope: MiningAdPageScope;
+    slotType: MiningAdSlotType;
+    defaultWidth?: number;
+    defaultHeight?: number;
+    maxAds?: number;
+    sortOrder?: number;
+    isActive?: boolean;
+  }) =>
+    request<{ success: boolean; placement: MiningAdPlacement; storageMode?: string }>(
+      payload.id
+        ? `/admin/mining-ads/placements/${encodeURIComponent(payload.id)}`
+        : '/admin/mining-ads/placements',
+      {
+        method: payload.id ? 'PUT' : 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  deleteAdminMiningAdPlacement: (id: string) =>
+    request<{ success: boolean; storageMode?: string }>(
+      `/admin/mining-ads/placements/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    ),
+  createAdminMiningAdTemplate: (payload: {
+    title: string;
+    placementKey: string;
+    templateType: MiningAdTemplateType;
+    adFormat?: MiningAdFormat;
+    deviceTarget?: MiningAdDeviceTarget;
+    sourceName?: string;
+    codeContent?: string;
+    targetUrl?: string | null;
+    mediaUrl?: string | null;
+    vastUrl?: string | null;
+    ctaLabel?: string | null;
+    width?: number;
+    height?: number;
+    priority?: number;
+    sortOrder?: number;
+    maxImpressions?: number;
+    ytNetworkKey?: string | null;
+    rewardEventType?: 'view' | 'click' | null;
+    isDismissible?: boolean;
+    trackingEnabled?: boolean;
+    isActive?: boolean;
+    completionRule?: Partial<AdCompletionRule> | null;
+  }) =>
+    request<{ success: boolean; template: MiningAdTemplate; storageMode?: string }>(
+      '/admin/mining-ads/templates',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+  updateAdminMiningAdTemplate: (
+    id: string,
+    payload: Partial<{
+      title: string;
+      placementKey: string;
+      templateType: MiningAdTemplateType;
+      adFormat: MiningAdFormat;
+      deviceTarget: MiningAdDeviceTarget;
+      sourceName: string;
+      codeContent: string;
+      targetUrl: string | null;
+      mediaUrl: string | null;
+      vastUrl: string | null;
+      ctaLabel: string | null;
+      width: number;
+      height: number;
+      priority: number;
+      sortOrder: number;
+      maxImpressions: number;
+      ytNetworkKey: string | null;
+      rewardEventType: 'view' | 'click' | null;
+      isDismissible: boolean;
+      trackingEnabled: boolean;
+      isActive: boolean;
+      completionRule: Partial<AdCompletionRule> | null;
+    }>
+  ) =>
+    request<{ success: boolean; template: MiningAdTemplate; storageMode?: string }>(
+      `/admin/mining-ads/templates/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    ),
+  deleteAdminMiningAdTemplate: (id: string) =>
+    request<{ success: boolean; storageMode?: string }>(
+      `/admin/mining-ads/templates/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }
+    ),
+  saveAdminAdComfortSettings: (payload: Partial<AdCenterComfortSettings>) =>
+    request<{ success: boolean; comfortSettings: AdCenterComfortSettings; storageMode?: string }>(
+      '/admin/mining-ads/comfort-settings',
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    ),
+  saveAdminAdFormatRule: (payload: Partial<AdCompletionRule> & { adFormat: MiningAdFormat }) =>
+    request<{ success: boolean; rule: AdCompletionRule; storageMode?: string }>(
+      '/admin/mining-ads/completion-rules/format',
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }
+    ),
+  getAdminAdTrackingReports: (filters?: {
+    dateFrom?: string;
+    dateTo?: string;
+    networkKey?: string;
+    adFormat?: string;
+    userId?: string;
+  }) => {
+    const params = new URLSearchParams();
+    if (filters?.dateFrom) params.set('dateFrom', filters.dateFrom);
+    if (filters?.dateTo) params.set('dateTo', filters.dateTo);
+    if (filters?.networkKey) params.set('networkKey', filters.networkKey);
+    if (filters?.adFormat) params.set('adFormat', filters.adFormat);
+    if (filters?.userId) params.set('userId', filters.userId);
+    const qs = params.toString();
+    return request<AdminAdTrackingReport>(`/admin/mining-ads/reports${qs ? `?${qs}` : ''}`);
+  },
 
   // Task Visual Categories, Assets & Favorites
   getTaskCategories: () =>

@@ -11,6 +11,7 @@ import { TaxManagementView } from './finance/TaxManagementView.tsx';
 import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
 import { AdPartnersManager } from './AdPartnersManager.tsx';
+import { MiningAdsManager } from './MiningAdsManager.tsx';
 import { AdminSurveysAndAssetsView } from './AdminSurveysAndAssetsView.tsx';
 import { YtCoinAdminView } from './YtCoinAdminView.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
@@ -49,7 +50,7 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'yt_coin' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'mining_ads' | 'yt_coin' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -668,6 +669,7 @@ export const AdminDashboard: React.FC = () => {
           { id: 'taxes', label: 'إدارة الضرائب', count: null },
           { id: 'geo', label: 'الدول والتقسيمات', count: adminCountries.length || 22 },
           { id: 'ad_partners', label: 'إدارة الشركاء والإعلانات', count: null },
+          { id: 'mining_ads', label: 'إعلانات التعدين والقوالب', count: null },
           { id: 'yt_coin', label: 'خزينة وتعدين YT Coin', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
@@ -745,6 +747,9 @@ export const AdminDashboard: React.FC = () => {
 
       {/* 5C. ISOLATED AD PARTNERS MANAGER TAB */}
       {activeTab === 'ad_partners' && <AdPartnersManager />}
+
+      {/* 5C-2. MINING AD CENTER PLACEMENTS & TEMPLATES TAB */}
+      {activeTab === 'mining_ads' && <MiningAdsManager />}
 
       {activeTab === 'yt_coin' && <YtCoinAdminView />}
 

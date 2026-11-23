@@ -1230,3 +1230,279 @@ export interface ErrorAggregationGroup {
   sampleMessage: string;
   sampleCode?: string;
 }
+
+export type MiningAdTemplateType =
+  | 'html'
+  | 'javascript'
+  | 'external_link'
+  | 'video_player'
+  | 'vast_url'
+  | 'image_banner'
+  | 'recommendation_widget'
+  | 'network_code'
+  | 'multi_format'
+  | 'push_notification'
+  | 'mixed';
+
+export type MiningAdFormat =
+  | 'banner'
+  | 'popunder'
+  | 'instant_message'
+  | 'sticky_banner'
+  | 'desktop_interstitial'
+  | 'mobile_banner'
+  | 'mobile_sticky_banner'
+  | 'mobile_interstitial'
+  | 'instream_video'
+  | 'invideo_banner'
+  | 'video_slider'
+  | 'outstream_video'
+  | 'vertical_video'
+  | 'recommendation_widget'
+  | 'native_cards'
+  | 'push_notification'
+  | 'multi_format'
+  | 'external_link';
+
+export type MiningAdDeviceTarget = 'all' | 'desktop' | 'mobile';
+
+export type MiningAdSlotType =
+  | 'banner'
+  | 'between_tasks'
+  | 'horizontal_strip'
+  | 'video'
+  | 'image'
+  | 'link'
+  | 'mixed'
+  | 'recommendation'
+  | 'sticky'
+  | 'native'
+  | 'push'
+  | 'popunder'
+  | 'extensible';
+
+export type MiningAdPageScope =
+  | 'all'
+  | 'mining_home'
+  | 'mining_tasks'
+  | 'banner_ads'
+  | 'recommendation_ads'
+  | 'video_ads'
+  | 'link_ads'
+  | 'mixed_ads'
+  | 'push_notifications'
+  | 'ad_templates'
+  | 'ads_history';
+
+export type AdVerificationMode =
+  | 'dwell'
+  | 'vast'
+  | 'link_return'
+  | 's2s_postback'
+  | 'impression_only';
+
+export type AdVastEventName =
+  | 'impression'
+  | 'start'
+  | 'firstQuartile'
+  | 'midpoint'
+  | 'thirdQuartile'
+  | 'complete'
+  | 'clickThrough'
+  | 'error';
+
+export type AdTrackingEventName =
+  | 'impression'
+  | 'view_start'
+  | 'heartbeat'
+  | 'visibility_hidden'
+  | 'visibility_visible'
+  | 'vast_impression'
+  | 'vast_start'
+  | 'vast_firstQuartile'
+  | 'vast_midpoint'
+  | 'vast_thirdQuartile'
+  | 'vast_complete'
+  | 'vast_clickThrough'
+  | 'vast_error'
+  | 'click'
+  | 'external_open'
+  | 'external_return'
+  | 'dismiss'
+  | 'complete_attempt'
+  | 'complete_verified'
+  | 'complete_rejected'
+  | 'reward_approved'
+  | 'reward_rejected'
+  | 'error';
+
+export interface MiningAdPlacement {
+  id: string;
+  placementKey: string;
+  titleAr: string;
+  descriptionAr?: string | null;
+  pageScope: MiningAdPageScope;
+  slotType: MiningAdSlotType;
+  defaultWidth: number;
+  defaultHeight: number;
+  maxAds: number;
+  sortOrder: number;
+  isActive: boolean;
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdCompletionRule {
+  id?: string;
+  templateId?: string | null;
+  adFormat?: MiningAdFormat | null;
+  trackingEnabled: boolean;
+  verificationMode: AdVerificationMode;
+  requiredWatchSec: number;
+  requireActiveVisibility: boolean;
+  requiredVastEvents: string[];
+  requireLinkReturn: boolean;
+  requireServerPostback: boolean;
+  sessionTtlSec: number;
+  maxDailyPerUser: number;
+  frequencyCapMinutes: number;
+}
+
+export interface MiningAdTemplate {
+  id: string;
+  title: string;
+  placementKey: string;
+  templateType: MiningAdTemplateType;
+  adFormat: MiningAdFormat;
+  deviceTarget: MiningAdDeviceTarget;
+  sourceName: string;
+  codeContent: string;
+  targetUrl?: string | null;
+  mediaUrl?: string | null;
+  vastUrl?: string | null;
+  ctaLabel?: string | null;
+  width: number;
+  height: number;
+  priority: number;
+  sortOrder: number;
+  maxImpressions: number;
+  impressionsCount: number;
+  ytNetworkKey?: string | null;
+  rewardEventType?: 'view' | 'click' | null;
+  isDismissible: boolean;
+  trackingEnabled: boolean;
+  isActive: boolean;
+  completionRule?: AdCompletionRule | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdCenterComfortSettings {
+  popunderAutoDisabled: boolean;
+  maxStickyAds: number;
+  maxAnimatedAdsInView: number;
+  cooldownAfterDismissSec: number;
+  minSpacingPx: number;
+  pushAdsEnabled: boolean;
+  defaultSessionTtlSec: number;
+  defaultMaxDailyPerUser: number;
+  trackingEnabledByFormat: Record<string, boolean>;
+  updatedAt?: string;
+}
+
+export interface AdTrackingSessionRecord {
+  id: string;
+  userId: string | null;
+  templateId: string | null;
+  templateTitle?: string | null;
+  placementKey: string;
+  networkKey: string | null;
+  adFormat: MiningAdFormat | string;
+  deviceType: 'desktop' | 'mobile';
+  verificationMode: AdVerificationMode;
+  requiredWatchSec: number;
+  startedAt: string;
+  lastActivityAt: string;
+  activeDurationSec: number;
+  exitAt: string | null;
+  returnAt: string | null;
+  vastMilestones: string[];
+  sessionStatus: 'started' | 'active' | 'left_to_external' | 'returned' | 'completed' | 'rejected' | 'expired';
+  verificationStatus: 'pending' | 'verified' | 'failed' | 'flagged';
+  eligibilityResult: 'pending' | 'eligible_tracking_only' | 'eligible_for_yt_reward' | 'credited' | 'rejected';
+  rejectionReason: string | null;
+  ytAdSessionId: string | null;
+  ytRewardClaimId: string | null;
+  expiresAt: string;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+export interface AdTrackingRiskFlag {
+  id: string;
+  sessionId: string | null;
+  userId: string | null;
+  templateId: string | null;
+  flagType:
+    | 'premature_complete'
+    | 'visibility_bypass'
+    | 'duplicate_complete'
+    | 'forged_template_id'
+    | 'rate_limit_exceeded'
+    | 'expired_session'
+    | 'invalid_vast_sequence'
+    | 'duplicate_postback'
+    | 'velocity_anomaly';
+  severity: 'low' | 'medium' | 'high';
+  details: Record<string, any>;
+  createdAt: string;
+}
+
+export interface PushAdPreference {
+  optedIn: boolean;
+  frequencyPerDay: number;
+  optedInAt?: string | null;
+  optedOutAt?: string | null;
+}
+
+export interface AdminAdTrackingReport {
+  storageMode: 'supabase' | 'unmigrated';
+  totals: {
+    impressions: number;
+    viewStarts: number;
+    completedViews: number;
+    incompleteViews: number;
+    clicks: number;
+    externalOpens: number;
+    externalReturns: number;
+    rejectedSessions: number;
+    expiredSessions: number;
+    approvedRewards: number;
+    rejectedRewards: number;
+    riskFlagsCount: number;
+    completionRatePct: number;
+    conversionRatePct: number;
+  };
+  byNetwork: Array<{
+    networkKey: string;
+    sessions: number;
+    completed: number;
+    rejected: number;
+    approvedRewards: number;
+    clicks: number;
+  }>;
+  byTemplate: Array<{
+    templateId: string;
+    title: string;
+    adFormat: string;
+    impressions: number;
+    starts: number;
+    completed: number;
+    rejected: number;
+    completionRatePct: number;
+  }>;
+  recentSessions: AdTrackingSessionRecord[];
+  recentRiskFlags: AdTrackingRiskFlag[];
+}
+

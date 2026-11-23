@@ -43,6 +43,15 @@ import {
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
+import type { AdCenterComfortSettings, MiningAdPlacement, MiningAdTemplate } from '../../types/index.ts';
+import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
+import { MiningAdSlot, detectCurrentDeviceType } from '../mining/MiningAdSandboxRenderer.tsx';
+import {
+  MiningAdsCenterSubPages,
+  MINING_CENTER_SUBPAGES,
+  type MiningCenterSubPageId,
+} from '../mining/MiningAdsCenterSubPages.tsx';
+import { MiningAdsManager } from '../admin/MiningAdsManager.tsx';
 import {
   formatPartsLabel,
   formatYt,
@@ -652,7 +661,7 @@ function formatCountdown(secondsTotal: number): string {
 
 const PAGE_TITLES: Record<TabId, string> = {
   home: 'منجم عملة YT Coin الرقمية',
-  tasks: 'مركز المهام والمكافآت اليومية',
+  tasks: 'مركز الإعلانات ومهمات التعدين',
   wallet: 'محفظة YT Coin الرقمية',
   dashboard: 'لوحة الإحصائيات ونمو المعروض',
   admin: 'لوحة الإدارة وضبط إعدادات المنجم',
@@ -670,6 +679,12 @@ export const YtCoinMiningCard: React.FC<{
   const [claiming, setClaiming] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>('home');
+  const [miningSubPage, setMiningSubPage] = useState<MiningCenterSubPageId>('mining_tasks');
+  const [adminSubSection, setAdminSubSection] = useState<'mining_config' | 'ad_center'>('mining_config');
+  const [miningPlacements, setMiningPlacements] = useState<MiningAdPlacement[]>([]);
+  const [miningTemplates, setMiningTemplates] = useState<MiningAdTemplate[]>([]);
+  const [comfortSettings, setComfortSettings] = useState<AdCenterComfortSettings | undefined>(undefined);
+  const [miningAdsLoading, setMiningAdsLoading] = useState<boolean>(false);
   const [nowTs, setNowTs] = useState<number>(() => Date.now());
   const [loadedAtTs, setLoadedAtTs] = useState<number>(() => Date.now());
   const [isRefreshingSpin, setIsRefreshingSpin] = useState<boolean>(false);
@@ -777,9 +792,44 @@ export const YtCoinMiningCard: React.FC<{
     [user]
   );
 
+  const loadMiningAds = useCallback(async () => {
+    setMiningAdsLoading(true);
+    const cacheKey = 'mining_ads_public_v2';
+    try {
+      const res = await api.getPublicMiningAds({ deviceType: detectCurrentDeviceType() });
+      const nextPlacements = Array.isArray(res?.placements) ? res.placements : [];
+      const nextTemplates = Array.isArray(res?.templates) ? res.templates : [];
+      const nextComfort = res?.comfortSettings;
+      setMiningPlacements(nextPlacements);
+      setMiningTemplates(nextTemplates);
+      if (nextComfort) setComfortSettings(nextComfort);
+      saveCacheItem(cacheKey, {
+        placements: nextPlacements,
+        templates: nextTemplates,
+        comfortSettings: nextComfort,
+      }).catch(() => {});
+    } catch {
+      const cached = await getCacheItem<{
+        placements: MiningAdPlacement[];
+        templates: MiningAdTemplate[];
+        comfortSettings?: AdCenterComfortSettings;
+      }>(cacheKey);
+      if (cached?.value) {
+        setMiningPlacements(Array.isArray(cached.value.placements) ? cached.value.placements : []);
+        setMiningTemplates(Array.isArray(cached.value.templates) ? cached.value.templates : []);
+        if (cached.value.comfortSettings) setComfortSettings(cached.value.comfortSettings);
+      }
+    } finally {
+      setMiningAdsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!compact) void loadSummary(false);
-  }, [loadSummary, compact]);
+    if (!compact) {
+      void loadSummary(false);
+      void loadMiningAds();
+    }
+  }, [loadSummary, loadMiningAds, compact]);
 
   useEffect(() => {
     if (!isAdmin && activeTab === 'admin') {
@@ -939,7 +989,7 @@ export const YtCoinMiningCard: React.FC<{
   const handleRefreshData = async () => {
     setIsRefreshingSpin(true);
     window.setTimeout(() => setIsRefreshingSpin(false), 650);
-    await loadSummary(false);
+    await Promise.all([loadSummary(false), loadMiningAds()]);
     if (isAdmin && activeTab === 'admin') {
       await loadAdminData();
     }
@@ -1086,11 +1136,8 @@ export const YtCoinMiningCard: React.FC<{
   };
 
   const handleOpenWatchAd = () => {
-    if (onOpenEarnAds) {
-      onOpenEarnAds();
-      return;
-    }
-    showToast('انتقل إلى صفحة «اكسب من الإعلانات» من القائمة الرئيسية لمشاهدة الإعلانات الموثقة.', 'info');
+    setActiveTab('tasks');
+    setMiningSubPage('link_ads');
   };
 
   const handleTransferYt = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -1501,12 +1548,36 @@ export const YtCoinMiningCard: React.FC<{
             >
               <div className="flex items-center gap-3.5">
                 <ListChecks className="w-5 h-5 shrink-0" />
-                <span>المهام والمكافآت</span>
+                <span>مركز الإعلانات والمهام</span>
               </div>
               <span className="bg-amber-500 text-[#0B0E14] text-[11px] font-black px-2 py-0.5 rounded-full">
                 {activeTasksCount}
               </span>
             </button>
+
+            {/* Quick Sub-Page Tree for Mining Ad Center (Always Internal Navigation) */}
+            <div className="pr-3 space-y-1 border-r border-amber-500/15 mr-3">
+              {MINING_CENTER_SUBPAGES.map((sub) => {
+                const subActive = activeTab === 'tasks' && miningSubPage === sub.id;
+                return (
+                  <button
+                    key={sub.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('tasks');
+                      setMiningSubPage(sub.id);
+                    }}
+                    className={`w-full text-right px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                      subActive
+                        ? 'bg-amber-500/15 text-amber-300'
+                        : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+                    }`}
+                  >
+                    {sub.label}
+                  </button>
+                );
+              })}
+            </div>
 
             <button
               type="button"
@@ -1683,6 +1754,24 @@ export const YtCoinMiningCard: React.FC<{
             {/* ========================================== */}
             {activeTab === 'home' && (
               <section className="space-y-5">
+                {/* Top Mining Banner Slot (Automatically hidden if no active templates) */}
+                <MiningAdSlot
+                  placementKey="mining_top_banner"
+                  placements={miningPlacements}
+                  templates={miningTemplates}
+                  comfortSettings={comfortSettings}
+                  compact
+                />
+
+                {/* Recommendation Widget below intro (Automatically hidden when empty) */}
+                <MiningAdSlot
+                  placementKey="mining_recommendation_intro"
+                  placements={miningPlacements}
+                  templates={miningTemplates}
+                  comfortSettings={comfortSettings}
+                  compact
+                />
+
                 <div className="rounded-3xl bg-gradient-to-b from-[#171D29] to-[#111620] border border-amber-500/25 p-5 md:p-7 shadow-2xl relative overflow-hidden">
                   <div className="absolute -top-24 -left-24 w-56 h-56 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -1965,6 +2054,14 @@ export const YtCoinMiningCard: React.FC<{
                   </div>
                 </div>
 
+                {/* Arena-Below Ad Slot (Automatically hidden when empty) */}
+                <MiningAdSlot
+                  placementKey="mining_arena_below"
+                  placements={miningPlacements}
+                  templates={miningTemplates}
+                  comfortSettings={comfortSettings}
+                />
+
                 {/* 4 Quick Bottom Cards */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="bg-[#131822] border border-white/5 rounded-2xl p-3.5 flex flex-col justify-between">
@@ -2000,85 +2097,83 @@ export const YtCoinMiningCard: React.FC<{
                     <span className="text-[10px] text-gray-400 mt-1">عملية تعدين ناجحة</span>
                   </div>
                 </div>
+
+                {/* Horizontal Strip & Bottom Slots (Hidden automatically when empty) */}
+                <MiningAdSlot
+                  placementKey="mining_between_cards_strip"
+                  placements={miningPlacements}
+                  templates={miningTemplates}
+                  comfortSettings={comfortSettings}
+                  compact
+                />
+
+                {/* Quick Access Bar into All 9 Mining Ad Center Sub-Pages */}
+                <div className="rounded-2xl bg-[#131822] border border-amber-500/20 p-4 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold text-amber-400 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4" />
+                      <span>أقسام مركز إعلانات ومهمات التعدين (9 أقسام)</span>
+                    </span>
+                    <span className="text-[10px] text-gray-400">تصفح داخلي مباشر</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+                    {MINING_CENTER_SUBPAGES.map((sub) => (
+                      <button
+                        key={sub.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveTab('tasks');
+                          setMiningSubPage(sub.id);
+                        }}
+                        className="min-h-[42px] px-3 py-2 rounded-xl bg-[#0D1119] hover:bg-amber-500/15 border border-white/10 hover:border-amber-500/35 text-xs font-bold text-gray-200 hover:text-amber-300 transition-colors cursor-pointer text-center"
+                      >
+                        {sub.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <MiningAdSlot
+                  placementKey="mining_bottom_banner"
+                  placements={miningPlacements}
+                  templates={miningTemplates}
+                  comfortSettings={comfortSettings}
+                  compact
+                />
+
+                {/* Dismissible Sticky Bottom Ad Slot (Limited by comfortSettings.maxStickyAds) */}
+                <MiningAdSlot
+                  placementKey="mining_sticky_bottom"
+                  placements={miningPlacements}
+                  templates={miningTemplates}
+                  comfortSettings={comfortSettings}
+                  compact
+                />
               </section>
             )}
 
-            {/* ========================================== */}
-            {/* 2. تبويب المهام (TASKS TAB)                */}
-            {/* ========================================== */}
+            {/* ============================================================== */}
+            {/* 2. تبويب مركز الإعلانات والمهام (9 SUB-PAGES AD & TASKS CENTER) */}
+            {/* ============================================================== */}
             {activeTab === 'tasks' && (
-              <section className="space-y-5">
-                <div className="rounded-3xl bg-gradient-to-l from-[#182030] to-[#121722] border border-amber-500/25 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <h2 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
-                      <Award className="w-6 h-6 text-amber-400" />
-                      <span>مركز المهام والمكافآت اليومية</span>
-                    </h2>
-                    <p className="text-xs sm:text-sm text-gray-400 mt-1">
-                      تابع تقدمك اليومي في النقر والتعدين المباشر لعملة YT Coin.
-                    </p>
-                  </div>
-                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl px-4 py-3 text-center shrink-0">
-                    <span className="text-xs text-gray-300 block">معدل التعدين الحالي</span>
-                    <span className="text-base font-black text-amber-400 font-mono">
-                      {formatYt(effectiveClaimReward)} YT/يوم • +{formatYt(effectiveTapReward)} YT/نقرة
-                    </span>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {tasks.map((task) => {
-                    const pct = task.target ? Math.min(100, Math.round((effectiveTapsToday / task.target) * 100)) : 100;
-                    return (
-                      <div
-                        key={task.id}
-                        className="rounded-2xl bg-[#131822] border border-white/10 p-4 flex items-center justify-between gap-3 hover:border-amber-500/30 transition-all"
-                      >
-                        <div className="flex items-center gap-3.5 min-w-0">
-                          <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center text-amber-400 shrink-0">
-                            {task.id === 1 && <Calendar className="w-5 h-5" />}
-                            {task.id === 2 && <Flame className="w-5 h-5" />}
-                            {task.id === 3 && <PlayCircle className="w-5 h-5 text-sky-400" />}
-                            {task.id === 4 && <Wallet className="w-5 h-5" />}
-                          </div>
-                          <div className="min-w-0">
-                            <h4 className="font-bold text-sm text-white truncate">{task.title}</h4>
-                            <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{task.desc}</p>
-                            <span className="inline-block mt-1.5 text-xs font-extrabold text-amber-400 font-mono">
-                              +{formatYt(task.id === 3 ? effectiveAdViewReward : task.reward)} YT
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="shrink-0">
-                          {task.status === 'claimed' ? (
-                            <span className="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-emerald-500/15 text-emerald-400 text-xs font-extrabold border border-emerald-500/25">
-                              <Check className="w-3.5 h-3.5" /> مكتملة
-                            </span>
-                          ) : task.status === 'progress' ? (
-                            <div className="text-left">
-                              <span className="text-xs font-bold text-amber-400 block font-mono">
-                                {Math.min(effectiveTapsToday, task.target ?? 100)} / {task.target}
-                              </span>
-                              <div className="w-20 h-1.5 bg-white/10 rounded-full mt-1 overflow-hidden">
-                                <div className="h-full bg-amber-400" style={{ width: `${pct}%` }} />
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleClaimTask(task.id)}
-                              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-amber-500/20 text-amber-300 border border-amber-500/25 font-black text-xs transition-all cursor-pointer"
-                            >
-                              {task.id === 3 ? 'فتح الإعلانات' : task.id === 4 ? 'نسخ العنوان' : 'تنفيذ'}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
+              <MiningAdsCenterSubPages
+                activeSubPage={miningSubPage}
+                onSelectSubPage={setMiningSubPage}
+                placements={miningPlacements}
+                templates={miningTemplates}
+                comfortSettings={comfortSettings}
+                adsLoading={miningAdsLoading}
+                onRefreshAds={loadMiningAds}
+                tasks={tasks}
+                onClaimTask={handleClaimTask}
+                effectiveClaimReward={effectiveClaimReward}
+                effectiveTapReward={effectiveTapReward}
+                effectiveAdViewReward={effectiveAdViewReward}
+                effectiveAdClickReward={effectiveAdClickReward}
+                effectiveTapsToday={effectiveTapsToday}
+                onRefreshSummary={() => loadSummary(true)}
+                onOpenEarnAds={onOpenEarnAds}
+              />
             )}
 
             {/* ======================================================================== */}
@@ -2575,6 +2670,38 @@ export const YtCoinMiningCard: React.FC<{
             {/* ================================================== */}
             {activeTab === 'admin' && isAdmin && (
               <section className="space-y-5">
+                {/* Admin Sub-Section Switcher: Mining Settings vs Mining Ad Center */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAdminSubSection('mining_config')}
+                    className={`min-h-[42px] px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-colors cursor-pointer ${
+                      adminSubSection === 'mining_config'
+                        ? 'bg-amber-500 text-[#0B0E14] shadow-md'
+                        : 'bg-[#131822] text-gray-300 border border-white/10 hover:border-amber-500/30'
+                    }`}
+                  >
+                    <Sliders className="w-4 h-4" />
+                    <span>إعدادات التعدين والخزينة</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminSubSection('ad_center')}
+                    className={`min-h-[42px] px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-colors cursor-pointer ${
+                      adminSubSection === 'ad_center'
+                        ? 'bg-amber-500 text-[#0B0E14] shadow-md'
+                        : 'bg-[#131822] text-gray-300 border border-white/10 hover:border-amber-500/30'
+                    }`}
+                  >
+                    <Layers className="w-4 h-4" />
+                    <span>إدارة المساحات وقوالب الإعلانات</span>
+                  </button>
+                </div>
+
+                {adminSubSection === 'ad_center' ? (
+                  <MiningAdsManager surfaceVariant="obsidian" onChanged={() => void loadMiningAds()} />
+                ) : (
+                  <>
                 {/* Live Admin KPIs */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="rounded-2xl bg-[#131822] border border-amber-500/25 p-4">
@@ -3019,6 +3146,8 @@ export const YtCoinMiningCard: React.FC<{
                       </table>
                     </div>
                   </div>
+                )}
+                  </>
                 )}
               </section>
             )}

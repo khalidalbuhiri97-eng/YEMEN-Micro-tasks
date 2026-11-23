@@ -14,6 +14,7 @@
     "test:financial": "tsx server/financialTest.ts",
     "test:clixwall": "tsx server/clixwallTest.ts",
     "test:yt-coin": "tsx server/ytCoinTest.ts",
+    "test:ad-tracking": "tsx server/adTrackingTest.ts",
     "test:password-reset": "tsx server/passwordResetTest.ts"
   },
   "dependencies": {

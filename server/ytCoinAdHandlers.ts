@@ -261,6 +261,26 @@ export async function handleVerifiedYtCoinAdPostback(req: AuthenticatedRequest, 
     if (creditErr) throw creditErr;
 
     const result = (creditRes && typeof creditRes === 'object' ? creditRes : {}) as Record<string, any>;
+
+    // Non-blocking audit linkage to ad_provider_postbacks & ad_tracking_sessions
+    const rawTrackingId = String(payload.tracking_session_id || payload.subid2 || '').trim();
+    const trackingSessionId = UUID_REGEX.test(rawTrackingId) ? rawTrackingId : null;
+    try {
+      const { adTrackingEngine } = await import('./adTrackingService.js');
+      await adTrackingEngine.recordVerifiedPostbackLinkage({
+        networkKey,
+        providerEventId: externalEventId,
+        trackingSessionId,
+        ytAdSessionId: sessionId,
+        ytRewardClaimId: typeof result.claimId === 'string' && UUID_REGEX.test(result.claimId) ? result.claimId : null,
+        userId,
+        signatureValid: true,
+        sanitizedPayload: sanitizedMeta,
+      });
+    } catch {
+      // Do not interrupt verified YT Coin credit if tracking migration 20261127000000 is pending approval
+    }
+
     if (!result.success) {
       return res.status(422).json({
         success: false,

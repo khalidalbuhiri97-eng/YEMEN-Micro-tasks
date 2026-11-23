@@ -33,6 +33,8 @@ import {
   adminUpsertYtCoinAdNetwork,
   adminDeleteYtCoinAdNetwork,
 } from './ytCoinAdHandlers.js';
+import { miningAdsService, MigrationRequiredError } from './miningAdsService.js';
+import { adTrackingService, checkTrackingRateLimit } from './adTrackingService.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.vip').trim().replace(/\/$/, '');
@@ -4291,6 +4293,156 @@ app.get('/api/yt-coin/ads', authMiddleware, getYtCoinAdCenter);
 app.post('/api/yt-coin/ads/session', authMiddleware, createYtCoinAdSession);
 app.all('/api/postbacks/yt-coin-ads/:networkKey', handleVerifiedYtCoinAdPostback);
 
+// Mining Ad Center (Public Placements & Templates + Non-Financial Impression Counter + Ad Tracking API)
+app.get('/api/mining-ads/public', async (req: Request, res: Response) => {
+  try {
+    const placementKey = typeof req.query.placementKey === 'string' ? req.query.placementKey.trim() : undefined;
+    const pageScope = typeof req.query.pageScope === 'string' ? req.query.pageScope.trim() : undefined;
+    const templateType = typeof req.query.templateType === 'string' ? req.query.templateType.trim() : undefined;
+    const deviceType = typeof req.query.deviceType === 'string' ? req.query.deviceType.trim() : undefined;
+    const result = await miningAdsService.getPublicData({ placementKey, pageScope, templateType, deviceType });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'تعذر جلب مساحات الإعلانات لمركز التعدين.' });
+  }
+});
+
+app.post('/api/mining-ads/impression', async (req: Request, res: Response) => {
+  try {
+    const templateId = String((req.body && req.body.templateId) || '').trim();
+    if (!templateId) {
+      return res.status(400).json({ error: 'معرف القالب الإعلاني مطلوب.' });
+    }
+    const result = await miningAdsService.trackImpression(templateId);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر تسجيل المشاهدة.' });
+  }
+});
+
+// Server-Side Ad Tracking & Anti-Fraud Endpoints
+app.post('/api/ad-tracking/session/start', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rateKey = `start:${req.user.id}:${req.ip || 'ip'}`;
+    if (!checkTrackingRateLimit(rateKey, 20, 60_000)) {
+      return res.status(429).json({ error: 'تم تجاوز الحد المسموح لطلبات التتبع. يرجى الانتظار قليلاً.' });
+    }
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const templateId = String(body.templateId || '').trim();
+    const deviceType = body.deviceType === 'desktop' ? 'desktop' : 'mobile';
+    const ytAdSessionId = typeof body.ytAdSessionId === 'string' ? body.ytAdSessionId.trim() : null;
+    const clientFingerprint = `${req.ip || ''}|${req.headers['user-agent'] || ''}`;
+    const result = await adTrackingService.engine.startSession({
+      userId: req.user.id,
+      templateId,
+      deviceType,
+      clientFingerprint,
+      ytAdSessionId,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر بدء جلسة التتبع.', migrationRequired });
+  }
+});
+
+app.post('/api/ad-tracking/session/:id/heartbeat', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rateKey = `hb:${req.user.id}:${req.params.id}`;
+    if (!checkTrackingRateLimit(rateKey, 45, 60_000)) {
+      return res.status(429).json({ error: 'معدل نبضات التتبع مرتفع جداً.' });
+    }
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const session = await adTrackingService.engine.recordHeartbeat({
+      sessionId: req.params.id,
+      userId: req.user.id,
+      sessionToken: typeof body.sessionToken === 'string' ? body.sessionToken : undefined,
+      isVisible: body.isVisible !== false,
+      clientElapsedSec: Number(body.clientElapsedSec ?? 0) || 0,
+    });
+    return res.json({ session });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر تحديث مدة البقاء.' });
+  }
+});
+
+app.post('/api/ad-tracking/session/:id/event', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rateKey = `ev:${req.user.id}`;
+    if (!checkTrackingRateLimit(rateKey, 60, 60_000)) {
+      return res.status(429).json({ error: 'تم تجاوز حد تسجيل أحداث الإعلانات.' });
+    }
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const session = await adTrackingService.engine.recordEvent({
+      sessionId: req.params.id,
+      userId: req.user.id,
+      sessionToken: typeof body.sessionToken === 'string' ? body.sessionToken : undefined,
+      eventName: String(body.eventName || '') as any,
+      isVisible: body.isVisible !== false,
+      clientElapsedSec: Number(body.clientElapsedSec ?? 0) || 0,
+      metadata: body.metadata && typeof body.metadata === 'object' ? (body.metadata as Record<string, any>) : {},
+    });
+    return res.json({ session });
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر تسجيل الحدث الإعلاني.' });
+  }
+});
+
+app.post('/api/ad-tracking/session/:id/complete', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rateKey = `cmp:${req.user.id}`;
+    if (!checkTrackingRateLimit(rateKey, 30, 60_000)) {
+      return res.status(429).json({ error: 'تم تجاوز الحد المسموح للتحقق من الإكمال.' });
+    }
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const result = await adTrackingService.engine.attemptComplete({
+      sessionId: req.params.id,
+      userId: req.user.id,
+      sessionToken: typeof body.sessionToken === 'string' ? body.sessionToken : undefined,
+      isVisible: body.isVisible !== false,
+    });
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر التحقق من إكمال الجلسة.' });
+  }
+});
+
+app.get('/api/ad-tracking/history', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const data = await adTrackingService.getUserHistory(req.user.id);
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر جلب سجل جلسات التتبع.' });
+  }
+});
+
+app.get('/api/ad-tracking/push-preference', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const data = await adTrackingService.getPushAdPreference(req.user.id, req.authToken);
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر جلب تفضيلات تنبيهات العروض.' });
+  }
+});
+
+app.put('/api/ad-tracking/push-preference', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const result = await adTrackingService.updatePushAdPreference(
+      req.user.id,
+      {
+        optedIn: Boolean(body.optedIn),
+        frequencyPerDay: body.frequencyPerDay !== undefined ? Number(body.frequencyPerDay) : undefined,
+      },
+      req.authToken
+    );
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر حفظ تفضيلات الإشعارات.', migrationRequired });
+  }
+});
+
 app.get('/api/yt-coin/lookup', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
@@ -4582,6 +4734,127 @@ app.get('/api/admin/yt-coin/integrity', adminMiddleware, async (req: Authenticat
   } catch (err: any) {
     await logSupabaseError({ err, operation: 'YT_COIN_ADMIN_INTEGRITY', apiRoute: '/api/admin/yt-coin/integrity' });
     return res.status(400).json({ error: err?.message || 'تعذر التحقق من توازن دفتر YT Coin.' });
+  }
+});
+
+// Admin Mining Ad Center Management (Placements, Templates, Comfort Settings, Tracking Rules & Real Reports)
+app.get('/api/admin/mining-ads', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const data = await miningAdsService.getAdminData(req.authToken);
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'تعذر تحميل إدارة إعلانات مركز التعدين.' });
+  }
+});
+
+app.post('/api/admin/mining-ads/placements', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.upsertPlacement(req.body || {}, req.authToken);
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر حفظ المساحة الإعلانية.', migrationRequired });
+  }
+});
+
+app.put('/api/admin/mining-ads/placements/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.upsertPlacement(
+      { ...(req.body && typeof req.body === 'object' ? req.body : {}), id: req.params.id },
+      req.authToken
+    );
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر تحديث المساحة الإعلانية.', migrationRequired });
+  }
+});
+
+app.delete('/api/admin/mining-ads/placements/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.deletePlacement(req.params.id, req.authToken);
+    return res.json(result);
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر حذف المساحة الإعلانية.', migrationRequired });
+  }
+});
+
+app.post('/api/admin/mining-ads/templates', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.createTemplate(
+      { ...(req.body && typeof req.body === 'object' ? req.body : {}), actorId: req.user.id },
+      req.authToken
+    );
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر إنشاء القالب الإعلاني.', migrationRequired });
+  }
+});
+
+app.put('/api/admin/mining-ads/templates/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.updateTemplate(
+      req.params.id,
+      req.body && typeof req.body === 'object' ? req.body : {},
+      req.authToken
+    );
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر تحديث القالب الإعلاني.', migrationRequired });
+  }
+});
+
+app.delete('/api/admin/mining-ads/templates/:id', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.deleteTemplate(req.params.id, req.authToken);
+    return res.json(result);
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر حذف القالب الإعلاني.', migrationRequired });
+  }
+});
+
+app.put('/api/admin/mining-ads/comfort-settings', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.saveComfortSettings(
+      { ...(req.body && typeof req.body === 'object' ? req.body : {}), actorId: req.user.id },
+      req.authToken
+    );
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر حفظ إعدادات الراحة والتتبع.', migrationRequired });
+  }
+});
+
+app.put('/api/admin/mining-ads/completion-rules/format', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const result = await miningAdsService.saveFormatDefaultRule(
+      req.body && typeof req.body === 'object' ? req.body : ({} as any),
+      req.authToken
+    );
+    return res.json({ success: true, ...result });
+  } catch (err: any) {
+    const migrationRequired = err instanceof MigrationRequiredError || Boolean(err?.migrationRequired);
+    return res.status(400).json({ error: err?.message || 'تعذر حفظ قاعدة التحقق الافتراضية.', migrationRequired });
+  }
+});
+
+app.get('/api/admin/mining-ads/reports', adminMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const report = await adTrackingService.getAdminReports({
+      dateFrom: typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined,
+      dateTo: typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined,
+      networkKey: typeof req.query.networkKey === 'string' ? req.query.networkKey : undefined,
+      adFormat: typeof req.query.adFormat === 'string' ? req.query.adFormat : undefined,
+      userId: typeof req.query.userId === 'string' ? req.query.userId : undefined,
+    });
+    return res.json(report);
+  } catch (err: any) {
+    return res.status(400).json({ error: err?.message || 'تعذر تحميل تقارير وتتبع الإعلانات.' });
   }
 });
 
