@@ -19,7 +19,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.warn('⚠️ تنبيه أمني: متغيرات الاتصال بـ Supabase غير مضبوطة. يرجى إضافة VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY في ملف .env أو إعدادات Vercel.');
 }
 
-export const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.vip';
+export const CANONICAL_SITE_ORIGIN = 'https://yemen-microtasks.com';
 export const PASSWORD_RESET_REDIRECT_URL = `${CANONICAL_SITE_ORIGIN}/reset-password`;
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {

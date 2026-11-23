@@ -36,7 +36,7 @@ import {
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
 const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.vip').trim().replace(/\/$/, '');
-const PASSWORD_RESET_REDIRECT_URL = 'https://yemen-microtasks.vip/reset-password';
+const PASSWORD_RESET_REDIRECT_URL = 'https://yemen-microtasks.com/reset-password';
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
 export const supabaseServer = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -276,6 +276,8 @@ const app = express();
 
 // Hardened CORS & Preflight handling (allowlist official domain, local dev, and preview origins)
 const STATIC_ALLOWED_ORIGINS = new Set<string>([
+  'https://yemen-microtasks.com',
+  'https://www.yemen-microtasks.com',
   'https://yemen-microtasks.vip',
   'https://www.yemen-microtasks.vip',
   AUTH_REDIRECT_URL,
@@ -291,7 +293,9 @@ function isAllowedCorsOrigin(origin: string, reqHost?: string): boolean {
     const hostname = parsed.hostname.toLowerCase();
     if (
       parsed.protocol === 'https:' &&
-      (hostname === 'yemen-microtasks.vip' ||
+      (hostname === 'yemen-microtasks.com' ||
+        hostname.endsWith('.yemen-microtasks.com') ||
+        hostname === 'yemen-microtasks.vip' ||
         hostname.endsWith('.yemen-microtasks.vip') ||
         hostname.endsWith('.run.app') ||
         hostname.endsWith('.vercel.app'))

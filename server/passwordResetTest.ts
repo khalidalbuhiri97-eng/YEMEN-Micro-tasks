@@ -5,7 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 
-const EXPECTED_RESET_URL = 'https://yemen-microtasks.vip/reset-password';
+const EXPECTED_RESET_URL = 'https://yemen-microtasks.com/reset-password';
 
 async function runStaticChecks() {
   console.log('1. Checking source files & redirectTo configuration...');
@@ -15,12 +15,12 @@ async function runStaticChecks() {
   assert.match(
     supabaseClientSrc,
     /PASSWORD_RESET_REDIRECT_URL\s*=\s*`\$\{CANONICAL_SITE_ORIGIN\}\/reset-password`/,
-    'src/api/supabase.ts must define PASSWORD_RESET_REDIRECT_URL = https://yemen-microtasks.vip/reset-password'
+    'src/api/supabase.ts must define PASSWORD_RESET_REDIRECT_URL = https://yemen-microtasks.com/reset-password'
   );
   assert.match(
     supabaseClientSrc,
-    /CANONICAL_SITE_ORIGIN\s*=\s*'https:\/\/yemen-microtasks\.vip'/,
-    'src/api/supabase.ts must set CANONICAL_SITE_ORIGIN to https://yemen-microtasks.vip'
+    /CANONICAL_SITE_ORIGIN\s*=\s*'https:\/\/yemen-microtasks\.com'/,
+    'src/api/supabase.ts must set CANONICAL_SITE_ORIGIN to https://yemen-microtasks.com'
   );
 
   const authModalSrc = fs.readFileSync(path.join(root, 'src/components/auth/AuthModal.tsx'), 'utf8');
@@ -51,8 +51,8 @@ async function runStaticChecks() {
   const serverAppSrc = fs.readFileSync(path.join(root, 'server/app.ts'), 'utf8');
   assert.match(
     serverAppSrc,
-    /const PASSWORD_RESET_REDIRECT_URL = 'https:\/\/yemen-microtasks\.vip\/reset-password'/,
-    'server/app.ts must define PASSWORD_RESET_REDIRECT_URL'
+    /const PASSWORD_RESET_REDIRECT_URL = 'https:\/\/yemen-microtasks\.com\/reset-password'/,
+    'server/app.ts must define PASSWORD_RESET_REDIRECT_URL = https://yemen-microtasks.com/reset-password'
   );
   assert.match(
     serverAppSrc,
@@ -104,7 +104,7 @@ async function runLiveSupabaseRecoveryFlow() {
     createdUserId = created.user.id;
     console.log('   ✔ Created disposable test user.');
 
-    // B. Verify resetPasswordForEmail accepts redirectTo = https://yemen-microtasks.vip/reset-password
+    // B. Verify resetPasswordForEmail accepts redirectTo = https://yemen-microtasks.com/reset-password
     const { error: sendResetErr } = await anonClient.auth.resetPasswordForEmail(testEmail, {
       redirectTo: EXPECTED_RESET_URL,
     });
