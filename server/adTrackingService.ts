@@ -128,11 +128,11 @@ function defaultRuleForFormat(adFormat: MiningAdFormat, settings: AdCenterComfor
     adFormat,
     trackingEnabled: settings.trackingEnabledByFormat[adFormat] !== false,
     verificationMode: isVideo ? 'vast' : isLink ? 'link_return' : 'dwell',
-    requiredWatchSec: isVideo ? 15 : isLink ? 10 : 15,
+    requiredWatchSec: isVideo ? 15 : isLink ? 0 : 15,
     requireActiveVisibility: true,
     requiredVastEvents: isVideo ? ['start', 'complete'] : [],
     requireLinkReturn: isLink,
-    requireServerPostback: false,
+    requireServerPostback: isLink,
     sessionTtlSec: settings.defaultSessionTtlSec || 900,
     maxDailyPerUser: settings.defaultMaxDailyPerUser || 25,
     frequencyCapMinutes: 0,
@@ -509,10 +509,7 @@ export class AdTrackingEngine {
       }
       patch.returnAt = nowIso;
       patch.sessionStatus = 'returned';
-      const exitMs = new Date(session.exitAt).getTime();
-      const gapSec = Math.max(0, (nowMs - exitMs) / 1000);
-      // Note: exit-to-return gap records approximate time away, capped cleanly
-      patch.activeDurationSec = Number(Math.max(session.activeDurationSec, Math.min(gapSec, 600)).toFixed(2));
+      // External time is not counted as visible dwell; only a verified provider postback can qualify the reward.
     }
 
     // Credit active time on non-paused heartbeat-like visible events
