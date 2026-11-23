@@ -232,7 +232,7 @@ export function formatYt(value: number | string | null | undefined, maxDecimals 
   const neg = fixed.startsWith('-') && !rounded.isZero();
   const unsigned = fixed.startsWith('-') ? fixed.slice(1) : fixed;
   const [intPart, fracPart = ''] = unsigned.split('.');
-  const groupedInt = intPart.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+  const groupedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return `${neg ? '-' : ''}${groupedInt}${clampedDecimals > 0 ? `.${fracPart}` : ''}`;
 }
 
