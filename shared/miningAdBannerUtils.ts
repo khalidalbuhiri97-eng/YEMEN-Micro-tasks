@@ -44,7 +44,12 @@ export function isDisplayBannerTemplate(
   if (DISPLAY_BANNER_FORMATS.has(template.adFormat)) return true;
   const src = String(template.sourceName || '').toLowerCase();
   const code = String(template.codeContent || '').toLowerCase();
-  return src.includes('exoclick') || code.includes('magsrv.com') || code.includes('eas6a97888e2');
+  // Even if mis-tagged as video, ExoClick banner/provider scripts must stay Display-only
+  if (code.includes('magsrv.com/ad-provider.js') || code.includes('eas6a97888e2')) {
+    return true;
+  }
+  if (REWARD_ELIGIBLE_AD_FORMATS.has(template.adFormat)) return false;
+  return src.includes('exoclick') || code.includes('magsrv.com');
 }
 
 export function isRewardEligibleTemplate(template: {
@@ -132,6 +137,40 @@ export function buildMiningAdSrcDoc(
     var resolved = false;
     var obs = null;
 
+    // Sandboxed srcdoc iframes with opaque origin throw SecurityError on document.cookie writes.
+    // ExoClick ad-provider.js calls He() -> document.cookie = ... without try/catch right before rendering zones.
+    try {
+      var __nativeCookiesOk = false;
+      try {
+        void document.cookie;
+        __nativeCookiesOk = true;
+      } catch (e) {
+        __nativeCookiesOk = false;
+      }
+      if (!__nativeCookiesOk) {
+        var __memCookieJar = {};
+        Object.defineProperty(document, 'cookie', {
+          configurable: true,
+          get: function () {
+            return Object.keys(__memCookieJar)
+              .map(function (k) { return k + '=' + __memCookieJar[k]; })
+              .join('; ');
+          },
+          set: function (val) {
+            try {
+              var firstPart = String(val || '').split(';')[0] || '';
+              var eqIdx = firstPart.indexOf('=');
+              if (eqIdx > 0) {
+                var cname = firstPart.slice(0, eqIdx).trim();
+                var cval = firstPart.slice(eqIdx + 1).trim();
+                if (cname) __memCookieJar[cname] = cval;
+              }
+            } catch (e) {}
+          }
+        });
+      }
+    } catch (e) {}
+
     function notify(status, detail) {
       try {
         if (window.parent && window.parent !== window) {
@@ -146,22 +185,26 @@ export function buildMiningAdSrcDoc(
     function checkFilled() {
       if (resolved) return;
       var ins = document.querySelector('ins[data-zoneid]');
-      if (!ins) return;
-      var hasCreative =
-        ins.children.length > 0 ||
-        Boolean(ins.querySelector('iframe, img, a, canvas, video, svg')) ||
-        ins.innerHTML.trim().length > 0;
-      if (hasCreative) {
+      var body = document.body;
+      var hasInsElementCreative = Boolean(
+        ins &&
+        (Boolean(ins.querySelector('iframe, img, a[href], canvas, video, svg')) ||
+          ins.children.length > 0)
+      );
+      // ExoClick ad-provider.js inserts a sibling <div> before <ins> and mounts creative tags (a/img/iframe) inside it
+      var hasBodyCreative = Boolean(
+        body && body.querySelector('iframe, img, a[href], canvas, video, svg')
+      );
+      if (hasInsElementCreative || hasBodyCreative) {
         resolved = true;
         if (obs) obs.disconnect();
         notify('loaded', 'creative_rendered');
       }
     }
 
-    var insEl = document.querySelector('ins[data-zoneid]');
-    if (insEl && typeof MutationObserver !== 'undefined') {
+    if (document.body && typeof MutationObserver !== 'undefined') {
       obs = new MutationObserver(checkFilled);
-      obs.observe(insEl, { childList: true, subtree: true });
+      obs.observe(document.body, { childList: true, subtree: true, attributes: true });
     }
 
     if (!document.querySelector('script[data-yt-exoclick="1"], script[src*="a.magsrv.com/ad-provider.js"]')) {
@@ -178,7 +221,7 @@ export function buildMiningAdSrcDoc(
         }
       };
       s.onload = function () {
-        setTimeout(checkFilled, 350);
+        setTimeout(checkFilled, 400);
       };
       document.head.appendChild(s);
     }
@@ -195,7 +238,7 @@ export function buildMiningAdSrcDoc(
         if (obs) obs.disconnect();
         notify('failed', 'no_fill_timeout');
       }
-    }, 8000);
+    }, 12000);
   })();
 </script>`;
     }
@@ -226,12 +269,12 @@ export function buildMiningAdSrcDoc(
     html, body {
       width: 100%;
       height: 100%;
-      overflow: hidden;
+      overflow: ${isExoClick ? 'auto' : 'hidden'};
       display: flex;
       justify-content: center;
       align-items: center;
-      background: #0B0E14;
-      color: #F3F4F6;
+      background: ${isExoClick ? '#FFFFFF' : '#0B0E14'};
+      color: ${isExoClick ? '#111827' : '#F3F4F6'};
       font-family: system-ui, -apple-system, sans-serif;
     }
     img, iframe, video, ins { max-width: 100%; max-height: 100%; border: 0; }

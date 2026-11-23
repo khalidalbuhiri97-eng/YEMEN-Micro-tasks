@@ -181,6 +181,8 @@ const EXOCLICK_BANNER_CODE = `<script async type="application/javascript" src="h
 <ins class="eas6a97888e2" data-zoneid="6104102"></ins>
 <script>(AdProvider = window.AdProvider || []).push({"serve": {}});</script>`;
 
+const EXOCLICK_VIDEO_VAST_URL = 'https://s.magsrv.com/v1/vast.php?idz=6104150';
+
 function defaultVerificationForFormat(adFormat: MiningAdFormat): AdVerificationMode {
   if (DISPLAY_BANNER_FORMATS.has(adFormat)) {
     return 'impression_only';
@@ -552,6 +554,55 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
       verificationMode: 'impression_only',
       requiredWatchSec: '0',
       requireActiveVisibility: false,
+      requireLinkReturn: false,
+      requireServerPostback: false,
+    });
+    setTplError('');
+    setShowInlinePreview(false);
+    setTplModalOpen(true);
+  };
+
+  const openExoClickVideoPreset = () => {
+    const existing = templates.find(
+      (t) =>
+        (t.vastUrl || '').includes('6104150') ||
+        t.title.trim() === 'YemenTask_Video_VAST_6104150'
+    );
+    if (existing) {
+      openEditTemplate(existing);
+      showToast('قالب فيديو ExoClick VAST (Zone 6104150) مضاف مسبقاً — تم فتحه للتعديل.', 'info');
+      return;
+    }
+    const targetPlc =
+      placementMap.get('mining_video_primary') ||
+      placementMap.get('mining_video_mid') ||
+      sortedPlacements[0] ||
+      null;
+    setEditingTpl(null);
+    setTplForm({
+      ...DEFAULT_TEMPLATE_FORM,
+      title: 'YemenTask_Video_VAST_6104150',
+      sourceName: 'ExoClick',
+      placementKey: targetPlc?.placementKey || 'mining_video_primary',
+      templateType: 'vast_url',
+      adFormat: 'instream_video',
+      deviceTarget: 'all',
+      codeContent: '',
+      vastUrl: EXOCLICK_VIDEO_VAST_URL,
+      width: '640',
+      height: '360',
+      priority: '20',
+      sortOrder: '10',
+      maxImpressions: '0',
+      ytNetworkKey: '',
+      rewardEventType: 'view',
+      isDismissible: true,
+      trackingEnabled: true,
+      isActive: true,
+      verificationMode: 'vast',
+      requiredWatchSec: '30',
+      requireActiveVisibility: true,
+      requiredVastEvents: ['start', 'complete'],
       requireLinkReturn: false,
       requireServerPostback: false,
     });
@@ -1017,7 +1068,20 @@ export const MiningAdsManager: React.FC<MiningAdsManagerProps> = ({
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>تحضير قالب ExoClick (6104102)</span>
+            <span>بانر ExoClick (6104102)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={openExoClickVideoPreset}
+            className={`inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+              isObsidian
+                ? 'bg-violet-500/15 hover:bg-violet-500/25 border-violet-500/35 text-violet-300'
+                : 'bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>فيديو ExoClick VAST (6104150)</span>
           </button>
 
           <button

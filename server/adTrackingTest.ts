@@ -755,9 +755,13 @@ async function runTests() {
         `Shared helper must reject non-rewardable format: ${nonRewardFmt}`
       );
     }
-    // Even if mis-tagged as video_player/outstream_video, ExoClick & image_banner must remain excluded
+    // Even if mis-tagged as video_player/outstream_video, ExoClick banner script & image_banner must remain excluded
     assert.strictEqual(
-      isRewardEligibleAd({ adFormat: 'outstream_video', sourceName: 'ExoClick' }),
+      isRewardEligibleAd({
+        adFormat: 'outstream_video',
+        sourceName: 'ExoClick',
+        codeContent: '<ins class="eas6a97888e2" data-zoneid="6104102"></ins>',
+      }),
       false
     );
     assert.strictEqual(
@@ -863,6 +867,21 @@ async function runTests() {
       () => validateCodeContent('<script src="https://cdn.example/popunder.js"></script>', 'network_code', 'banner'),
       /Popunder/
     );
+
+    // ExoClick Video VAST (Zone 6104150) IS a Video ad, NOT a Display Banner, even with sourceName='ExoClick'
+    assert.strictEqual(
+      isDisplayBannerAd({ adFormat: 'instream_video', sourceName: 'ExoClick', codeContent: '' }),
+      false
+    );
+    assert.strictEqual(
+      isRewardEligibleAd({
+        adFormat: 'instream_video',
+        templateType: 'vast_url',
+        sourceName: 'ExoClick',
+        codeContent: '',
+      }),
+      true
+    );
     console.log('✓ [16/18] Video/Link reward allowlist & Display Banner/Widget/ExoClick separation enforced');
   }
 
@@ -889,6 +908,8 @@ async function runTests() {
     assert.ok(srcDoc.includes('__ytExoPushCalled'), 'Expected single AdProvider.push guard');
     assert.ok(srcDoc.includes('data-yt-exoclick'), 'Expected single script tag attribute check');
     assert.ok(srcDoc.includes('MutationObserver'), 'Expected fill detection MutationObserver');
+    assert.ok(srcDoc.includes('obs.observe(document.body'), 'Expected body observer for sibling <div> injection');
+    assert.ok(srcDoc.includes('__memCookieJar'), 'Expected safe sandbox cookie jar shim for ExoClick c_uvt');
     assert.ok(srcDoc.includes('yt_mining_ad_status'), 'Expected postMessage status handshake');
     assert.ok(!srcDoc.includes('allow-same-origin'), 'Must never include allow-same-origin in srcDoc');
     assert.ok(
@@ -926,7 +947,20 @@ async function runTests() {
     for (const untouched of ['yt_coin.', 'financial_accounts', 'ledger_transactions', 'wallets', 'ad_partners', 'clixwall', 'offerwall']) {
       assert.ok(!sql.toLowerCase().includes(untouched), `Prepared migration must not touch ${untouched}`);
     }
-    console.log('✓ [18/18] Prepared ExoClick migration is idempotent, non-rewardable & isolated from ledgers');
+
+    const videoMigPath = path.resolve(
+      process.cwd(),
+      'supabase/migrations/20261129000000_seed_exoclick_video_vast_6104150.sql'
+    );
+    assert.ok(fs.existsSync(videoMigPath), 'Prepared ExoClick Video VAST migration file must exist');
+    const videoSql = fs.readFileSync(videoMigPath, 'utf8');
+    assert.ok(videoSql.includes('YemenTask_Video_VAST_6104150'));
+    assert.ok(videoSql.includes('https://s.magsrv.com/v1/vast.php?idz=6104150'));
+    assert.ok(videoSql.includes('NOT EXISTS'), 'Video VAST migration must guard against duplicate inserts');
+    for (const untouched of ['yt_coin.', 'financial_accounts', 'ledger_transactions', 'wallets', 'ad_partners', 'clixwall', 'offerwall']) {
+      assert.ok(!videoSql.toLowerCase().includes(untouched), `Video VAST migration must not touch ${untouched}`);
+    }
+    console.log('✓ [18/18] Prepared ExoClick banner & video VAST migrations are idempotent & isolated from ledgers');
   }
 
   console.log('\nALL 18 SMART AD TRACKING, EXOCLICK & ANTI-FRAUD TESTS PASSED.');

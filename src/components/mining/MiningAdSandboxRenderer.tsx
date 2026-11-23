@@ -164,9 +164,42 @@ function toSafeVideoEmbedUrl(url: string): { kind: 'iframe' | 'video'; src: stri
 }
 
 interface ParsedVastResult {
+  kind: 'linear' | 'nonlinear' | null;
   mediaUrl: string | null;
+  nonLinearImageUrl: string | null;
   clickThroughUrl: string | null;
+  durationSec: number;
+  wrapperUrl: string | null;
+  impressionUrls: string[];
+  trackingUrls: Record<string, string[]>;
   errorMessage?: string;
+}
+
+function parseVastDurationToSec(raw?: string | null): number {
+  const val = String(raw || '').trim();
+  const match = val.match(/^(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)?$/);
+  if (!match) return 30;
+  const sec = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+  return Number.isFinite(sec) && sec > 0 ? Math.min(180, Math.max(10, sec)) : 30;
+}
+
+function fireVastBeaconUrls(urls: string[]) {
+  if (typeof window === 'undefined' || !Array.isArray(urls) || urls.length === 0) return;
+  for (const raw of urls) {
+    const safe = sanitizeHttpHref(raw);
+    if (!safe) continue;
+    try {
+      void fetch(safe, { mode: 'no-cors', credentials: 'omit', keepalive: true }).catch(() => {});
+    } catch {
+      try {
+        const img = new Image();
+        img.referrerPolicy = 'origin';
+        img.src = safe;
+      } catch {
+        // ignore beacon errors
+      }
+    }
+  }
 }
 
 function parseVastXmlSafe(xmlText: string): ParsedVastResult {
@@ -175,8 +208,47 @@ function parseVastXmlSafe(xmlText: string): ParsedVastResult {
     const doc = parser.parseFromString(xmlText, 'text/xml');
     const parseErr = doc.querySelector('parsererror');
     if (parseErr) {
-      return { mediaUrl: null, clickThroughUrl: null, errorMessage: 'تنسيق ملف VAST XML غير صالح.' };
+      return {
+        kind: null,
+        mediaUrl: null,
+        nonLinearImageUrl: null,
+        clickThroughUrl: null,
+        durationSec: 30,
+        wrapperUrl: null,
+        impressionUrls: [],
+        trackingUrls: {},
+        errorMessage: 'تنسيق ملف VAST XML غير صالح.',
+      };
     }
+
+    const impressionUrls = Array.from(doc.querySelectorAll('Impression'))
+      .map((n) => sanitizeHttpHref(n.textContent))
+      .filter((u): u is string => Boolean(u));
+
+    const trackingUrls: Record<string, string[]> = {};
+    for (const tr of Array.from(doc.querySelectorAll('Tracking'))) {
+      const ev = String(tr.getAttribute('event') || '').trim();
+      const url = sanitizeHttpHref(tr.textContent);
+      if (ev && url) {
+        if (!trackingUrls[ev]) trackingUrls[ev] = [];
+        trackingUrls[ev].push(url);
+      }
+    }
+
+    const wrapperTag = sanitizeHttpHref(doc.querySelector('Wrapper > VASTAdTagURI, VASTAdTagURI')?.textContent);
+    if (wrapperTag) {
+      return {
+        kind: null,
+        mediaUrl: null,
+        nonLinearImageUrl: null,
+        clickThroughUrl: null,
+        durationSec: 30,
+        wrapperUrl: wrapperTag,
+        impressionUrls,
+        trackingUrls,
+      };
+    }
+
     const mediaNodes = Array.from(doc.querySelectorAll('MediaFile'));
     let chosenMedia: string | null = null;
     for (const node of mediaNodes) {
@@ -187,18 +259,76 @@ function parseVastXmlSafe(xmlText: string): ParsedVastResult {
         if (type.includes('mp4')) break;
       }
     }
-    const clickNode = doc.querySelector('ClickThrough');
-    const clickThroughUrl = sanitizeHttpHref(clickNode?.textContent);
-    if (!chosenMedia) {
-      return { mediaUrl: null, clickThroughUrl, errorMessage: 'لا يوجد ملف فيديو MP4/WebM متوافق داخل VAST XML.' };
+
+    if (chosenMedia) {
+      const clickNode = doc.querySelector('ClickThrough');
+      const clickThroughUrl = sanitizeHttpHref(clickNode?.textContent);
+      const durationNode = doc.querySelector('Duration');
+      return {
+        kind: 'linear',
+        mediaUrl: chosenMedia,
+        nonLinearImageUrl: null,
+        clickThroughUrl,
+        durationSec: parseVastDurationToSec(durationNode?.textContent),
+        wrapperUrl: null,
+        impressionUrls,
+        trackingUrls,
+      };
     }
-    return { mediaUrl: chosenMedia, clickThroughUrl };
+
+    // Fallback: VAST NonLinear / InVideo creative (e.g., ExoClick Zone 6104150 StaticResource)
+    const nonLinearEl = doc.querySelector('NonLinear');
+    if (nonLinearEl) {
+      const staticImg = sanitizeHttpHref(nonLinearEl.querySelector('StaticResource')?.textContent);
+      const nlClick = sanitizeHttpHref(
+        nonLinearEl.querySelector('NonLinearClickThrough')?.textContent ||
+          doc.querySelector('ClickThrough')?.textContent
+      );
+      const nlTracking = Array.from(nonLinearEl.querySelectorAll('NonLinearClickTracking'))
+        .map((n) => sanitizeHttpHref(n.textContent))
+        .filter((u): u is string => Boolean(u));
+      if (nlTracking.length > 0) {
+        trackingUrls.clickThrough = [...(trackingUrls.clickThrough || []), ...nlTracking];
+      }
+      if (staticImg) {
+        return {
+          kind: 'nonlinear',
+          mediaUrl: null,
+          nonLinearImageUrl: staticImg,
+          clickThroughUrl: nlClick,
+          durationSec: parseVastDurationToSec(nonLinearEl.getAttribute('minSuggestedDuration')),
+          wrapperUrl: null,
+          impressionUrls,
+          trackingUrls,
+        };
+      }
+    }
+
+    return {
+      kind: null,
+      mediaUrl: null,
+      nonLinearImageUrl: null,
+      clickThroughUrl: null,
+      durationSec: 30,
+      wrapperUrl: null,
+      impressionUrls,
+      trackingUrls,
+      errorMessage: 'لا يوجد ملف فيديو MP4/WebM أو محتوى إعلاني متوافق داخل VAST XML (قد لا يتوفر إعلان حالياً).',
+    };
   } catch {
-    return { mediaUrl: null, clickThroughUrl: null, errorMessage: 'تعذر تحليل استجابة VAST XML.' };
+    return {
+      kind: null,
+      mediaUrl: null,
+      nonLinearImageUrl: null,
+      clickThroughUrl: null,
+      durationSec: 30,
+      wrapperUrl: null,
+      impressionUrls: [],
+      trackingUrls: {},
+      errorMessage: 'تعذر تحليل استجابة VAST XML.',
+    };
   }
 }
-
-
 
 /**
  * Tracked Video / VAST Player (muted by default, explicit user click to play, dispatches real VAST milestones)
@@ -235,7 +365,13 @@ const TrackedVastVideoBox: React.FC<{
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [resolvedMediaUrl, setResolvedMediaUrl] = useState<string | null>(videoSrc);
+  const [nonLinearImageUrl, setNonLinearImageUrl] = useState<string | null>(null);
+  const [nonLinearDurationSec, setNonLinearDurationSec] = useState<number>(30);
+  const [nonLinearPlaying, setNonLinearPlaying] = useState<boolean>(false);
+  const [nonLinearElapsedSec, setNonLinearElapsedSec] = useState<number>(0);
   const [vastClickUrl, setVastClickUrl] = useState<string | null>(sanitizeHttpHref(template.targetUrl));
+  const [vastImpressionUrls, setVastImpressionUrls] = useState<string[]>([]);
+  const [vastTrackingUrls, setVastTrackingUrls] = useState<Record<string, string[]>>({});
   const [vastError, setVastError] = useState<string | null>(null);
   const [vastLoading, setVastLoading] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(true); // Always muted by default (UX comfort)
@@ -245,31 +381,69 @@ const TrackedVastVideoBox: React.FC<{
     sentStagesRef.current = new Set();
     setVastError(null);
     setResolvedMediaUrl(videoSrc);
+    setNonLinearImageUrl(null);
+    setNonLinearPlaying(false);
+    setNonLinearElapsedSec(0);
+    setVastImpressionUrls([]);
+    setVastTrackingUrls({});
     setVastClickUrl(sanitizeHttpHref(template.targetUrl));
 
-    if (!vastUrl || isPreview) return;
+    if (!vastUrl) return;
     let cancelled = false;
     setVastLoading(true);
-    fetch(vastUrl, { mode: 'cors' })
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
-      .then((xml) => {
+
+    const resolveVastChain = async (
+      targetVastUrl: string,
+      depth: number,
+      accImpressions: string[],
+      accTracking: Record<string, string[]>
+    ): Promise<ParsedVastResult> => {
+      const resp = await fetch(targetVastUrl, { mode: 'cors' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const xml = await resp.text();
+      const parsed = parseVastXmlSafe(xml);
+      const mergedImp = [...accImpressions, ...parsed.impressionUrls];
+      const mergedTrack: Record<string, string[]> = { ...accTracking };
+      for (const [k, urls] of Object.entries(parsed.trackingUrls)) {
+        mergedTrack[k] = [...(mergedTrack[k] || []), ...urls];
+      }
+      if (parsed.wrapperUrl && depth < 2) {
+        return resolveVastChain(parsed.wrapperUrl, depth + 1, mergedImp, mergedTrack);
+      }
+      return {
+        ...parsed,
+        impressionUrls: mergedImp,
+        trackingUrls: mergedTrack,
+      };
+    };
+
+    resolveVastChain(vastUrl, 0, [], {})
+      .then((parsed) => {
         if (cancelled) return;
-        const parsed = parseVastXmlSafe(xml);
-        if (parsed.errorMessage || !parsed.mediaUrl) {
-          setVastError(parsed.errorMessage || 'تعذر تشغيل إعلان VAST.');
-          void onEmitVastEvent('vast_error', { reason: parsed.errorMessage || 'empty_media' });
-        } else {
+        setVastImpressionUrls(parsed.impressionUrls);
+        setVastTrackingUrls(parsed.trackingUrls);
+        if (parsed.clickThroughUrl) setVastClickUrl(parsed.clickThroughUrl);
+
+        if (parsed.mediaUrl) {
           setResolvedMediaUrl(parsed.mediaUrl);
-          if (parsed.clickThroughUrl) setVastClickUrl(parsed.clickThroughUrl);
+          setNonLinearImageUrl(null);
+        } else if (parsed.nonLinearImageUrl) {
+          setResolvedMediaUrl(null);
+          setNonLinearImageUrl(parsed.nonLinearImageUrl);
+          setNonLinearDurationSec(parsed.durationSec || 30);
+        } else {
+          setVastError(parsed.errorMessage || 'تعذر تشغيل إعلان VAST.');
+          if (!isPreview) {
+            void onEmitVastEvent('vast_error', { reason: parsed.errorMessage || 'empty_media' });
+          }
         }
       })
       .catch((err) => {
         if (cancelled) return;
         setVastError('تعذر جلب ملف VAST من الخادم الإعلاني (CORS أو رابط غير متاح).');
-        void onEmitVastEvent('vast_error', { reason: String(err?.message || 'fetch_failed') });
+        if (!isPreview) {
+          void onEmitVastEvent('vast_error', { reason: String(err?.message || 'fetch_failed') });
+        }
       })
       .finally(() => {
         if (!cancelled) setVastLoading(false);
@@ -281,15 +455,24 @@ const TrackedVastVideoBox: React.FC<{
   }, [vastUrl, videoSrc, template.targetUrl, isPreview]);
 
   const emitOnce = async (stage: 'impression' | 'start' | 'firstQuartile' | 'midpoint' | 'thirdQuartile' | 'complete') => {
-    if (isPreview || sentStagesRef.current.has(stage)) return;
+    if (sentStagesRef.current.has(stage)) return;
     sentStagesRef.current.add(stage);
-    await onEmitVastEvent(`vast_${stage}` as any);
+
+    if (!isPreview) {
+      if (stage === 'impression') {
+        fireVastBeaconUrls(vastImpressionUrls);
+      } else if (vastTrackingUrls[stage]?.length) {
+        fireVastBeaconUrls(vastTrackingUrls[stage]);
+      }
+      await onEmitVastEvent(`vast_${stage}` as any);
+    }
   };
 
   const handleVideoPlay = async () => {
-    if (isPreview) return;
-    const ready = await onEnsureTrackingStarted();
-    if (!ready) return;
+    if (!isPreview) {
+      const ready = await onEnsureTrackingStarted();
+      if (!ready) return;
+    }
     await emitOnce('impression');
     await emitOnce('start');
   };
@@ -307,6 +490,39 @@ const TrackedVastVideoBox: React.FC<{
     void emitOnce('complete');
   };
 
+  // NonLinear / InVideo VAST timed playback (e.g., ExoClick Zone 6104150)
+  useEffect(() => {
+    if (!nonLinearImageUrl || !nonLinearPlaying) return;
+    const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      setNonLinearElapsedSec((prev) => {
+        const next = prev + 1;
+        const ratio = next / Math.max(10, nonLinearDurationSec);
+        if (ratio >= 0.25) void emitOnce('firstQuartile');
+        if (ratio >= 0.5) void emitOnce('midpoint');
+        if (ratio >= 0.75) void emitOnce('thirdQuartile');
+        if (next >= nonLinearDurationSec) {
+          void emitOnce('complete');
+          window.clearInterval(timer);
+          setNonLinearPlaying(false);
+          return nonLinearDurationSec;
+        }
+        return next;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [nonLinearImageUrl, nonLinearPlaying, nonLinearDurationSec]);
+
+  const handleStartNonLinear = async () => {
+    if (!isPreview) {
+      const ready = await onEnsureTrackingStarted();
+      if (!ready) return;
+    }
+    await emitOnce('impression');
+    await emitOnce('start');
+    setNonLinearPlaying(true);
+  };
+
   if (vastLoading) {
     return (
       <div className="rounded-xl bg-[#080B10] border border-white/10 p-8 text-center text-xs text-gray-400">
@@ -321,6 +537,100 @@ const TrackedVastVideoBox: React.FC<{
       <div className="rounded-xl bg-rose-950/30 border border-rose-500/30 p-4 text-xs text-rose-300 flex items-center gap-2">
         <AlertTriangle className="w-4 h-4 shrink-0" />
         <span>{vastError}</span>
+      </div>
+    );
+  }
+
+  if (nonLinearImageUrl) {
+    const pct = Math.min(100, Math.round((nonLinearElapsedSec / Math.max(10, nonLinearDurationSec)) * 100));
+    const finished = nonLinearElapsedSec >= nonLinearDurationSec;
+    return (
+      <div className="rounded-xl bg-[#080B10] border border-white/10 overflow-hidden">
+        <div className="relative flex flex-col items-center justify-center bg-black p-3">
+          {vastClickUrl ? (
+            <a
+              href={vastClickUrl}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              onClick={() => {
+                if (!isPreview) {
+                  if (vastTrackingUrls.clickThrough?.length) {
+                    fireVastBeaconUrls(vastTrackingUrls.clickThrough);
+                  }
+                  void onEmitVastEvent('vast_clickThrough', { href: vastClickUrl });
+                }
+              }}
+              className="block rounded-lg overflow-hidden border border-white/10"
+            >
+              <img
+                src={nonLinearImageUrl}
+                alt={template.title}
+                referrerPolicy="origin"
+                className="mx-auto object-contain max-w-full"
+                style={{ maxHeight: `${Math.max(180, Math.min(maxHeight, 360))}px` }}
+              />
+            </a>
+          ) : (
+            <img
+              src={nonLinearImageUrl}
+              alt={template.title}
+              referrerPolicy="origin"
+              className="mx-auto object-contain max-w-full rounded-lg"
+              style={{ maxHeight: `${Math.max(180, Math.min(maxHeight, 360))}px` }}
+            />
+          )}
+
+          {!nonLinearPlaying && !finished && (
+            <button
+              type="button"
+              onClick={() => void handleStartNonLinear()}
+              className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-black text-xs cursor-pointer shadow-lg"
+            >
+              <PlayCircle className="w-4 h-4" />
+              <span>تشغيل إعلان الفيديو الموثق ({nonLinearDurationSec} ثانية)</span>
+            </button>
+          )}
+
+          {(nonLinearPlaying || finished) && (
+            <div className="w-full max-w-sm mt-3 space-y-1.5">
+              <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-l from-amber-400 to-emerald-400 transition-all duration-300"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[11px] font-mono text-gray-300">
+                <span>{finished ? 'اكتمل عرض الإعلان (VAST Complete)' : 'جاري تشغيل إعلان VAST...'}</span>
+                <span>
+                  {nonLinearElapsedSec} / {nonLinearDurationSec}ث
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {vastClickUrl && (
+          <div className="px-3 py-2 bg-[#0E131D] border-t border-white/10 flex items-center justify-between gap-2">
+            <span className="text-[11px] text-gray-400 truncate">{template.sourceName || 'ExoClick VAST'}</span>
+            <a
+              href={vastClickUrl}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              onClick={() => {
+                if (!isPreview) {
+                  if (vastTrackingUrls.clickThrough?.length) {
+                    fireVastBeaconUrls(vastTrackingUrls.clickThrough);
+                  }
+                  void onEmitVastEvent('vast_clickThrough', { href: vastClickUrl });
+                }
+              }}
+              className="inline-flex items-center gap-1 text-xs font-bold text-amber-400 hover:text-amber-300 shrink-0"
+            >
+              <span>{template.ctaLabel || 'فتح العرض'}</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
+        )}
       </div>
     );
   }
@@ -388,7 +698,12 @@ const TrackedVastVideoBox: React.FC<{
             target="_blank"
             rel="noopener noreferrer nofollow"
             onClick={() => {
-              if (!isPreview) void onEmitVastEvent('vast_clickThrough', { href: vastClickUrl });
+              if (!isPreview) {
+                if (vastTrackingUrls.clickThrough?.length) {
+                  fireVastBeaconUrls(vastTrackingUrls.clickThrough);
+                }
+                void onEmitVastEvent('vast_clickThrough', { href: vastClickUrl });
+              }
             }}
             className="inline-flex items-center gap-1 text-xs font-bold text-amber-400 hover:text-amber-300 shrink-0"
           >
