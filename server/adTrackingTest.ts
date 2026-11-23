@@ -66,11 +66,11 @@ class InMemoryAdTrackingStore implements AdTrackingStore {
       adFormat,
       trackingEnabled: this.comfortSettings.trackingEnabledByFormat[adFormat] !== false,
       verificationMode: isVideo ? 'vast' : isLink ? 'link_return' : 'dwell',
-      requiredWatchSec: isVideo ? 15 : isLink ? 10 : 30,
+      requiredWatchSec: isVideo ? 15 : isLink ? 0 : 30,
       requireActiveVisibility: true,
       requiredVastEvents: isVideo ? ['start', 'firstQuartile', 'midpoint', 'thirdQuartile', 'complete'] : [],
       requireLinkReturn: isLink,
-      requireServerPostback: false,
+      requireServerPostback: isLink,
       sessionTtlSec: 900,
       maxDailyPerUser: 25,
       frequencyCapMinutes: 0,
@@ -348,6 +348,7 @@ async function runTests() {
     const returned = await engine.recordEvent({ sessionId: session.id, userId: USER_A, sessionToken, eventName: 'external_return' });
     assert.strictEqual(returned.sessionStatus, 'returned');
     assert.ok(returned.exitAt && returned.returnAt);
+    assert.strictEqual(returned.activeDurationSec, 0, 'External time must not be counted as visible dwell.');
     const done = await engine.attemptComplete({ sessionId: session.id, userId: USER_A, sessionToken, isVisible: true });
     assert.strictEqual(done.completed, true);
     assert.strictEqual(done.session.eligibilityResult, 'eligible_for_yt_reward');
