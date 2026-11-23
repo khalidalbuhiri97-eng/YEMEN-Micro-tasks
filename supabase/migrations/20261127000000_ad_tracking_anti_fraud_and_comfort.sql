@@ -3,7 +3,7 @@
 -- Date: 2026-11-27
 -- Strictly Non-Financial / Additive Layer:
 --   - Does NOT create any parallel currency, wallet, or balance ledger.
---   - Does NOT alter yt_coin.config rates, 1000-subunit precision, or financial tables.
+--   - Does NOT alter YT Coin precision, reward rates, balances, or financial tables.
 --   - Links cleanly to yt_coin.ad_sessions & yt_coin.ad_reward_claims only via UUIDs.
 --   - Requires explicit user review & approval before executing on live Supabase.
 -- ==============================================================================
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.ad_center_settings (
   max_animated_ads_in_view INTEGER NOT NULL DEFAULT 1 CHECK (max_animated_ads_in_view >= 0 AND max_animated_ads_in_view <= 3),
   cooldown_after_dismiss_sec INTEGER NOT NULL DEFAULT 120 CHECK (cooldown_after_dismiss_sec >= 0 AND cooldown_after_dismiss_sec <= 86400),
   min_spacing_px INTEGER NOT NULL DEFAULT 16 CHECK (min_spacing_px >= 8 AND min_spacing_px <= 96),
-  push_ads_enabled BOOLEAN NOT NULL DEFAULT true,
+  push_ads_enabled BOOLEAN NOT NULL DEFAULT false,
   default_session_ttl_sec INTEGER NOT NULL DEFAULT 900 CHECK (default_session_ttl_sec >= 60 AND default_session_ttl_sec <= 7200),
   default_max_daily_per_user INTEGER NOT NULL DEFAULT 25 CHECK (default_max_daily_per_user >= 0 AND default_max_daily_per_user <= 500),
   tracking_enabled_by_format JSONB NOT NULL DEFAULT '{
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS public.ad_center_settings (
     "vertical_video": true,
     "recommendation_widget": true,
     "native_cards": true,
-    "push_notification": true,
+    "push_notification": false,
     "multi_format": true,
     "external_link": true
   }'::jsonb,
@@ -225,10 +225,12 @@ ALTER TABLE public.ad_tracking_risk_flags ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.push_ad_preferences ENABLE ROW LEVEL SECURITY;
 
 GRANT SELECT ON public.ad_center_settings TO anon, authenticated;
-GRANT ALL ON public.ad_center_settings TO authenticated, service_role;
+GRANT SELECT ON public.ad_center_settings TO anon, authenticated;
+GRANT ALL ON public.ad_center_settings TO service_role;
 
 GRANT SELECT ON public.ad_completion_rules TO anon, authenticated;
-GRANT ALL ON public.ad_completion_rules TO authenticated, service_role;
+GRANT SELECT ON public.ad_completion_rules TO anon, authenticated;
+GRANT ALL ON public.ad_completion_rules TO service_role;
 
 GRANT SELECT ON public.ad_tracking_sessions TO authenticated;
 GRANT ALL ON public.ad_tracking_sessions TO service_role;
@@ -314,7 +316,7 @@ BEGIN
   END IF;
 
   DELETE FROM public.ad_tracking_sessions
-  WHERE created_at < timezone('utc'::text, now()) - make_interval(days => GREATEST(7, COALESCE(p_days, 90)))
+  WHERE created_at < timezone('utc'::text, now()) - make_interval(days => LEAST(3650, GREATEST(7, COALESCE(p_days, 90))))
     AND yt_reward_claim_id IS NULL;
 
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
@@ -323,6 +325,6 @@ END;
 $function$;
 
 REVOKE ALL ON FUNCTION public.prune_old_ad_tracking_logs(INTEGER) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.prune_old_ad_tracking_logs(INTEGER) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.prune_old_ad_tracking_logs(INTEGER) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
