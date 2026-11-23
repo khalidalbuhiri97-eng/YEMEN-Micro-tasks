@@ -226,11 +226,11 @@ ALTER TABLE public.push_ad_preferences ENABLE ROW LEVEL SECURITY;
 
 GRANT SELECT ON public.ad_center_settings TO anon, authenticated;
 GRANT SELECT ON public.ad_center_settings TO anon, authenticated;
-GRANT ALL ON public.ad_center_settings TO service_role;
+GRANT ALL ON public.ad_center_settings TO authenticated, service_role;
 
 GRANT SELECT ON public.ad_completion_rules TO anon, authenticated;
 GRANT SELECT ON public.ad_completion_rules TO anon, authenticated;
-GRANT ALL ON public.ad_completion_rules TO service_role;
+GRANT ALL ON public.ad_completion_rules TO authenticated, service_role;
 
 GRANT SELECT ON public.ad_tracking_sessions TO authenticated;
 GRANT ALL ON public.ad_tracking_sessions TO service_role;
