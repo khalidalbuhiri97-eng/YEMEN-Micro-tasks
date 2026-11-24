@@ -10,7 +10,7 @@ export type YtWallet={user_id:string;pay_id:number;mined_units:number;withdrawab
 export type YtAd={id:string;title:string;description:string|null;ad_url:string|null;ad_type:'video'|'smart_link'|'banner_ad';
  reward_units:number;duration_seconds:number;is_active:boolean;ad_code:string|null};
 export const YT_PRECISION=100000;
-export const ytFormat=(raw:number)=>`${(Number(raw||0)/YT_PRECISION).toFixed(5)} YT`;
+export const ytFormat=(raw:number)=>`${(Number(raw||0)/YT_PRECISION).toFixed(5)} TSK`;
 export const ytToRaw=(amount:string|number)=>{
  const n=Number(amount);
  if(!Number.isFinite(n)||n<0||Math.abs(n*YT_PRECISION-Math.round(n*YT_PRECISION))>1e-7)throw new Error('أدخل مبلغاً صحيحاً حتى خمس خانات عشرية.');
@@ -51,6 +51,7 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
  const setPin=async(newPin:string,currentPin?:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_set_wallet_pin',{p_new_pin:newPin,p_current_pin:currentPin||null});if(error)throw error;return data;};
  const liquidate=async(amountYt:number,pin:string,sessionToken:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_liquidate_mined',{p_amount_yt:amountYt,p_pin:pin,p_session_token:sessionToken});if(error)throw error;return data;};
  const sendPay=async(payId:number,amountYt:number,pin:string,note:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_send_pay',{p_receiver_pay_id:payId,p_amount_yt:amountYt,p_pin:pin,p_note:note||null});if(error)throw error;return data;};
+ const resolvePayRecipient=async(identifier:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_resolve_pay_recipient',{p_identifier:identifier});if(error)throw error;return Array.isArray(data)?data[0]:data;};
  const depositRevenue=async(totalUsd:number)=>{await ensureAuth();const {data,error}=await client.rpc('yt_deposit_ad_revenue',{p_total_usd:totalUsd});if(error)throw error;return data;};
  const manageAd=async(payload:{action:'create'|'update'|'delete';id?:string;title?:string;ad_type?:'video'|'smart_link'|'banner_ad';ad_url?:string;reward_yt?:number;required_seconds?:number;is_active?:boolean;ad_code?:string})=>{
   await ensureAuth();
