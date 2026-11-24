@@ -267,7 +267,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       persistNonFinancialProfileUi(res.user);
     }
     if (typeof window !== 'undefined' && res.user) {
-      window.dispatchEvent(new CustomEvent('kasb:auth_success', { detail: { user: res.user } }));
+      window.dispatchEvent(new CustomEvent('kasb:auth_success', { detail: { user: normalizePlatformOwner(res.user) } }));
     }
     showToast(`مرحباً بك، ${res.user.fullName}`, 'success');
   };
@@ -283,7 +283,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         persistNonFinancialProfileUi(res.user);
       }
       if (typeof window !== 'undefined' && res.user) {
-        window.dispatchEvent(new CustomEvent('kasb:auth_success', { detail: { user: res.user } }));
+        window.dispatchEvent(new CustomEvent('kasb:auth_success', { detail: { user: normalizePlatformOwner(res.user) } }));
       }
       showToast('تم إنشاء وتفعيل حسابك بنجاح!', 'success');
     } else {
