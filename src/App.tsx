@@ -8,7 +8,6 @@ import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { Navbar } from './components/layout/Navbar.tsx';
 import { Hero } from './components/public/Hero.tsx';
 import { HowItWorks } from './components/public/HowItWorks.tsx';
-import { TaskCategoriesSection } from './components/public/TaskCategoriesSection.tsx';
 import { DashboardLayout } from './components/dashboard/DashboardLayout.tsx';
 import { TasksView } from './components/dashboard/TasksView.tsx';
 import { WalletView } from './components/dashboard/WalletView.tsx';
@@ -164,8 +163,6 @@ function MainApp() {
                 setCurrentTab('offerwall');
               }}
             />
-            <HowItWorks onStart={() => setCurrentTab('tasks')} />
-            <TaskCategoriesSection onSelectCategory={handleSelectCategoryFromHome} />
           </main>
         )}
 
