@@ -27,10 +27,10 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
    client.rpc('yt_get_live_metrics'),
    client.from('yt_wallets').select('user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen').eq('user_id',userId).maybeSingle(),
    client.from('yt_mining_ads').select('id,title,description,ad_url,placement,duration_seconds,sort_order,is_active,ad_type,reward_units,ad_code').order('sort_order'),
-   client.from('yt_token_allocations').select('allocation_key,allocation_code,name_ar,percentage,allocated_units').order('percentage',{ascending:false}),
+   client.from('yt_token_allocations').select('allocation_key,allocation_code,name_ar,percentage,allocated_units,distributed_units,remaining_units,is_locked').order('percentage',{ascending:false}),
    client.from('yt_price_history').select('id,price_usd_per_yt,ad_pool_usd,total_mined_units,event_type,created_at').order('created_at',{ascending:false}).limit(24),
    client.from('yt_user_ad_claims').select('ad_id,claimed_date,reward_units,referral_bonus_units').eq('user_id',userId).eq('claimed_date',ytTodayAden()),
-   client.from('yt_ledger_transactions').select('id,transaction_type,balance_bucket,amount_units,balance_before_units,balance_after_units,description,created_at').eq('wallet_user_id',userId).order('created_at',{ascending:false}).limit(30),
+   client.from('yt_ledger_transactions').select('id,transaction_type,balance_bucket,amount_units,balance_before_units,balance_after_units,description,source_allocation_code,created_at').eq('wallet_user_id',userId).order('created_at',{ascending:false}).limit(30),
    (isAdmin?client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').order('created_at',{ascending:false}).limit(50):client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').eq('user_id',userId).order('created_at',{ascending:false}).limit(30)),
    client.from('yt_daily_click_claims').select('click_no,claim_date,reward_units').eq('user_id',userId).eq('claim_date',ytTodayAden()),
    client.from('yt_daily_checkins').select('claim_date,reward_units').eq('user_id',userId).eq('claim_date',ytTodayAden()).maybeSingle()
