@@ -129,7 +129,7 @@ function MainApp() {
       <OfflineIndicator />
 
       {/* Top Bar Navigation */}
-      {currentTab !== 'ytcoin' && (
+      {currentTab !== 'ytcoin' && currentTab !== 'earn_ads' && (
         <Navbar
           currentTab={currentTab}
           onNavigate={(tab) => {
@@ -163,18 +163,12 @@ function MainApp() {
 
         {currentTab === 'ytcoin' && (
           <div className="w-full h-full min-h-[100dvh]">
-            <YtCoinMiningCard
-              onExit={() => setCurrentTab('home')}
-              onOpenEarnAds={() => setCurrentTab('earn_ads')}
-            />
+            <YtEcosystemApp onExit={() => setCurrentTab('home')} />
           </div>
         )}
 
         {currentTab === 'earn_ads' && (
-          <EarnFromAdsView
-            onBackHome={() => setCurrentTab('home')}
-            onOpenYtCoin={() => setCurrentTab('ytcoin')}
-          />
+          <YtEcosystemApp initialTab="mine" onExit={() => setCurrentTab('home')} />
         )}
 
         {currentTab === 'tasks' && (
@@ -230,7 +224,7 @@ function MainApp() {
       </div>
 
       {/* Mobile Sticky Thumb Navigation Bar (§1.I 15% Mobile Sticky Cap) */}
-      {currentTab !== 'ytcoin' && (
+      {currentTab !== 'ytcoin' && currentTab !== 'earn_ads' && (
         <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-3 py-2 flex items-center justify-around text-[10px] font-bold">
         <button
           onClick={() => setCurrentTab('home')}
