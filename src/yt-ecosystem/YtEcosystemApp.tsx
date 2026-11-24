@@ -10,7 +10,7 @@ import {
   ytManageAd, ytSendPay, ytStartAd, type YtMetrics, type YtWallet,
 } from './ytCoinService.ts';
 
-type Props = { compact?: boolean; onOpen?: () => void; onExit?: () => void; onOpenEarnAds?: () => void };
+type Props = { compact?: boolean; onOpen?: () => void; onExit?: () => void; onOpenEarnAds?: () => void; initialTab?: 'market'|'wallet'|'mine'|'admin' };
 
 const GOLD = 'border border-amber-400/40 shadow-[0_0_24px_rgba(212,175,55,.08)]';
 const fmtUsd = (v: number) => '$' + Number(v || 0).toFixed(8);
@@ -24,9 +24,9 @@ const errorText = (e: any) => {
   return s;
 };
 
-export const YtEcosystemApp: React.FC<Props> = ({ compact = false, onOpen, onExit }) => {
+export const YtEcosystemApp: React.FC<Props> = ({ compact = false, onOpen, onExit, initialTab = 'market' }) => {
   const { user, isAdmin, openAuthModal, showToast } = useAuth();
-  const [tab, setTab] = useState<'market'|'wallet'|'mine'|'admin'>('market');
+  const [tab, setTab] = useState<'market'|'wallet'|'mine'|'admin'>(initialTab);
   const [metrics, setMetrics] = useState<YtMetrics | null>(null);
   const [wallet, setWallet] = useState<YtWallet | null>(null);
   const [ads, setAds] = useState<any[]>([]);
@@ -65,7 +65,7 @@ export const YtEcosystemApp: React.FC<Props> = ({ compact = false, onOpen, onExi
       const session = await ytStartAd(ad.id, purpose);
       const target = new URL(session.ad_url);
       target.searchParams.set('yt_session_id', session.session_id);
-      target.searchParams.set('yt_user_id', user!.id);
+      target.searchParams.set('yt_user_id', user!.id);\n      target.searchParams.set('yt_postback_url', `${window.location.origin}/api/yt-ecosystem/ad-postback`);
       window.open(target.toString(), '_blank', 'noopener,noreferrer');
       setNotice('بدأ الإعلان. ستُعتمد المكافأة فقط بعد وصول تأكيد موثّق من مزود الإعلان.');
     }, 'تم فتح الإعلان. انتظر التحقق قبل المطالبة.');
