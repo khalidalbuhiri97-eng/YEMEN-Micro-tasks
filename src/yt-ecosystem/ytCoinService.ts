@@ -23,7 +23,7 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
  const ensureAuth=syncAuth||(client===supabase?syncSupabaseSession:async()=>undefined);
  const loadDashboard=async(userId:string,isAdmin=false)=>{
   await ensureAuth();
-  const [metricsRes,walletRes,adsRes,allocationsRes,historyRes,claimsRes,clickClaimsRes,checkinRes,ledgerRes,withdrawalsRes,phaseRes,referralRes]=await Promise.all([
+  const [metricsRes,walletRes,adsRes,allocationsRes,historyRes,claimsRes,clickClaimsRes,checkinRes,ledgerRes,withdrawalsRes,phaseRes,referralRes,adminWalletsRes,systemSettingsRes]=await Promise.all([
    client.rpc('yt_get_live_metrics'),
    client.from('yt_wallets').select('user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen').eq('user_id',userId).maybeSingle(),
    client.from('yt_mining_ads').select('id,title,description,ad_url,placement,duration_seconds,sort_order,is_active,ad_type,reward_units,ad_code').order('sort_order'),
@@ -34,14 +34,16 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
    client.from('yt_daily_checkins').select('created_at').eq('user_id',userId).gt('created_at',new Date(Date.now()-24*60*60*1000).toISOString()).order('created_at',{ascending:false}).limit(1),
    client.from('yt_ledger_transactions').select('id,transaction_type,balance_bucket,amount_units,balance_before_units,balance_after_units,description,created_at').eq('wallet_user_id',userId).order('created_at',{ascending:false}).limit(30),
    (isAdmin?client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').order('created_at',{ascending:false}).limit(50):client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').eq('user_id',userId).order('created_at',{ascending:false}).limit(30)),
-   client.rpc('yt_get_trading_phase'),client.rpc('yt_get_referral_stats')
+   client.rpc('yt_get_trading_phase'),client.rpc('yt_get_referral_stats'),
+   (isAdmin?client.from('yt_wallets').select('user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen,created_at,updated_at').order('updated_at',{ascending:false}).limit(500):Promise.resolve({data:[],error:null})),
+   (isAdmin?client.from('yt_system_settings').select('singleton,admin_user_id,transfer_fee_bps,precision_factor,max_supply_units,updated_at').eq('singleton',true).maybeSingle():Promise.resolve({data:null,error:null}))
   ]);
-  const error=metricsRes.error||walletRes.error||adsRes.error||allocationsRes.error||historyRes.error||claimsRes.error||clickClaimsRes.error||checkinRes.error||ledgerRes.error||withdrawalsRes.error||phaseRes.error||referralRes.error;
+  const error=metricsRes.error||walletRes.error||adsRes.error||allocationsRes.error||historyRes.error||claimsRes.error||clickClaimsRes.error||checkinRes.error||ledgerRes.error||withdrawalsRes.error||phaseRes.error||referralRes.error||adminWalletsRes.error||systemSettingsRes.error;
   if(error)throw error;
   if(!walletRes.data)throw new Error('لم يتم إنشاء محفظة YT لهذا الحساب بعد.');
   const metrics=(Array.isArray(metricsRes.data)?metricsRes.data[0]:metricsRes.data) as YtMetrics;
   return {metrics,wallet:walletRes.data as YtWallet,ads:(adsRes.data||[]) as YtAd[],allocations:allocationsRes.data||[],
-   history:(historyRes.data||[]).reverse(),claims:claimsRes.data||[],dailyClickClaims:clickClaimsRes.data||[],dailyCheckinClaimed:(checkinRes.data||[]).length>0,ledger:ledgerRes.data||[],withdrawals:withdrawalsRes.data||[],phase:phaseRes.data,referrals:referralRes.data};
+   history:(historyRes.data||[]).reverse(),claims:claimsRes.data||[],dailyClickClaims:clickClaimsRes.data||[],dailyCheckinClaimed:(checkinRes.data||[]).length>0,ledger:ledgerRes.data||[],withdrawals:withdrawalsRes.data||[],phase:phaseRes.data,referrals:referralRes.data,adminWallets:adminWalletsRes.data||[],systemSettings:systemSettingsRes.data||null};
  };
  const startAd=async(adId:string,purpose:'reward'|'liquidation'='reward')=>{
   await ensureAuth();
