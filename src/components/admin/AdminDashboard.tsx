@@ -10,10 +10,8 @@ import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
 import { TaxManagementView } from './finance/TaxManagementView.tsx';
 import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
-import { AdPartnersManager } from './AdPartnersManager.tsx';
-import { MiningAdsManager } from './MiningAdsManager.tsx';
 import { AdminSurveysAndAssetsView } from './AdminSurveysAndAssetsView.tsx';
-import { YtCoinAdminView } from './YtCoinAdminView.tsx';
+import { AdManagementHub } from './AdManagementHub.tsx';
 import { GeoLocationSelector, type GeoMultiValue } from '../common/GeoLocationSelector.tsx';
 import { TaskBuilderFields, TaskCardLivePreview } from '../tasks/TaskBuilderFields.tsx';
 import { assertNoSensitiveSignupFields, getDefaultTaskImageUrl, getTaskKindLabel, inferTaskKindFromCategory, mapTaskKindToCategory, normalizeProofRequirements } from '../../../shared/taskMeta.ts';
@@ -50,7 +48,7 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_partners' | 'mining_ads' | 'yt_coin' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_center' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [stats, setStats] = useState<any>(null);
@@ -662,13 +660,7 @@ export const AdminDashboard: React.FC = () => {
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 border-b border-slate-200 dark:border-slate-800 text-xs">
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
-          { id: 'treasury', label: 'إدارة الخزينة', count: null },
-          { id: 'external_accounts', label: 'الحسابات الخارجية والتحصيل', count: treasury?.pendingExternalDepositsCount ?? null },
-          { id: 'ledger', label: 'دفتر الأستاذ والمراجعة', count: null },
-          { id: 'reports', label: 'التقارير المالية (8)', count: null },
-          { id: 'ad_partners', label: 'إدارة الشركاء والإعلانات', count: null },
-          { id: 'mining_ads', label: 'إعلانات التعدين والقوالب', count: null },
-          { id: 'yt_coin', label: 'خزينة وتعدين YT Coin', count: null },
+          { id: 'ad_center', label: 'مركز الإعلانات والقوالب', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
@@ -743,13 +735,8 @@ export const AdminDashboard: React.FC = () => {
       {/* 5B. ARAB COUNTRIES & DIVISIONS GEOGRAPHY TAB */}
       {activeTab === 'geo' && <GeoManagementView />}
 
-      {/* 5C. ISOLATED AD PARTNERS MANAGER TAB */}
-      {activeTab === 'ad_partners' && <AdPartnersManager />}
-
-      {/* 5C-2. MINING AD CENTER PLACEMENTS & TEMPLATES TAB */}
-      {activeTab === 'mining_ads' && <MiningAdsManager />}
-
-      {activeTab === 'yt_coin' && <YtCoinAdminView />}
+      {/* Unified advertising management hub */}
+      {activeTab === 'ad_center' && <AdManagementHub />}
 
       {/* 5D. INTERACTIVE SURVEYS, ASSETS & CATEGORY ICONS TAB */}
       {activeTab === 'surveys_assets' && <AdminSurveysAndAssetsView />}
@@ -1682,7 +1669,7 @@ export const AdminDashboard: React.FC = () => {
       {/* Old static reports block removed; handled by <FinancialReportsView /> */}
 
       {/* 7. SETTINGS TAB */}
-      {activeTab === 'settings' && settings && (
+      {activeTab === 'settings' && (settings ? (
         <div className="space-y-6 max-w-2xl">
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-6">
             <h2 className="text-base font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1841,7 +1828,29 @@ export const AdminDashboard: React.FC = () => {
             </button>
           </form>
         </div>
-      )}
+      ) : (
+        <div className="max-w-2xl rounded-2xl border border-amber-200 bg-amber-50 p-5 text-right dark:border-amber-900/50 dark:bg-amber-950/20">
+          <h2 className="font-bold text-slate-900 dark:text-white">إعدادات المنصة غير محمّلة</h2>
+          <p className="mt-2 text-xs leading-6 text-slate-600 dark:text-slate-300">
+            صفحة الإعدادات متاحة للمدير، لكن تعذر جلب بيانات الإعدادات من الخادم. لم نعرض قيماً افتراضية قابلة للحفظ حتى لا يتم استبدال إعداداتك الحالية بالخطأ.
+          </p>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                const result = await api.getSettings();
+                if (result?.settings) setSettings(result.settings);
+                else showToast('لم تصل إعدادات من الخادم بعد.', 'error');
+              } catch (err: any) {
+                showToast(err.message || 'تعذر تحميل إعدادات المنصة.', 'error');
+              }
+            }}
+            className="mt-4 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-emerald-700"
+          >
+            إعادة تحميل الإعدادات
+          </button>
+        </div>
+      ))}
 
       {/* MODAL: Reject Submission */}
       {reviewingSubmission && (
