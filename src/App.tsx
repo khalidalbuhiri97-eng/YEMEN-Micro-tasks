@@ -19,8 +19,8 @@ import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
 import { SplashScreen } from './components/common/SplashScreen.tsx';
 import { HomeShortcutsStrip } from './components/home/HomeShortcutsStrip.tsx';
 import { InfoCenter } from './components/public/InfoCenter.tsx';
-import { YtCoinMiningCard } from './components/home/YtCoinMiningCard.tsx';
-import { EarnFromAdsView } from './components/ads/EarnFromAdsView.tsx';
+import { YtEcosystemApp } from './yt-ecosystem/YtEcosystemApp.tsx';
+
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
 
@@ -147,7 +147,7 @@ function MainApp() {
         {currentTab === 'home' && (
           <main>
             <HomeShortcutsStrip onNavigate={(tab) => setCurrentTab(tab as any)} />
-            <YtCoinMiningCard compact onOpen={() => setCurrentTab('ytcoin')} />
+            <YtEcosystemApp compact onOpen={() => setCurrentTab('ytcoin')} />
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
