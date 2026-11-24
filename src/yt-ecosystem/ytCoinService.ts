@@ -23,7 +23,7 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
  const ensureAuth=syncAuth||(client===supabase?syncSupabaseSession:async()=>undefined);
  const loadDashboard=async(userId:string,isAdmin=false)=>{
   await ensureAuth();
-  const [metricsRes,walletRes,adsRes,allocationsRes,historyRes,claimsRes,ledgerRes,withdrawalsRes,dailyClicksRes,checkinRes]=await Promise.all([
+  const [metricsRes,walletRes,adsRes,allocationsRes,historyRes,claimsRes,ledgerRes,withdrawalsRes,dailyClicksRes,checkinRes,tradingPhaseRes]=await Promise.all([
    client.rpc('yt_get_live_metrics'),
    client.from('yt_wallets').select('user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen').eq('user_id',userId).maybeSingle(),
    client.from('yt_mining_ads').select('id,title,description,ad_url,placement,duration_seconds,sort_order,is_active,ad_type,reward_units,ad_code').order('sort_order'),
@@ -33,14 +33,15 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
    client.from('yt_ledger_transactions').select('id,transaction_type,balance_bucket,amount_units,balance_before_units,balance_after_units,description,source_allocation_code,created_at').eq('wallet_user_id',userId).order('created_at',{ascending:false}).limit(30),
    (isAdmin?client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').order('created_at',{ascending:false}).limit(50):client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').eq('user_id',userId).order('created_at',{ascending:false}).limit(30)),
    client.from('yt_daily_click_claims').select('click_no,claim_date,reward_units').eq('user_id',userId).eq('claim_date',ytTodayAden()),
-   client.from('yt_daily_checkins').select('claim_date,reward_units,created_at').eq('user_id',userId).gt('created_at',new Date(Date.now()-86400000).toISOString()).order('created_at',{ascending:false}).limit(1).maybeSingle()
+   client.from('yt_daily_checkins').select('claim_date,reward_units,created_at').eq('user_id',userId).gt('created_at',new Date(Date.now()-86400000).toISOString()).order('created_at',{ascending:false}).limit(1).maybeSingle(),
+   client.rpc('yt_get_trading_phase')
   ]);
-  const error=metricsRes.error||walletRes.error||adsRes.error||allocationsRes.error||historyRes.error||claimsRes.error||ledgerRes.error||withdrawalsRes.error||dailyClicksRes.error||checkinRes.error;
+  const error=metricsRes.error||walletRes.error||adsRes.error||allocationsRes.error||historyRes.error||claimsRes.error||ledgerRes.error||withdrawalsRes.error||dailyClicksRes.error||checkinRes.error||tradingPhaseRes.error;
   if(error)throw error;
   if(!walletRes.data)throw new Error('لم يتم إنشاء محفظة YT لهذا الحساب بعد.');
   const metrics=(Array.isArray(metricsRes.data)?metricsRes.data[0]:metricsRes.data) as YtMetrics;
   return {metrics,wallet:walletRes.data as YtWallet,ads:(adsRes.data||[]) as YtAd[],allocations:allocationsRes.data||[],
-   history:(historyRes.data||[]).reverse(),claims:claimsRes.data||[],dailyClicks:dailyClicksRes.data||[],checkin:checkinRes.data||null,ledger:ledgerRes.data||[],withdrawals:withdrawalsRes.data||[]};
+   history:(historyRes.data||[]).reverse(),claims:claimsRes.data||[],dailyClicks:dailyClicksRes.data||[],checkin:checkinRes.data||null,tradingPhase:tradingPhaseRes.data,ledger:ledgerRes.data||[],withdrawals:withdrawalsRes.data||[]};
  };
  const startAd=async(adId:string,purpose:'reward'|'liquidation'='reward')=>{
   await ensureAuth();
@@ -66,11 +67,12 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
  const reviewWithdrawal=async(id:string,action:'paid'|'reject',receiptUrl:string,note:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_review_withdrawal',{p_request_id:id,p_action:action,p_receipt_url:receiptUrl||null,p_admin_note:note||null});if(error)throw error;return data;};
  const setManager=async(payId:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_set_manager',{p_pay_id:payId});if(error)throw error;return data;};
  const freezeWallet=async(payId:string,frozen:boolean)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_freeze_wallet',{p_pay_id:payId,p_frozen:frozen});if(error)throw error;return data;};
+ const setTradingLock=async(locked:boolean)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_set_trading_lock',{p_locked:locked});if(error)throw error;return data;};
  const checkAdmin=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_is_admin');if(error)throw error;return Boolean(data);};
  const claimDailyCheckin=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_claim_daily_checkin');if(error)throw error;return data;};
  const claimDailyClick=async(clickNo:number)=>{await ensureAuth();const {data,error}=await client.rpc('yt_claim_daily_click',{p_click_no:clickNo});if(error)throw error;return data;};
  const attachReferrer=async(address:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_attach_referrer',{p_referral_address:address});if(error)throw error;return data;};
  const getReferralStats=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_get_referral_stats');if(error)throw error;return data as {invited_count:number;activated_count:number;earnings_units:number};};
- return {loadDashboard,startAd,verifyAd,setPin,liquidate,sendPay,resolvePayRecipient,checkAdmin,depositRevenue,manageAd,setManager,freezeWallet,requestWithdrawal,reviewWithdrawal,claimDailyCheckin,claimDailyClick,attachReferrer,getReferralStats};
+ return {loadDashboard,setTradingLock,startAd,verifyAd,setPin,liquidate,sendPay,resolvePayRecipient,checkAdmin,depositRevenue,manageAd,setManager,freezeWallet,requestWithdrawal,reviewWithdrawal,claimDailyCheckin,claimDailyClick,attachReferrer,getReferralStats};
 }
 export const ytCoinService=createYtCoinService(supabase);
