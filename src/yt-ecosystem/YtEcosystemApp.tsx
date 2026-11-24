@@ -111,6 +111,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
   }
  };
  const dailyClaimed=useMemo(()=>new Set(claims.map(c=>c.ad_id)),[claims]);
+ const nextDailyClick=[1,2,3,4,5].find(n=>!dailyClickClaims.includes(n))||6;
  const price=metrics?.price_usd_per_yt||0;
  const fee=Number(payAmount||0)*0.03;
  const net=Number(payAmount||0)-fee;
@@ -161,9 +162,9 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
     {dailyCheckinClaimed&&<div className="mt-4 border-t border-amber-300/15 pt-3">
      <div className="mb-2 flex items-center justify-between gap-2"><b className="text-xs text-amber-100">سلسلة النقرات اليومية</b><span className="text-[10px] text-slate-400">{dailyClickClaims.length}/5 مكتملة</span></div>
      <div className="grid grid-cols-5 gap-2">
-      {[1,2,3,4,5].filter(n=>n<=Math.min(5,(dailyClickClaims.includes(1)?(dailyClickClaims.includes(2)?(dailyClickClaims.includes(3)?(dailyClickClaims.includes(4)?5:4):3):2):1))).map(n=>{
+      {[1,2,3,4,5].filter(n=>n<=nextDailyClick).map(n=>{
        const claimed=dailyClickClaims.includes(n);
-       const nextAllowed=n===dailyClickClaims.length+1;
+       const nextAllowed=n===nextDailyClick;
        return <button key={n} type="button" disabled={busy||claimed||!nextAllowed} onClick={()=>run(()=>api.claimDailyClick(n),`تم تسجيل النقرة رقم ${n} وإضافة 0.01000 TSK إلى رصيد التعدين.`)} className={`flex min-w-0 flex-col items-center gap-1 rounded-xl border px-1 py-2 transition-all ${claimed?'border-emerald-400/30 bg-emerald-950/50 text-emerald-300':nextAllowed?'border-amber-300/70 bg-gradient-to-b from-amber-400/20 to-amber-900/20 text-amber-100 shadow-[0_0_14px_rgba(245,185,55,.12)]':'border-white/5 bg-black/20 text-slate-600'}`}>
         <img src="/images/taska-coin.png" alt="TSK" className={`h-7 w-7 rounded-full object-cover ${claimed?'opacity-70':''}`}/>
         <span className="text-[9px] font-bold">{claimed?'مكتملة':`النقرة ${n}`}</span>
