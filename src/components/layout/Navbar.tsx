@@ -111,12 +111,12 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
               </button>
               <button
                 type="button"
-                onClick={() => onNavigate('how_it_works')}
+                onClick={() => onNavigate('info_center')}
                 className={`hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 cursor-pointer ${
-                  currentTab === 'how_it_works' ? 'text-emerald-600 dark:text-emerald-400 font-bold border-b-2 border-emerald-600' : ''
+                  currentTab === 'info_center' ? 'text-emerald-600 dark:text-emerald-400 font-bold border-b-2 border-emerald-600' : ''
                 }`}
               >
-                طرق الدفع باليمن
+                مركز المعلومات والسحب والسياسات
               </button>
               {user && (
                 <button
@@ -465,15 +465,15 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
 
               <button
                 type="button"
-                onClick={() => navigateFromDrawer('how_it_works')}
+                onClick={() => navigateFromDrawer('info_center')}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-colors ${
-                  currentTab === 'how_it_works'
+                  currentTab === 'info_center'
                     ? 'bg-emerald-600 text-white'
                     : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
                 <HelpCircle className="w-4 h-4 shrink-0" />
-                <span>المساعدة وطرق الدفع</span>
+                <span>مركز المعلومات والسحب والسياسات</span>
               </button>
             </nav>
 
