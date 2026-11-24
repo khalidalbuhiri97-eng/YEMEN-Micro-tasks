@@ -147,7 +147,7 @@ function MainApp() {
         {currentTab === 'home' && (
           <main>
             <HomeShortcutsStrip onNavigate={(tab) => setCurrentTab(tab as any)} />
-            <YtEcosystemApp compact onOpen={() => setCurrentTab('ytcoin')} />
+            <YtEcosystemApp compact user={user} isAdmin={isAdmin} onLogin={() => openAuthModal('login')} onOpen={() => setCurrentTab('ytcoin')} />
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
@@ -163,12 +163,12 @@ function MainApp() {
 
         {currentTab === 'ytcoin' && (
           <div className="w-full h-full min-h-[100dvh]">
-            <YtEcosystemApp onExit={() => setCurrentTab('home')} />
+            <YtEcosystemApp user={user} isAdmin={isAdmin} onLogin={() => openAuthModal('login')} onExit={() => setCurrentTab('home')} />
           </div>
         )}
 
         {currentTab === 'earn_ads' && (
-          <YtEcosystemApp initialTab="mine" onExit={() => setCurrentTab('home')} />
+          <YtEcosystemApp user={user} isAdmin={isAdmin} onLogin={() => openAuthModal('login')} initialTab="mine" onExit={() => setCurrentTab('home')} />
         )}
 
         {currentTab === 'tasks' && (
