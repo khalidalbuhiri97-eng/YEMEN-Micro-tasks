@@ -39,7 +39,7 @@ function MainApp() {
   const [isResetPasswordRoute, setIsResetPasswordRoute] = useState<boolean>(() =>
     isResetPasswordLocation()
   );
-  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin' | 'info_center'>('home');
+  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'referrals' | 'settings' | 'advertiser' | 'admin' | 'ytcoin' | 'info_center'>('home');
   const [offerwallDefaultView, setOfferwallDefaultView] = useState<'hub' | 'wall' | 'gg-wall'>('hub');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -206,6 +206,13 @@ function MainApp() {
 
         {currentTab === 'dashboard' && (
           <DashboardLayout
+            onNavigateHome={() => setCurrentTab('home')}
+          />
+        )}
+
+        {(currentTab === 'referrals' || currentTab === 'settings') && (
+          <DashboardLayout
+            initialSubTab={currentTab}
             onNavigateHome={() => setCurrentTab('home')}
           />
         )}
