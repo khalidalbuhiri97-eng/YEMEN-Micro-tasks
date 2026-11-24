@@ -64,6 +64,7 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
  const reviewWithdrawal=async(id:string,action:'paid'|'reject',receiptUrl:string,note:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_review_withdrawal',{p_request_id:id,p_action:action,p_receipt_url:receiptUrl||null,p_admin_note:note||null});if(error)throw error;return data;};
  const setManager=async(payId:number)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_set_manager',{p_pay_id:payId});if(error)throw error;return data;};
  const freezeWallet=async(payId:number,frozen:boolean)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_freeze_wallet',{p_pay_id:payId,p_frozen:frozen});if(error)throw error;return data;};
+ const checkAdmin=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_is_admin');if(error)throw error;return Boolean(data);};
  return {loadDashboard,startAd,verifyAd,setPin,liquidate,sendPay,depositRevenue,manageAd,setManager,freezeWallet,requestWithdrawal,reviewWithdrawal};
 }
 export const ytCoinService=createYtCoinService(supabase);
