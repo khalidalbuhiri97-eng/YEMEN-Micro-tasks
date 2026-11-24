@@ -89,11 +89,6 @@ function MainApp() {
     setIsDark((prev) => !prev);
   };
 
-  const handleSelectCategoryFromHome = (cat: string) => {
-    setSelectedCategory(cat);
-    setCurrentTab('tasks');
-  };
-
   useEffect(() => {
     const syncRoute = () => {
       setIsResetPasswordRoute(isResetPasswordLocation());
