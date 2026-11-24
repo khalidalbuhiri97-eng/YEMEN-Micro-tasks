@@ -618,7 +618,7 @@ export const AdminDashboard: React.FC = () => {
             <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-emerald-400 mb-1">
               <span className="flex items-center gap-1.5">
                 <ShieldAlert className="w-4 h-4" />
-                <span>لوحة التحكم والإدارة والتدقيق المالي (ADMIN)</span>
+                <span>لوحة إدارة المنصة (ADMIN)</span>
               </span>
               <span className="text-slate-500">·</span>
               <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono text-[11px]" dir="ltr">
@@ -626,10 +626,10 @@ export const AdminDashboard: React.FC = () => {
               </span>
             </div>
             <h1 className="text-xl sm:text-2xl font-extrabold text-white">
-              إدارة منصة كسب اليمن والمحفظة السيادية
+              إدارة منصة Yemen Task
             </h1>
             <p className="text-xs text-slate-300 mt-1">
-              تدقيق الإثباتات، معالجة السحوبات البنكية، مراقبة السيولة والالتزامات المالية.
+              إدارة المهام والمستخدمين والإعلانات والإعدادات من لوحة واحدة.
             </p>
           </div>
 
@@ -657,7 +657,7 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Admin Navigation Tabs */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 border-b border-slate-200 dark:border-slate-800 text-xs">
+      <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-slate-200 dark:border-slate-800 text-xs">
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
           { id: 'ad_center', label: 'مركز الإعلانات والقوالب', count: null },
