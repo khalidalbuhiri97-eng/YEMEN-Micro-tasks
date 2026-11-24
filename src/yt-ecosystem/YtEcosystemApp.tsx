@@ -73,8 +73,8 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
  const [adTypeFilter,setAdTypeFilter]=useState<'video'|'smart_link'|'banner_ad'>('video');
  const refresh=useCallback(async()=>{
   if(!user?.id)return;
-  const d=await api.loadDashboard(user.id,canAdmin);
-  setMetrics(d.metrics);setWallet(d.wallet);setAds(d.ads);setAllocations(d.allocations);
+  const [d,refStats]=await Promise.all([api.loadDashboard(user.id,canAdmin),api.getReferralStats()]);
+  setReferralStats(refStats);setMetrics(d.metrics);setWallet(d.wallet);setAds(d.ads);setAllocations(d.allocations);
   setHistory(d.history);setClaims(d.claims);setDailyClicks(d.dailyClicks||[]);setCheckin(d.checkin||null);setLedger(d.ledger);setWithdrawals(d.withdrawals);
  },[user?.id,canAdmin,api]);
  useEffect(()=>{refresh().catch(e=>setNotice(msg(e)));},[refresh]);
