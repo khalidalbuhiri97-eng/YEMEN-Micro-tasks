@@ -37,6 +37,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
  const [history,setHistory]=useState<any[]>([]);
  const [claims,setClaims]=useState<any[]>([]);
  const [ledger,setLedger]=useState<any[]>([]);
+ const [withdrawals,setWithdrawals]=useState<any[]>([]);
  const [busy,setBusy]=useState(false);
  const [notice,setNotice]=useState('');
  const [session,setSession]=useState<{token:string;purpose:'reward'|'liquidation';adId:string;startedAt:number;adUrl:string}|null>(null);
@@ -49,15 +50,20 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
  const [payAmount,setPayAmount]=useState('');
  const [payNote,setPayNote]=useState('');
  const [deposit,setDeposit]=useState('');
+ const [withdrawAmount,setWithdrawAmount]=useState('');
+ const [payoutMethod,setPayoutMethod]=useState('');
+ const [payoutDestination,setPayoutDestination]=useState('');
+ const [receiptUrl,setReceiptUrl]=useState('');
+ const [withdrawalNote,setWithdrawalNote]=useState('');
  const [managerPayId,setManagerPayId]=useState('');
  const [freezePayId,setFreezePayId]=useState('');
  const [adDraft,setAdDraft]=useState({title:'',ad_type:'video' as 'video'|'smart_link'|'banner_ad',ad_url:'',ad_code:'',reward_yt:'0.01000',duration_seconds:'30',is_active:true});
  const [adTypeFilter,setAdTypeFilter]=useState<'video'|'smart_link'|'banner_ad'>('video');
  const refresh=useCallback(async()=>{
   if(!user?.id)return;
-  const d=await api.loadDashboard(user.id);
+  const d=await api.loadDashboard(user.id,isAdmin);
   setMetrics(d.metrics);setWallet(d.wallet);setAds(d.ads);setAllocations(d.allocations);
-  setHistory(d.history);setClaims(d.claims);setLedger(d.ledger);
+  setHistory(d.history);setClaims(d.claims);setLedger(d.ledger);setWithdrawals(d.withdrawals);
  },[user?.id,api]);
  useEffect(()=>{refresh().catch(e=>setNotice(msg(e)));},[refresh]);
  const run=async(fn:()=>Promise<any>,success:string)=>{
@@ -104,7 +110,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
    <div className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><h3 className="mb-3 font-bold">أمان المحفظة</h3><div className="grid grid-cols-2 gap-2"><input value={currentPin} onChange={e=>setCurrentPin(e.target.value)} type="password" inputMode="numeric" maxLength={6} placeholder="PIN الحالي (إن وجد)" className="min-w-0 rounded-xl bg-black/30 p-3 text-xs"/><input value={newPin} onChange={e=>setNewPin(e.target.value)} type="password" inputMode="numeric" maxLength={6} placeholder="PIN جديد 4–6 أرقام" className="min-w-0 rounded-xl bg-black/30 p-3 text-xs"/></div><button disabled={busy||!newPin} onClick={()=>run(()=>api.setPin(newPin,currentPin||undefined).then(x=>{setNewPin('');setCurrentPin('');return x;}),'تم حفظ PIN مشفر للمحفظة.')} className="mt-2 w-full rounded-xl border border-amber-300/40 py-3 text-xs font-bold text-amber-200"><LockKeyhole size={14} className="ml-2 inline"/>تعيين / تغيير رمز الحماية</button></div>
    <div className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><h3 className="mb-2 font-bold">سجل عمليات المحفظة</h3>{ledger.length?ledger.map((l:any)=><div key={l.id} className="flex items-center justify-between gap-2 border-t border-white/10 py-2 text-[11px]"><span className="min-w-0 truncate">{l.description||l.transaction_type}</span><b className={l.amount_units<0?'text-rose-300':'text-emerald-300'}>{l.amount_units<0?'−':'+'}{ytc(Math.abs(l.amount_units))}</b></div>):<p className="text-xs text-slate-500">لا توجد حركات مسجلة بعد.</p>}</div>
    {ads.filter(a=>a.ad_type==='banner_ad').slice(0,1).map(a=><a key={a.id} href={a.ad_url} target="_blank" rel="noopener noreferrer" className={`block rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><span className="text-[10px] text-amber-300">إعلان مدمج · YT Coin</span><b className="mt-1 block text-sm text-amber-100">{a.title}</b></a>)}<div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-100/80">مساحة إعلان YT Coin — بدون نوافذ منبثقة</div>
-   <button type="button" disabled className="w-full rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-slate-500"><ArrowDownToLine size={14} className="ml-2 inline"/>السحب النقدي غير متاح حتى ربط بوابة صرف معتمدة</button>
+   <div className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><div className="flex items-center justify-between gap-2"><h3 className="font-bold">طلب سحب YT Coin</h3><span className="text-[10px] text-slate-400">قيد المراجعة اليدوية</span></div><p className="mt-1 text-xs text-slate-400">المبلغ المحجوز لطلبات السحب: {ytc(wallet?.withdrawal_pending_units||0)}</p><div className="mt-3 grid grid-cols-2 gap-2"><input value={withdrawAmount} onChange={e=>setWithdrawAmount(e.target.value)} inputMode="decimal" placeholder="المبلغ بـ YT" className="min-w-0 rounded-xl bg-black/30 p-3 text-xs"/><input value={payoutMethod} onChange={e=>setPayoutMethod(e.target.value)} placeholder="وسيلة الاستلام" className="min-w-0 rounded-xl bg-black/30 p-3 text-xs"/></div><input value={payoutDestination} onChange={e=>setPayoutDestination(e.target.value)} placeholder="بيانات الاستلام / رقم الحساب" className="mt-2 w-full rounded-xl bg-black/30 p-3 text-xs"/><button disabled={busy||!withdrawAmount||!payoutMethod||!payoutDestination||!pin} onClick={()=>run(()=>api.requestWithdrawal(Number(withdrawAmount),payoutMethod,payoutDestination,pin),'تم حجز المبلغ وإرسال طلب السحب للمراجعة.')} className="mt-2 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950"><ArrowDownToLine size={14} className="ml-2 inline"/>إرسال طلب السحب مع PIN</button><div className="mt-3 space-y-2">{withdrawals.map((w:any)=><div key={w.id} className="rounded-xl bg-black/25 p-3 text-xs"><div className="flex items-center justify-between"><b>{ytc(w.amount_units)}</b><span className={w.status==='paid'?'text-emerald-300':w.status==='rejected'?'text-rose-300':'text-amber-300'}>{w.status==='paid'?'تم الصرف':w.status==='rejected'?'مرفوض':'قيد المراجعة'}</span></div><p className="mt-1 text-[10px] text-slate-500">{w.payout_method} · {new Date(w.created_at).toLocaleDateString('ar')}</p>{w.receipt_url&&<a className="mt-1 inline-block text-emerald-300 underline" href={w.receipt_url} target="_blank" rel="noopener noreferrer">عرض إيصال الصرف</a>}</div>)}</div></div>
   </section>}
   {tab==='mine'&&<section className="space-y-3">
    <div className={`rounded-2xl bg-[#151923] p-4 ${GOLD}`}><h2 className="font-black">مركز التعدين الإعلاني</h2><p className="mt-1 text-xs text-slate-400">كل إعلان مؤهل للمكافأة مرة واحدة في اليوم حسب توقيت صنعاء/عدن.</p><div className="mt-3 grid grid-cols-3 gap-1">{([{id:'video',label:'فيديوهات',icon:Film},{id:'smart_link',label:'روابط ذكية',icon:Link2},{id:'banner_ad',label:'سريعة',icon:Smartphone}] as const).map(x=><button key={x.id} onClick={()=>setAdTypeFilter(x.id)} className={`rounded-xl p-2 text-[10px] font-bold ${adTypeFilter===x.id?'bg-amber-400 text-slate-950':'bg-black/20 text-slate-400'}`}><x.icon size={15} className="mx-auto mb-1"/>{x.label}</button>)}</div></div>
