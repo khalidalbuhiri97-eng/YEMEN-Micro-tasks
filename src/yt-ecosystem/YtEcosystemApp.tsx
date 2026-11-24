@@ -106,8 +106,6 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
  const feeUnits=Math.floor(amountUnits*3/100);
  const burnUnits=Math.floor(feeUnits*10/100);
  const netUnits=amountUnits-feeUnits;
- const fee=feeUnits/100000;
- const net=netUnits/100000;
  const copyWalletAddress=async()=>{const address=payIdLabel(wallet?.pay_id);if(!address)return;try{await navigator.clipboard.writeText(address);setNotice('تم نسخ عنوان المحفظة ✓');}catch{setNotice('تعذر النسخ تلقائياً؛ حدد العنوان وانسخه.');}};
  const claimClick=async()=>{const next=dailyClicks.length+1;if(next>5){setNotice('استخدمت النقرات الخمس المتاحة لهذا اليوم.');return;}await run(()=>api.claimDailyClick(next),'تمت إضافة 0.01000 TSK إلى رصيدك.');};
  if(compact)return <button type="button" onClick={onOpen} className={`w-full rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950 p-4 text-right text-white ${GOLD}`}><div className="flex items-center justify-between"><span className="flex items-center gap-2 font-black"><img src="/images/taska-coin.png" alt="Taska Coin" className="h-7 w-7 rounded-full object-contain"/>منظومة Taska Coin</span><ChevronLeft className="h-5 w-5 text-amber-300"/></div><div className="mt-3 flex items-end justify-between"><div><p className="text-xs text-amber-100/70">السعر الحي</p><p className="text-xl font-black" dir="ltr">{usd(price)} / TSK</p></div><div className="text-left"><p className="text-xs text-amber-100/70">مكافآت الإعلانات</p><p className="font-bold text-amber-300">{ytc(metrics?.daily_mining_reward_units||0)}</p></div></div></button>;
