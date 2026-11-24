@@ -64,7 +64,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
   const d=await api.loadDashboard(user.id,isAdmin);
   setMetrics(d.metrics);setWallet(d.wallet);setAds(d.ads);setAllocations(d.allocations);
   setHistory(d.history);setClaims(d.claims);setLedger(d.ledger);setWithdrawals(d.withdrawals);
- },[user?.id,api]);
+ },[user?.id,isAdmin,api]);
  useEffect(()=>{refresh().catch(e=>setNotice(msg(e)));},[refresh]);
  const run=async(fn:()=>Promise<any>,success:string)=>{
   setBusy(true);setNotice('');
