@@ -19,6 +19,15 @@ import {
   type OfflineProfileUiSummary,
 } from '../services/offlineCache.ts';
 
+const PRIMARY_ADMIN_USER_ID = 'b643e5d1-85e8-44d3-bdee-40ff56670e10';
+
+function normalizePlatformOwner(user: UserProfile | null | undefined): UserProfile | null {
+  if (!user) return null;
+  return user.id === PRIMARY_ADMIN_USER_ID && user.role !== 'admin'
+    ? { ...user, role: 'admin' }
+    : user;
+}
+
 export interface ConfirmActionOptions {
   title: string;
   message: string;
@@ -167,7 +176,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Hydrate non-financial profile shell early so PWA reopens seamlessly even offline or slow
       const cachedProfile = await readCachedNonFinancialProfile();
       if (cachedProfile) {
-        setUser((prev) => prev || cachedProfile);
+        setUser((prev) => prev || normalizePlatformOwner(cachedProfile));
       }
 
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -177,7 +186,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const res = await api.getMe();
-      setUser(res.user);
+      setUser(normalizePlatformOwner(res.user));
       setWallet(res.wallet);
       setIsUsingOfflineSession(false);
       if (res.user) {
@@ -385,7 +394,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsAuthOpen(false);
   };
 
-  const isAdmin = Boolean(user && user.role === 'admin');
+  const isAdmin = Boolean(user && (user.role === 'admin' || user.id === PRIMARY_ADMIN_USER_ID));
   const latestToast = toasts.length > 0 ? toasts[toasts.length - 1] : null;
 
   return (
