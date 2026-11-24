@@ -5091,14 +5091,14 @@ app.put('/api/admin/task-categories/:slug', adminMiddleware, async (req: Authent
 });
 
 // YT Coin isolated advertising postback. Provider must sign the canonical payload server-side.
-app.post('/api/yt-ecosystem/ad-postback', async (req: Request, res: Response) => {
+app.all('/api/yt-ecosystem/ad-postback', async (req: Request, res: Response) => {
   try {
     const secret = String(process.env.YT_ECOSYSTEM_AD_POSTBACK_SECRET || '').trim();
     if (!secret) return res.status(503).json({ error: 'YT_POSTBACK_SECRET_NOT_CONFIGURED' });
-    const payload = req.body || {};
+    const payload = { ...(req.query || {}), ...(req.body || {}) };
     const sessionId = String(payload.sessionId || payload.yt_session_id || req.query.yt_session_id || '').trim();
     const userId = String(payload.userId || payload.yt_user_id || req.query.yt_user_id || '').trim();
-    const providerEventId = String(payload.providerEventId || payload.transactionId || '').trim();
+    const providerEventId = String(payload.providerEventId || payload.transactionId || payload.event_id || '').trim();
     const signature = String(payload.signature || payload.sig || '').trim().toLowerCase();
     if (!sessionId || !userId || providerEventId.length < 4 || !/^[a-f0-9]{64}$/.test(signature)) {
       return res.status(400).json({ error: 'INVALID_YT_POSTBACK' });
