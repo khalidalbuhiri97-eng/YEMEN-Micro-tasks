@@ -40,7 +40,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
  const [ledger,setLedger]=useState<any[]>([]);
  const [busy,setBusy]=useState(false);
  const [notice,setNotice]=useState('');
- const [session,setSession]=useState<{token:string;purpose:'reward'|'liquidation';adId:string;startedAt:number}|null>(null);
+ const [session,setSession]=useState<{token:string;purpose:'reward'|'liquidation';adId:string;startedAt:number;adUrl:string}|null>(null);
  const [liquidationToken,setLiquidationToken]=useState('');
  const [pin,setPin]=useState('');
  const [currentPin,setCurrentPin]=useState('');
@@ -70,7 +70,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
  const startAd=async(ad:YtAd,purpose:'reward'|'liquidation'='reward')=>{
   const result=await run(()=>ytStartAd(ad.id,purpose),'بدأت جلسة الإعلان. افتح الإعلان ثم تحقق بعد انتهاء المدة.');
   if(!result)return;
-  setSession({token:result.session_token,purpose,adId:ad.id,startedAt:Date.now()});
+  setSession({token:result.session_token,purpose,adId:ad.id,startedAt:Date.now(),adUrl:result.ad_url});
   if(purpose==='liquidation')setLiquidationToken('');
   if(result.ad_url)window.open(result.ad_url,'_blank','noopener,noreferrer');
  };
@@ -111,7 +111,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
    <div className={`rounded-2xl bg-[#151923] p-4 ${GOLD}`}><h2 className="font-black">مركز التعدين الإعلاني</h2><p className="mt-1 text-xs text-slate-400">كل إعلان مؤهل للمكافأة مرة واحدة في اليوم حسب توقيت صنعاء/عدن.</p><div className="mt-3 grid grid-cols-3 gap-1">{([{id:'video',label:'فيديوهات',icon:Film},{id:'smart_link',label:'روابط ذكية',icon:Link2},{id:'banner_ad',label:'سريعة',icon:Smartphone}] as const).map(x=><button key={x.id} onClick={()=>setAdTypeFilter(x.id)} className={`rounded-xl p-2 text-[10px] font-bold ${adTypeFilter===x.id?'bg-amber-400 text-slate-950':'bg-black/20 text-slate-400'}`}><x.icon size={15} className="mx-auto mb-1"/>{x.label}</button>)}</div></div>
    {ads.filter(a=>a.ad_type===adTypeFilter).map(a=>{const done=dailyClaimed.has(a.id);return <article key={a.id} className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="font-bold">{a.title}</h3><p className="mt-1 text-[11px] text-slate-400">{a.duration_seconds} ثانية · {a.ad_type==='video'?'فيديو مكافأة':a.ad_type==='smart_link'?'رابط ذكي':'إعلان سريع'}</p></div><b className="shrink-0 text-sm text-amber-300">{ytc(a.reward_units)}</b></div>{a.ad_code&&<pre className="mt-2 max-h-20 overflow-auto rounded-lg bg-black/30 p-2 text-[10px] text-slate-400">{a.ad_code}</pre>}<button disabled={busy||done} onClick={()=>startAd(a,'reward')} className={`mt-3 w-full rounded-xl py-3 text-xs font-black ${done?'bg-emerald-900/50 text-emerald-300':'bg-amber-400 text-slate-950'}`}>{done?<><CheckCircle2 size={14} className="ml-2 inline"/>مكتمل اليوم ✓</>:<><Play size={14} className="ml-2 inline"/>ابدأ الإعلان</>}</button></article>})}
    {!ads.some(a=>a.ad_type===adTypeFilter)&&<div className="rounded-2xl bg-[#11151e] p-5 text-center text-xs text-slate-500">لا توجد إعلانات في هذا القسم حالياً.</div>}
-   {session?.purpose==='reward'&&<div className={`rounded-2xl bg-amber-950/30 p-4 ${GOLD}`}><p className="text-sm font-bold text-amber-200">جلسة الإعلان نشطة</p><p className="mt-1 text-xs text-slate-400">بعد انتهاء مدة الإعلان المحددة، اضغط للتحقق. يعتمد الخادم على توقيته وليس ساعة هاتفك.</p><button disabled={busy} onClick={verifyAd} className="mt-3 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950">تحقق من إكمال الإعلان واستلام المكافأة</button></div>}
+   {session&&<div className={`rounded-2xl bg-amber-950/30 p-4 ${GOLD}`}><p className="text-sm font-bold text-amber-200">جلسة الإعلان نشطة</p><p className="mt-1 text-xs text-slate-400">افتح الإعلان وانتظر المدة المطلوبة، ثم تحقق. يعتمد الخادم على توقيته وليس ساعة هاتفك.</p><a href={session.adUrl} target="_blank" rel="noopener noreferrer" className="mt-3 block rounded-xl border border-amber-300/40 py-3 text-center text-xs font-bold text-amber-200">فتح الإعلان في نافذة جديدة</a><button disabled={busy} onClick={verifyAd} className="mt-2 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950">تحقق من الإكمال {session.purpose==='liquidation'?'لفتح التسييل':'واستلام المكافأة'}</button></div>}
    <div className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><h3 className="font-bold"><Users className="ml-2 inline text-amber-300"/>نظام الإحالات · 10%</h3><p className="mt-2 text-xs leading-6 text-slate-400">يحصل المُحيل على 10% من مكافأة كل إعلان مكتمل، من مخصص التسويق والإحالات.</p><div className="mt-3 break-all rounded-xl bg-black/30 p-3 text-xs" dir="ltr">{user.referralCode?window.location.origin+'/?ref='+user.referralCode:'كود الإحالة غير متاح حالياً'}</div></div>
   </section>}
   {tab==='admin'&&isAdmin&&<section className="space-y-3">
