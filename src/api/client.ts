@@ -77,14 +77,15 @@ export async function syncSupabaseSession(): Promise<void> {
   const accessToken = getAuthToken();
   const refreshToken = getRefreshToken();
   if (!accessToken || !refreshToken) return;
-  const { data, error } = await supabase.auth.getSession();
-  if (error) throw error;
-  if (data.session?.access_token === accessToken) return;
-  const { error: setError } = await supabase.auth.setSession({
+  const { data, error } = await supabase.auth.setSession({
     access_token: accessToken,
     refresh_token: refreshToken,
   });
-  if (setError) throw setError;
+  if (error) throw error;
+  if (data.session) {
+    localStorage.setItem('kasb_auth_token', data.session.access_token);
+    localStorage.setItem('kasb_refresh_token', data.session.refresh_token);
+  }
 }
 
 export function setAuthTokens(token?: string | null, refreshToken?: string | null): void {
