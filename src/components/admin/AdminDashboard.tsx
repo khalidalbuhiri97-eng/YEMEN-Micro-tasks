@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api/client.ts';
+import { YtEcosystemApp } from '../../yt-ecosystem/YtEcosystemApp.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
 import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, CampaignItem, TaskBuilderMeta } from '../../types/index.ts';
 import { DatabaseErrorsView } from './DatabaseErrorsView.tsx';
@@ -41,8 +42,8 @@ import {
 import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.ts';
 
 export const AdminDashboard: React.FC = () => {
-  const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'geo' | 'ad_center' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const { user, isAdmin, showToast, openConfirmModal } = useAuth();
+  const [activeTab, setActiveTab] = useState<'overview' | 'geo' | 'ad_center' | 'taska_coin' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
@@ -624,6 +625,7 @@ export const AdminDashboard: React.FC = () => {
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
           { id: 'ad_center', label: 'مركز الإعلانات والقوالب', count: null },
+          { id: 'taska_coin', label: 'Taska Coin · المحافظ والإعدادات', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
@@ -692,6 +694,12 @@ export const AdminDashboard: React.FC = () => {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'taska_coin' && isAdmin && (
+        <div className="-mx-3 sm:-mx-5">
+          <YtEcosystemApp user={user ? { id: user.id, referralCode: (user as any).referralCode } : null} isAdmin={isAdmin} initialTab="admin" />
         </div>
       )}
 
