@@ -68,9 +68,16 @@ export function hasRecoveryEventDetected(): boolean {
 }
 
 if (typeof window !== 'undefined') {
-  supabase.auth.onAuthStateChange((event) => {
+  supabase.auth.onAuthStateChange((event, session) => {
     if (event === 'PASSWORD_RECOVERY') {
       markRecoveryEventDetected();
+    } else if (event === 'TOKEN_REFRESHED' && session) {
+      try {
+        localStorage.setItem('kasb_auth_token', session.access_token);
+        localStorage.setItem('kasb_refresh_token', session.refresh_token);
+      } catch {
+        // The in-memory Supabase session remains valid if storage is unavailable.
+      }
     } else if (event === 'SIGNED_OUT') {
       clearRecoveryEventDetected();
     }
