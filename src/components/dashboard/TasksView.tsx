@@ -16,7 +16,6 @@ import {
   Link2,
   SlidersHorizontal,
 } from 'lucide-react';
-import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 import { GeoLocationSelector, type GeoFilterValue } from '../common/GeoLocationSelector.tsx';
 import { formatYer } from '../../../shared/money.ts';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
@@ -653,23 +652,15 @@ export const TasksView: React.FC<TasksViewProps> = ({ initialCategory }) => {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {displayedTasks.map((task, index) => (
-            <React.Fragment key={task.id}>
-              <TaskVisualCard
-                task={task}
-                isFavorited={favoriteIds.includes(task.id) || Boolean(task.isFavorited)}
-                onStart={handleStartTask}
-                onInfo={handleInfoTask}
-                onToggleFavorite={toggleFavorite}
-              />
-
-              {(index + 1) % 2 === 0 && (
-                <AdsterraAd
-                  placementId={`tasks_between_${index + 1}`}
-                  className="col-span-full"
-                />
-              )}
-            </React.Fragment>
+          {displayedTasks.map((task) => (
+            <TaskVisualCard
+              key={task.id}
+              task={task}
+              isFavorited={favoriteIds.includes(task.id) || Boolean(task.isFavorited)}
+              onStart={handleStartTask}
+              onInfo={handleInfoTask}
+              onToggleFavorite={toggleFavorite}
+            />
           ))}
         </div>
       )}

@@ -4897,6 +4897,13 @@ app.get('/api/clixwall/rewards', authMiddleware, clixwallHandlers.getRewards);
 app.get('/api/offerwall-gg/url', authMiddleware, offerwallGgHandlers.getOfferWallUrl);
 app.get('/api/offerwall-gg/rewards', authMiddleware, offerwallGgHandlers.getRewards);
 app.all('/api/postbacks/offerwall-gg', offerwallGgHandlers.handlePostback);
+app.all('/api/offerwall/callback', offerwallGgHandlers.handlePostback);
+app.all('/offerwall/callback', offerwallGgHandlers.handlePostback);
+app.all('/api/offerwall-gg/callback', offerwallGgHandlers.handlePostback);
+app.all('/offerwall-gg/callback', offerwallGgHandlers.handlePostback);
+app.all('/callback', offerwallGgHandlers.handlePostback);
+app.all('/offerwall', offerwallGgHandlers.handleDirectOfferwallGet);
+app.all('/api/offerwall', offerwallGgHandlers.handleDirectOfferwallGet);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
 app.all('/api/clixwall/postback', clixwallHandlers.handlePostback);
 

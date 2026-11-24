@@ -16,6 +16,17 @@
   font-feature-settings: 'tnum' on, 'cv02' on, 'cv03' on, 'cv04' on;
 }
 
+/* Royal Luxury Golden Gradient Border & Glow System */
+.gold-gradient-border {
+  border: 1.5px solid transparent;
+  border-image: linear-gradient(135deg, #FDE68A 0%, #D97706 50%, #B45309 100%) 1;
+  box-shadow: 0 4px 20px -2px rgba(217, 119, 6, 0.14);
+}
+
+.gold-badge-glow {
+  box-shadow: 0 2px 12px rgba(217, 119, 6, 0.22);
+}
+
 /* Hide scrollbars cleanly for swipeable mobile carousels */
 .no-scrollbar::-webkit-scrollbar {
   display: none;

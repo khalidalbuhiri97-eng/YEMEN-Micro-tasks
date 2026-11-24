@@ -8,14 +8,13 @@ import {
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
-import { HomeAdWindow } from '../ads/HomeAdWindow.tsx';
 import { ClixWallHomeCard } from '../home/ClixWallHomeCard.tsx';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
 
 interface HeroProps {
   onStartEarning: () => void;
   onExploreTasks: () => void;
-  onGoToOfferWall?: () => void;
+  onGoToOfferWall?: (provider?: 'clixwall' | 'offerwall-gg' | 'hub') => void;
 }
 
 export const Hero: React.FC<HeroProps> = ({
@@ -83,92 +82,15 @@ export const Hero: React.FC<HeroProps> = ({
                 بالريال اليمني وسحب مباشر
               </span>
             </h1>
-            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 mb-5">
-              <button
-                type="button"
-                onClick={onExploreTasks}
-                className="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-sm hover:shadow-md transition-all shrink-0 cursor-pointer"
-              >
-                تصفح المهام المتاحة
-              </button>
-
-              <button
-                type="button"
-                onClick={onGoToOfferWall || onStartEarning}
-                title="فتح حائط عروض ClixWall اليومية"
-                className="px-4 py-3 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white font-bold text-sm rounded-xl border border-amber-500/40 shadow-sm transition-all flex items-center gap-2 shrink-0 cursor-pointer group"
-              >
-                <ClixWallIcon size={19} />
-                <span>عروض ClixWall</span>
-                <span className="text-xs text-amber-400 font-mono font-extrabold">USD</span>
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-y-2 gap-x-5 text-[11px] sm:text-xs text-slate-600 dark:text-slate-400">
-              <span className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                بدون عمولات خفية
-              </span>
-              <span className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                سحب يبدأ من <strong className="font-mono text-slate-900 dark:text-white">{stats.minWithdrawal.toLocaleString()} ر.ي</strong>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                عروض دولية مع ClixWall
-              </span>
-            </div>
           </div>
 
           {/* Swipeable offer and ad cards */}
           <div className="lg:col-span-6">
-            <div className="flex items-center justify-between mb-2 lg:hidden text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-              <span>اسحب أفقياً لاستعراض العروض والإعلانات</span>
-              <span className="font-mono text-emerald-600 dark:text-emerald-400">◀ تصفح ▶</span>
-            </div>
-
-            <div className="flex overflow-x-auto snap-x snap-mandatory gap-3 pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 lg:grid lg:grid-cols-2 lg:overflow-visible no-scrollbar items-stretch">
-              <div className="snap-center shrink-0 w-[86vw] max-w-[340px] sm:w-[320px] lg:w-auto flex">
-                <ClixWallHomeCard
-                  onOpenOfferWall={onGoToOfferWall || onStartEarning}
-                  className="w-full min-h-[300px]"
-                />
-              </div>
-
-              <div className="snap-center shrink-0 w-[86vw] max-w-[340px] sm:w-[320px] lg:w-auto flex justify-center">
-                <HomeAdWindow className="w-full min-h-[300px]" />
-              </div>
-
-              <div className="snap-center shrink-0 w-[82vw] max-w-[320px] sm:w-[300px] lg:hidden flex">
-                <div className="w-full min-h-[300px] rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-900 text-white p-5 flex flex-col justify-between shadow-sm">
-                  <div>
-                    <div className="flex items-center gap-2 text-amber-400 text-xs font-bold mb-2">
-                      <Layers className="w-4 h-4 shrink-0" />
-                      <span>بوابة العروض والمهام المتجددة</span>
-                    </div>
-                    <h3 className="text-base font-extrabold mb-2">
-                      شركات عروض ومهام محلية جديدة قريباً
-                    </h3>
-                    <p className="text-xs text-slate-300 leading-relaxed">
-                      استمر بإنجاز المهام المباشرة وشبكة ClixWall يومياً بينما نضيف المزيد من شركاء العروض المعتمدين.
-                    </p>
-                  </div>
-                  <div className="space-y-2.5 pt-4 border-t border-slate-800">
-                    <div className="flex items-center gap-2 text-[11px] text-emerald-400 font-semibold">
-                      <ShieldCheck className="w-4 h-4 shrink-0" />
-                      <span>أرباح موثقة بالريال اليمني</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={onExploreTasks}
-                      className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>استعراض المهام المتاحة الآن</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
+            <div className="w-full max-w-lg mx-auto">
+              <ClixWallHomeCard
+                onOpenOfferWall={(provider) => (onGoToOfferWall ? onGoToOfferWall(provider) : onStartEarning())}
+                className="w-full min-h-[300px]"
+              />
             </div>
           </div>
         </div>

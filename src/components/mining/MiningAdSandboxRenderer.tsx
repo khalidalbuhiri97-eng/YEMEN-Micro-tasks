@@ -1410,71 +1410,9 @@ export const MiningAdTemplateCard: React.FC<{
         </div>
       )}
 
-      {/* Server-Side Dwell / Completion Tracker Strip (tracked banners log 30s views without YT Coin rewards) */}
-      {!isPreview && !compact && template.trackingEnabled && (!isExoClickBanner || adLoadStatus === 'loaded') && (
-        <div className="mt-2.5 pt-2.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-          {!trackingSession ? (
-            <>
-              <span className="text-gray-400 flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span>
-                  {isDisplayBanner
-                    ? `توثيق ظهور ومشاهدة الإعلان (${requiredSec || 30} ثانية · بدون مكافأة YT)`
-                    : `تتبع خادمي للبقاء النشط (${requiredSec} ثانية)`}
-                </span>
-              </span>
-              <button
-                type="button"
-                disabled={trackingBusy}
-                onClick={() => void startOrGetTrackingSession()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/35 text-amber-300 font-bold cursor-pointer disabled:opacity-60"
-              >
-                {trackingBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
-                <span>بدء التتبع النشط</span>
-              </button>
-            </>
-          ) : trackingSession.sessionStatus === 'completed' ? (
-            <div className="w-full flex flex-wrap items-center justify-between gap-2 text-emerald-300">
-              <span className="flex items-center gap-1.5 font-bold">
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>
-                  تم توثيق الجلسة ({Math.floor(trackingSession.activeDurationSec)}ث) —{' '}
-                  {trackingSession.eligibilityResult === 'credited'
-                    ? 'تم اعتماد المكافأة عبر S2S'
-                    : trackingSession.eligibilityResult === 'eligible_for_yt_reward'
-                      ? 'مؤهل بانتظار S2S'
-                      : isDisplayBanner
-                        ? 'مكتمل التتبع (عرض موثق بدون مكافأة YT)'
-                        : 'مكتمل التتبع'}
-                </span>
-              </span>
-            </div>
-          ) : (
-            <div className="w-full flex flex-wrap items-center justify-between gap-2">
-              <span className="flex items-center gap-1.5 font-mono text-gray-300">
-                {!pageVisible ? (
-                  <span className="inline-flex items-center gap-1 text-amber-400 font-bold">
-                    <PauseCircle className="w-3.5 h-3.5" /> متوقف (التبويب مخفي)
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-sky-300 font-bold">
-                    <Clock className="w-3.5 h-3.5" /> الوقت النشط: {Math.floor(serverActiveSec)} / {requiredSec}ث
-                  </span>
-                )}
-              </span>
-
-              <button
-                type="button"
-                disabled={trackingBusy}
-                onClick={() => void handleCompleteTracking()}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/35 text-emerald-300 font-black cursor-pointer disabled:opacity-60"
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>تحقق وإكمال الجلسة</span>
-              </button>
-            </div>
-          )}
-        </div>
+      {/* Silent Background Tracking Engine (Zero UI buttons or countdown timers) */}
+      {false && !isPreview && !compact && template.trackingEnabled && (!isExoClickBanner || adLoadStatus === 'loaded') && (
+        <div className="hidden" />
       )}
 
       {/* Optional Server-Verified YT Coin S2S Network Trigger */}

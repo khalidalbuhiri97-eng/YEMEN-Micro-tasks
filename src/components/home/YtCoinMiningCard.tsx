@@ -40,6 +40,8 @@ import {
   PlayCircle,
   UserCheck,
   Vault,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
@@ -719,6 +721,19 @@ export const YtCoinMiningCard: React.FC<{
     approvedForDistribution: boolean;
   } | null>(null);
   const [savingTreasuryRow, setSavingTreasuryRow] = useState<boolean>(false);
+
+  // Day / Night Theme State for Mining System
+  const [miningTheme, setMiningTheme] = useState<'night' | 'day'>(() => {
+    return (localStorage.getItem('yt_mining_theme') as 'night' | 'day') || 'night';
+  });
+
+  const toggleMiningTheme = () => {
+    const next = miningTheme === 'night' ? 'day' : 'night';
+    setMiningTheme(next);
+    localStorage.setItem('yt_mining_theme', next);
+  };
+
+  const isDay = miningTheme === 'day';
 
   // Wallet Modals & States
   const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
@@ -1411,11 +1426,14 @@ export const YtCoinMiningCard: React.FC<{
   return (
     <div
       dir="rtl"
-      className="flex flex-col md:flex-row h-[100dvh] w-screen overflow-hidden select-none text-gray-100"
+      className={`flex flex-col md:flex-row h-[100dvh] w-screen overflow-hidden select-none transition-colors ${
+        isDay ? 'bg-slate-100 text-slate-900' : 'bg-[#0B0E14] text-gray-100'
+      }`}
       style={{
-        backgroundColor: '#0B0E14',
-        backgroundImage:
-          'radial-gradient(circle at 50% 0%, rgba(245, 185, 33, 0.12) 0%, transparent 55%), radial-gradient(circle at 85% 85%, rgba(212, 148, 21, 0.08) 0%, transparent 45%)',
+        backgroundColor: isDay ? '#F1F5F9' : '#0B0E14',
+        backgroundImage: isDay
+          ? 'radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.05) 0%, transparent 55%)'
+          : 'radial-gradient(circle at 50% 0%, rgba(245, 185, 33, 0.12) 0%, transparent 55%), radial-gradient(circle at 85% 85%, rgba(212, 148, 21, 0.08) 0%, transparent 45%)',
       }}
     >
       <style>{`
@@ -1467,7 +1485,9 @@ export const YtCoinMiningCard: React.FC<{
       `}</style>
 
       {/* ==================== DESKTOP SIDEBAR ==================== */}
-      <aside className="hidden md:flex md:flex-col md:w-72 bg-[#0F131C]/95 border-l border-amber-500/15 h-full justify-between p-5 z-20 backdrop-blur-md shrink-0">
+      <aside className={`hidden md:flex md:flex-col md:w-72 h-full justify-between p-5 z-20 backdrop-blur-md shrink-0 border-l transition-colors ${
+        isDay ? 'bg-white border-slate-200 text-slate-900 shadow-sm' : 'bg-[#0F131C]/95 border-amber-500/15 text-white'
+      }`}>
         <div>
           {/* Logo */}
           <div className="flex items-center gap-3 pb-6 border-b border-amber-500/15">
@@ -1657,7 +1677,9 @@ export const YtCoinMiningCard: React.FC<{
       {/* ==================== MAIN CONTENT CONTAINER ==================== */}
       <div className="flex-1 flex flex-col h-full w-full overflow-hidden relative">
         {/* Top Header */}
-        <header className="w-full px-3.5 sm:px-4 md:px-8 py-3 bg-[#0F131C]/90 backdrop-blur-md border-b border-amber-500/15 flex items-center justify-between gap-2 shrink-0 z-20">
+        <header className={`w-full px-3.5 sm:px-4 md:px-8 py-3 backdrop-blur-md border-b flex items-center justify-between gap-2 shrink-0 z-20 transition-colors ${
+          isDay ? 'bg-white/95 border-slate-200 text-slate-900 shadow-sm' : 'bg-[#0F131C]/90 border-amber-500/15 text-white'
+        }`}>
           {/* Mobile Brand */}
           <div className="flex items-center gap-2.5 md:hidden min-w-0">
             <img
@@ -1673,7 +1695,7 @@ export const YtCoinMiningCard: React.FC<{
 
           {/* Desktop Current Section Title */}
           <div className="hidden md:flex items-center gap-3 min-w-0">
-            <h2 className="text-xl font-extrabold text-white truncate">{PAGE_TITLES[activeTab]}</h2>
+            <h2 className="text-xl font-extrabold truncate">{PAGE_TITLES[activeTab]}</h2>
             <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 shrink-0">
               <Zap className="w-3.5 h-3.5" /> يومياً {formatYt(effectiveClaimReward)} YT + {formatYt(effectiveTapReward)} YT لكل نقرة
             </span>
@@ -1725,6 +1747,20 @@ export const YtCoinMiningCard: React.FC<{
             >
               <Bell className="w-4 h-4" />
               <span className="w-2 h-2 rounded-full bg-amber-500 absolute top-1.5 right-2 sm:top-2 sm:right-2.5" />
+            </button>
+
+            {/* Day / Night Theme Toggle */}
+            <button
+              type="button"
+              onClick={toggleMiningTheme}
+              title={isDay ? 'التحويل للوضع الليلي' : 'التحويل للوضع النهاري'}
+              className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full border flex items-center justify-center transition-all cursor-pointer ${
+                isDay
+                  ? 'bg-amber-100 border-amber-300 text-amber-700 hover:bg-amber-200 shadow-sm'
+                  : 'bg-[#161C28] border-white/10 text-gray-300 hover:text-amber-400 hover:border-amber-500/30'
+              }`}
+            >
+              {isDay ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
             </button>
           </div>
         </header>
@@ -2749,7 +2785,8 @@ export const YtCoinMiningCard: React.FC<{
                   </div>
                 </div>
 
-                {/* Admin Configuration Form */}
+                {/* Admin Configuration Form (Hidden from UI per user request, backend functions kept intact) */}
+                {false && (
                 <form
                   onSubmit={(e) => void handleSaveAdminSettings(e)}
                   className="rounded-3xl bg-[#131822] border border-amber-500/25 p-5 sm:p-6"
@@ -2969,6 +3006,7 @@ export const YtCoinMiningCard: React.FC<{
                     </button>
                   </div>
                 </form>
+                )}
 
                 {/* Editable Treasury Allocations in YT Coin Admin Tab */}
                 {Array.isArray(adminSummary?.treasuries) && adminSummary.treasuries.length > 0 && (
@@ -3102,8 +3140,8 @@ export const YtCoinMiningCard: React.FC<{
                   </div>
                 )}
 
-                {/* Recent Claims Table for Admin */}
-                {Array.isArray(adminSummary?.recent_claims) && adminSummary.recent_claims.length > 0 && (
+                {/* Recent Claims Table for Admin (Hidden per user request, backend data intact) */}
+                {false && Array.isArray(adminSummary?.recent_claims) && adminSummary.recent_claims.length > 0 && (
                   <div className="rounded-3xl bg-[#131822] border border-white/10 p-5 overflow-hidden">
                     <h3 className="text-sm font-extrabold text-white mb-3 flex items-center gap-2">
                       <History className="w-4 h-4 text-amber-400" />

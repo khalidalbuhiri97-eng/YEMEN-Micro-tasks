@@ -35,7 +35,6 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { CampaignLedgerTxModal } from '../advertiser/CampaignModals.tsx';
-import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 
 function formatYtCoinAmount(directYt: unknown, unitsFallback?: unknown, unitScaleRaw?: unknown): string {
   if (directYt !== null && directYt !== undefined && directYt !== '') {
@@ -511,9 +510,6 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
           </span>
         </div>
       </section>
-
-      {/* Wallet Statistics Ad Placement (Isolated between summary cards and ledger history) */}
-      <AdsterraAd placementId="wallet_stats_between" />
 
       {/* Ledger Security Note */}
       <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">

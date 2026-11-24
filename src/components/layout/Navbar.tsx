@@ -111,19 +111,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
               </button>
               <button
                 type="button"
-                onClick={() => onNavigate('offerwall')}
-                className={`hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 flex items-center gap-1.5 cursor-pointer ${
-                  currentTab === 'offerwall' ? 'text-emerald-600 dark:text-emerald-400 font-bold border-b-2 border-emerald-600' : ''
-                }`}
-              >
-                <ClixWallIcon size={16} />
-                <span>عروض ClixWall</span>
-                <span className="text-[11px] font-mono font-extrabold text-amber-600 dark:text-amber-400">
-                  USD
-                </span>
-              </button>
-              <button
-                type="button"
                 onClick={() => onNavigate('how_it_works')}
                 className={`hover:text-slate-900 dark:hover:text-white transition-colors whitespace-nowrap shrink-0 py-1 cursor-pointer ${
                   currentTab === 'how_it_works' ? 'text-emerald-600 dark:text-emerald-400 font-bold border-b-2 border-emerald-600' : ''
@@ -417,19 +404,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onNavigate, isDark, 
                 <span className="mr-auto font-mono text-[10px] text-amber-500">YT</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => navigateFromDrawer('offerwall')}
-                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-colors ${
-                  currentTab === 'offerwall'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
-              >
-                <ClixWallIcon size={16} />
-                <span>عروض ClixWall</span>
-                <span className="mr-auto font-mono text-[10px] text-amber-500">USD</span>
-              </button>
 
               <button
                 type="button"

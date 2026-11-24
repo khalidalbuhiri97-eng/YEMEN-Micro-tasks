@@ -666,8 +666,6 @@ export const AdminDashboard: React.FC = () => {
           { id: 'external_accounts', label: 'الحسابات الخارجية والتحصيل', count: treasury?.pendingExternalDepositsCount ?? null },
           { id: 'ledger', label: 'دفتر الأستاذ والمراجعة', count: null },
           { id: 'reports', label: 'التقارير المالية (8)', count: null },
-          { id: 'taxes', label: 'إدارة الضرائب', count: null },
-          { id: 'geo', label: 'الدول والتقسيمات', count: adminCountries.length || 22 },
           { id: 'ad_partners', label: 'إدارة الشركاء والإعلانات', count: null },
           { id: 'mining_ads', label: 'إعلانات التعدين والقوالب', count: null },
           { id: 'yt_coin', label: 'خزينة وتعدين YT Coin', count: null },

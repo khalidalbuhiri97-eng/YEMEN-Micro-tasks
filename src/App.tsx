@@ -18,7 +18,6 @@ import { WalletView } from './components/dashboard/WalletView.tsx';
 import { AdminDashboard } from './components/admin/AdminDashboard.tsx';
 import { AdvertiserPortal } from './components/advertiser/AdvertiserPortal.tsx';
 import { LegalModal } from './components/public/LegalPages.tsx';
-import { AdsterraAd } from './components/ads/AdsterraAd.tsx';
 import { OfferWallView } from './components/dashboard/OfferWallView.tsx';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
 import { SplashScreen } from './components/common/SplashScreen.tsx';
@@ -44,6 +43,7 @@ function MainApp() {
     isResetPasswordLocation()
   );
   const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin'>('home');
+  const [offerwallDefaultView, setOfferwallDefaultView] = useState<'hub' | 'wall' | 'gg-wall'>('hub');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   
@@ -159,22 +159,15 @@ function MainApp() {
             <Hero
               onStartEarning={() => setCurrentTab('tasks')}
               onExploreTasks={() => setCurrentTab('tasks')}
-              onGoToOfferWall={() => setCurrentTab('offerwall')}
+              onGoToOfferWall={(provider) => {
+                if (provider === 'clixwall') setOfferwallDefaultView('wall');
+                else if (provider === 'offerwall-gg') setOfferwallDefaultView('gg-wall');
+                else setOfferwallDefaultView('hub');
+                setCurrentTab('offerwall');
+              }}
             />
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <AdsterraAd placementId="home_primary" />
-            </div>
             <HowItWorks onStart={() => setCurrentTab('tasks')} />
             <TaskCategoriesSection onSelectCategory={handleSelectCategoryFromHome} />
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <AdsterraAd
-                placementId="home_leaderboard"
-                adKey="e0ca07a5ceb53edcf6467e9176896b3f"
-                scriptSrc="https://bicea.org/22/e0ca07a5ceb53edcf6467e9176896b3f"
-                width={728}
-                height={90}
-              />
-            </div>
             <YemenPayoutsSection />
             <TrustAndFaqSection />
           </main>
@@ -217,7 +210,7 @@ function MainApp() {
 
         {currentTab === 'offerwall' && (
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <OfferWallView />
+            <OfferWallView defaultView={offerwallDefaultView} />
           </div>
         )}
 

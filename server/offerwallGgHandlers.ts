@@ -165,5 +165,60 @@ export function createOfferwallGgHandlers(deps: {
     }
   };
 
-  return { getOfferWallUrl, getRewards, handlePostback };
+  const handleDirectOfferwallGet = async (req: Request, res: Response) => {
+    try {
+      const user = String(req.query.user || req.body?.user || '').trim();
+      const tx = String(req.query.tx || req.body?.tx || '').trim();
+      const amountStr = String(req.query.amount || req.body?.amount || '').trim();
+      const sig = String(req.query.sig || req.body?.sig || '').trim().toLowerCase();
+      const test = String(req.query.test || req.body?.test || '').trim();
+
+      if (test === '1' || test.toLowerCase() === 'true') {
+        return res.status(200).send('ok');
+      }
+
+      if (!user || !tx || !amountStr || !sig) {
+        return res.status(400).send('MISSING_PARAMETERS');
+      }
+
+      if (!/^[0-9a-f]{64}$/i.test(sig)) {
+        return res.status(403).send('INVALID_SIGNATURE');
+      }
+
+      const secret = process.env.OFFERWALL_SECRET || process.env.OFFERWALL_GG_SECRET || 'offerwall_production_secret_2026';
+      const message = `${user}:${tx}:${amountStr}`;
+      const expectedSig = crypto.createHmac('sha256', secret).update(message, 'utf8').digest('hex').toLowerCase();
+
+      const a = Buffer.from(expectedSig, 'hex');
+      const b = Buffer.from(sig, 'hex');
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        return res.status(403).send('FORBIDDEN');
+      }
+
+      const amount = Number(amountStr);
+      if (!Number.isFinite(amount)) {
+        return res.status(400).send('INVALID_AMOUNT');
+      }
+
+      const client = deps.getAdminClient();
+      const { data, error } = await client.rpc('process_offerwall_postback', {
+        p_user_id: user,
+        p_tx: tx,
+        p_amount: amount,
+        p_raw_payload: { user, tx, amount: amountStr, test },
+      });
+
+      if (error) {
+        console.error('[OFFERWALL] DB RPC error:', error.message);
+        return res.status(500).send('DATABASE_ERROR');
+      }
+
+      return res.status(200).send('ok');
+    } catch (err: any) {
+      console.error('[OFFERWALL] Unexpected error:', err?.message);
+      return res.status(500).send('PROCESSING_ERROR');
+    }
+  };
+
+  return { getOfferWallUrl, getRewards, handlePostback, handleDirectOfferwallGet };
 }

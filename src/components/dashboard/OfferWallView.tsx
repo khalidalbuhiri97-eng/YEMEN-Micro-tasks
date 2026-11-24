@@ -40,9 +40,13 @@ interface ClixWallSummary {
   walletBalanceYer?: number;
 }
 
-export const OfferWallView: React.FC = () => {
+interface OfferWallViewProps {
+  defaultView?: 'hub' | 'wall' | 'gg-wall';
+}
+
+export const OfferWallView: React.FC<OfferWallViewProps> = ({ defaultView = 'hub' }) => {
   const { user, openAuthModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'hub' | 'wall' | 'partner' | 'history' | 'gg-wall' | 'gg-history'>('hub');
+  const [activeTab, setActiveTab] = useState<'hub' | 'wall' | 'partner' | 'history' | 'gg-wall' | 'gg-history'>(defaultView);
   const [offerWallPartners, setOfferWallPartners] = useState<AdPartner[]>([]);
   const [selectedPartner, setSelectedPartner] = useState<AdPartner | null>(null);
   const [offerWallUrl, setOfferWallUrl] = useState<string>('');
