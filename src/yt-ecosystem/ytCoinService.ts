@@ -4,13 +4,13 @@ import {syncSupabaseSession} from '../api/client.ts';
 export type YtMetrics={price_usd_per_yt:number;price_yer_per_yt:number;ad_pool_usd:number;admin_revenue_usd:number;
  total_mined_units:number;total_mined_yt:number;daily_mining_reward_units:number;daily_mining_reward_yt:number;
  daily_mining_reward_usd:number;max_supply_units:number;max_supply_yt:number;mining_remaining_units:number;
- referral_remaining_units:number;yer_per_usd:number;admin_pay_id:number|null};
+ referral_remaining_units:number;yer_per_usd:number;admin_pay_id:string|null};
 export type YtWallet={user_id:string;pay_id:string;mined_units:number;withdrawable_units:number;withdrawal_pending_units:number;
  referral_earned_units:number;last_daily_mine_date:string|null;wallet_status:string;is_frozen:boolean};
 export type YtAd={id:string;title:string;description:string|null;ad_url:string|null;ad_type:'video'|'smart_link'|'banner_ad';
  reward_units:number;duration_seconds:number;is_active:boolean;ad_code:string|null};
 export const YT_PRECISION=100000;
-export const ytFormat=(raw:number)=>`${(Number(raw||0)/YT_PRECISION).toFixed(5)} YT`;
+export const ytFormat=(raw:number)=>`${(Number(raw||0)/YT_PRECISION).toFixed(5)} TSK`;
 export const ytToRaw=(amount:string|number)=>{
  const n=Number(amount);
  if(!Number.isFinite(n)||n<0||Math.abs(n*YT_PRECISION-Math.round(n*YT_PRECISION))>1e-7)throw new Error('أدخل مبلغاً صحيحاً حتى خمس خانات عشرية.');
@@ -62,8 +62,11 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
  };
  const requestWithdrawal=async(amountYt:number,method:string,destination:string,pin:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_request_withdrawal',{p_amount_yt:amountYt,p_payout_method:method,p_payout_destination:destination,p_pin:pin});if(error)throw error;return data;};
  const reviewWithdrawal=async(id:string,action:'paid'|'reject',receiptUrl:string,note:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_review_withdrawal',{p_request_id:id,p_action:action,p_receipt_url:receiptUrl||null,p_admin_note:note||null});if(error)throw error;return data;};
+ const claimDailyCheckin=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_claim_daily_checkin');if(error)throw error;return data;};
+ const claimDailyClick=async(clickNo:number)=>{await ensureAuth();const {data,error}=await client.rpc('yt_claim_daily_click',{p_click_no:clickNo});if(error)throw error;return data;};
+ const setTradingLock=async(locked:boolean)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_set_trading_lock',{p_locked:locked});if(error)throw error;return data;};
  const setManager=async(payId:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_set_manager',{p_pay_id:payId});if(error)throw error;return data;};
  const freezeWallet=async(payId:string,frozen:boolean)=>{await ensureAuth();const {data,error}=await client.rpc('yt_admin_freeze_wallet',{p_pay_id:payId,p_frozen:frozen});if(error)throw error;return data;};
- return {loadDashboard,startAd,verifyAd,setPin,liquidate,sendPay,depositRevenue,manageAd,setManager,freezeWallet,requestWithdrawal,reviewWithdrawal};
+ return {loadDashboard,startAd,verifyAd,setPin,liquidate,sendPay,depositRevenue,manageAd,setManager,freezeWallet,requestWithdrawal,reviewWithdrawal,claimDailyCheckin,claimDailyClick,setTradingLock};
 }
 export const ytCoinService=createYtCoinService(supabase);
