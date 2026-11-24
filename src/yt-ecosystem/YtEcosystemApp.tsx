@@ -41,6 +41,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
  const [allocations,setAllocations]=useState<any[]>([]);
  const [history,setHistory]=useState<any[]>([]);
  const [claims,setClaims]=useState<any[]>([]);
+ const [dailyClickClaims,setDailyClickClaims]=useState<number[]>([]);
  const [ledger,setLedger]=useState<any[]>([]);
  const [withdrawals,setWithdrawals]=useState<any[]>([]);
  const [busy,setBusy]=useState(false);
@@ -72,7 +73,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
   if(!user?.id)return;
   const d=await api.loadDashboard(user.id,isAdmin);
   setMetrics(d.metrics);setWallet(d.wallet);setAds(d.ads);setAllocations(d.allocations);
-  setHistory(d.history);setClaims(d.claims);setLedger(d.ledger);setWithdrawals(d.withdrawals);setPhase(d.phase);setReferralStats(d.referrals);
+  setHistory(d.history);setClaims(d.claims);setDailyClickClaims((d.dailyClickClaims||[]).map((c:any)=>Number(c.click_no)));setLedger(d.ledger);setWithdrawals(d.withdrawals);setPhase(d.phase);setReferralStats(d.referrals);
  },[user?.id,isAdmin,api]);
  useEffect(()=>{refresh().catch(e=>setNotice(msg(e)));},[refresh]);
  useEffect(()=>{const id=window.setInterval(()=>setClockNow(Date.now()),1000);return()=>window.clearInterval(id);},[]);
@@ -82,7 +83,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
   setBusy(true);setNotice('');
   try{
    const result=await fn();
-   await refresh();
+   await refresh().catch(()=>undefined);
    if(result?.success===false){
     setNotice(result?.message_ar||msg({message:result?.code||'تعذر إتمام العملية.'}));
     return result;
@@ -135,7 +136,7 @@ export const YtEcosystemApp:React.FC<Props>=({compact=false,onOpen,onExit,initia
   </section>}
   {tab==='mine'&&<section className="space-y-3">
    <div className={`rounded-2xl bg-[#151923] p-4 ${GOLD}`}><h2 className="font-black">مركز التعدين الإعلاني</h2><p className="mt-1 text-xs text-slate-400">كل إعلان مؤهل للمكافأة مرة واحدة في اليوم حسب توقيت صنعاء/عدن.</p><div className="mt-3 grid grid-cols-3 gap-1">{([{id:'video',label:'فيديوهات',icon:Film},{id:'smart_link',label:'روابط ذكية',icon:Link2},{id:'banner_ad',label:'سريعة',icon:Smartphone}] as const).map(x=><button key={x.id} onClick={()=>setAdTypeFilter(x.id)} className={`rounded-xl p-2 text-[10px] font-bold ${adTypeFilter===x.id?'bg-amber-400 text-slate-950':'bg-black/20 text-slate-400'}`}><x.icon size={15} className="mx-auto mb-1"/>{x.label}</button>)}</div></div>
-   <div className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><h3 className="font-bold">المكافآت اليومية</h3><p className="mt-1 text-xs text-slate-400">تُسجل المكافآت من قاعدة البيانات مع منع التكرار اليومي.</p><button disabled={busy} onClick={()=>run(()=>api.claimDailyCheckin(),'تم تسجيل مكافأة الحضور اليومية.')} className="mt-3 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950">تسجيل الحضور اليومي · 0.20000 TSK</button><div className="mt-2 grid grid-cols-5 gap-1">{[1,2,3,4,5].map(n=><button key={n} disabled={busy} onClick={()=>run(()=>api.claimDailyClick(n),`تم تسجيل النقرة اليومية رقم ${n} وإضافة 0.01000 TSK إلى رصيد التعدين.`)} className="rounded-lg border border-amber-400/20 bg-black/20 py-3 text-[10px] text-amber-200"><span className="inline-flex items-center justify-center gap-1.5">نقرة {n}<img src="/images/taska-coin.png" alt="TSK" className="h-4 w-4 rounded-full object-cover"/></span><b className="mt-1 block">0.01000 TSK</b></button>)}</div></div>
+   <div className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><h3 className="font-bold">المكافآت اليومية</h3><p className="mt-1 text-xs text-slate-400">تُسجل المكافآت من قاعدة البيانات مع منع التكرار اليومي.</p><button disabled={busy} onClick={()=>run(()=>api.claimDailyCheckin(),'تم تسجيل مكافأة الحضور اليومية.')} className="mt-3 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950">تسجيل الحضور اليومي · 0.20000 TSK</button><div className="mt-2 grid grid-cols-5 gap-1">{[1,2,3,4,5].map(n=>{const claimed=dailyClickClaims.includes(n);return <button key={n} disabled={busy||claimed} onClick={()=>run(()=>api.claimDailyClick(n),`تم تسجيل النقرة اليومية رقم ${n} وإضافة 0.01000 TSK إلى رصيد التعدين.`)} className={`rounded-lg border border-amber-400/20 py-3 text-[10px] ${claimed?'bg-emerald-950/50 text-emerald-300':'bg-black/20 text-amber-200'}`}><span className="inline-flex items-center justify-center gap-1.5">{claimed?'مكتملة':`نقرة ${n}`}<img src="/images/taska-coin.png" alt="TSK" className="h-4 w-4 rounded-full object-cover"/></span><b className="mt-1 block">0.01000 TSK</b></button>})}</div></div>
    {ads.filter(a=>a.ad_type===adTypeFilter).map(a=>{const done=dailyClaimed.has(a.id);return <article key={a.id} className={`rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><h3 className="font-bold">{a.title}</h3><p className="mt-1 text-[11px] text-slate-400">{a.duration_seconds} ثانية · {a.ad_type==='video'?'فيديو مكافأة':a.ad_type==='smart_link'?'رابط ذكي':'إعلان سريع'}</p></div><b className="shrink-0 text-sm text-amber-300">{ytc(a.reward_units)}</b></div><button disabled={busy||done} onClick={()=>startAd(a,'reward')} className={`mt-3 w-full rounded-xl py-3 text-xs font-black ${done?'bg-emerald-900/50 text-emerald-300':'bg-amber-400 text-slate-950'}`}>{done?<><CheckCircle2 size={14} className="ml-2 inline"/>مكتمل اليوم ✓</>:<><Play size={14} className="ml-2 inline"/>ابدأ الإعلان</>}</button></article>})}
    {!ads.some(a=>a.ad_type===adTypeFilter)&&<div className="rounded-2xl bg-[#11151e] p-5 text-center text-xs text-slate-500">لا توجد إعلانات في هذا القسم حالياً.</div>}
    {session&&<div className={`rounded-2xl bg-amber-950/30 p-4 ${GOLD}`}><p className="text-sm font-bold text-amber-200">جلسة الإعلان نشطة</p><p className="mt-1 text-xs text-slate-400">افتح الإعلان وانتظر المدة المطلوبة، ثم تحقق. يعتمد الخادم على توقيته وليس ساعة هاتفك.</p>{session.adUrl?<a href={session.adUrl} target="_blank" rel="noopener noreferrer" className="mt-3 block rounded-xl border border-amber-300/40 py-3 text-center text-xs font-bold text-amber-200">فتح الإعلان في نافذة جديدة</a>:session.adCode?<iframe title="Taska Coin rewarded ad" sandbox="allow-scripts allow-forms" referrerPolicy="no-referrer" srcDoc={session.adCode} className="mt-3 h-48 w-full rounded-xl border border-amber-300/20 bg-white"/>:null}<button disabled={busy} onClick={verifyAd} className="mt-2 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950">تحقق من الإكمال {session.purpose==='liquidation'?'لفتح التسييل':'واستلام المكافأة'}</button></div>}
