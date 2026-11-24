@@ -27,7 +27,7 @@ const msg=(e:any)=>{
  ['MINING_ALLOCATION_EXHAUSTED','انتهى رصيد مخصص التعدين.'],
  ['INVALID_AMOUNT_PRECISION','المبلغ يجب أن يحتوي على خمس خانات عشرية كحد أقصى.'],
  ['MINIMUM_TRANSFER_0_01000_TSK','الحد الأدنى للتحويل 0.01000 TSK.'],
- ['DAILY_CLICK_LIMIT_REACHED','استخدمت النقرات الخمس المتاحة لهذا اليوم.'],
+ ['DAILY_CLICK_LIMIT_REACHED','استخدمت النقرات الخمس المتاحة لهذا اليوم.'],['DAILY_CHECKIN_COOLDOWN','يمكنك استلام مكافأة الدخول بعد مرور 24 ساعة على آخر استلام.'],
  ['INVALID_REFERRAL_ADDRESS','رابط الإحالة غير صالح.'],['REFERRAL_ADDRESS_NOT_FOUND','عنوان محفظة الداعي غير موجود.'],['SELF_REFERRAL_NOT_ALLOWED','لا يمكنك استخدام رابط إحالتك الخاص.'],['REFERRER_ALREADY_SET','تم ربط حسابك بداعٍ آخر ولا يمكن تغييره.'],['REFERRAL_ALLOCATION_EXHAUSTED','مخصص مكافآت الإحالة غير كافٍ حالياً.'],['REFERRER_WALLET_UNAVAILABLE','محفظة الداعي غير متاحة حالياً.']
  ];
  return map.find(([k])=>s.includes(k))?.[1]||s;
