@@ -6,12 +6,9 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { Navbar } from './components/layout/Navbar.tsx';
-import { Footer } from './components/layout/Footer.tsx';
 import { Hero } from './components/public/Hero.tsx';
 import { HowItWorks } from './components/public/HowItWorks.tsx';
-import { YemenPayoutsSection } from './components/public/YemenPayoutsSection.tsx';
 import { TaskCategoriesSection } from './components/public/TaskCategoriesSection.tsx';
-import { TrustAndFaqSection } from './components/public/TrustAndFaqSection.tsx';
 import { DashboardLayout } from './components/dashboard/DashboardLayout.tsx';
 import { TasksView } from './components/dashboard/TasksView.tsx';
 import { WalletView } from './components/dashboard/WalletView.tsx';
@@ -22,6 +19,7 @@ import { OfferWallView } from './components/dashboard/OfferWallView.tsx';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator.tsx';
 import { SplashScreen } from './components/common/SplashScreen.tsx';
 import { HomeShortcutsStrip } from './components/home/HomeShortcutsStrip.tsx';
+import { InfoCenter } from './components/public/InfoCenter.tsx';
 import { YtCoinMiningCard } from './components/home/YtCoinMiningCard.tsx';
 import { EarnFromAdsView } from './components/ads/EarnFromAdsView.tsx';
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage.tsx';
@@ -42,7 +40,7 @@ function MainApp() {
   const [isResetPasswordRoute, setIsResetPasswordRoute] = useState<boolean>(() =>
     isResetPasswordLocation()
   );
-  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin'>('home');
+  const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'advertiser' | 'admin' | 'ytcoin' | 'info_center'>('home');
   const [offerwallDefaultView, setOfferwallDefaultView] = useState<'hub' | 'wall' | 'gg-wall'>('hub');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -168,8 +166,6 @@ function MainApp() {
             />
             <HowItWorks onStart={() => setCurrentTab('tasks')} />
             <TaskCategoriesSection onSelectCategory={handleSelectCategoryFromHome} />
-            <YemenPayoutsSection />
-            <TrustAndFaqSection />
           </main>
         )}
 
@@ -214,11 +210,11 @@ function MainApp() {
           </div>
         )}
 
-        {currentTab === 'how_it_works' && (
-          <div className="py-8">
-            <YemenPayoutsSection />
-            <HowItWorks onStart={() => setCurrentTab('tasks')} />
-            <TrustAndFaqSection />
+        {currentTab === 'how_it_works' && <HowItWorks onStart={() => setCurrentTab('tasks')} />}
+
+        {currentTab === 'info_center' && (
+          <div className="w-full max-w-4xl mx-auto px-3 sm:px-6 py-4 sm:py-6">
+            <InfoCenter onOpenTerms={() => setLegalModalType('terms')} onOpenPrivacy={() => setLegalModalType('privacy')} />
           </div>
         )}
 
@@ -240,17 +236,6 @@ function MainApp() {
           </div>
         )}
       </div>
-
-      {/* Footer */}
-      {currentTab !== 'ytcoin' && (
-        <Footer
-          onNavigate={(tab) => {
-            if (tab === 'privacy') setLegalModalType('privacy');
-            else if (tab === 'terms') setLegalModalType('terms');
-            else setCurrentTab(tab as any);
-          }}
-        />
-      )}
 
       {/* Mobile Sticky Thumb Navigation Bar (§1.I 15% Mobile Sticky Cap) */}
       {currentTab !== 'ytcoin' && (
