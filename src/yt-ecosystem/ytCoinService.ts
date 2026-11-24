@@ -69,6 +69,8 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
  const checkAdmin=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_is_admin');if(error)throw error;return Boolean(data);};
  const claimDailyCheckin=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_claim_daily_checkin');if(error)throw error;return data;};
  const claimDailyClick=async(clickNo:number)=>{await ensureAuth();const {data,error}=await client.rpc('yt_claim_daily_click',{p_click_no:clickNo});if(error)throw error;return data;};
- return {loadDashboard,startAd,verifyAd,setPin,liquidate,sendPay,resolvePayRecipient,checkAdmin,depositRevenue,manageAd,setManager,freezeWallet,requestWithdrawal,reviewWithdrawal,claimDailyCheckin,claimDailyClick};
+ const attachReferrer=async(address:string)=>{await ensureAuth();const {data,error}=await client.rpc('yt_attach_referrer',{p_referral_address:address});if(error)throw error;return data;};
+ const getReferralStats=async()=>{await ensureAuth();const {data,error}=await client.rpc('yt_get_referral_stats');if(error)throw error;return data as {invited_count:number;activated_count:number;earnings_units:number};};
+ return {loadDashboard,startAd,verifyAd,setPin,liquidate,sendPay,resolvePayRecipient,checkAdmin,depositRevenue,manageAd,setManager,freezeWallet,requestWithdrawal,reviewWithdrawal,claimDailyCheckin,claimDailyClick,attachReferrer,getReferralStats};
 }
 export const ytCoinService=createYtCoinService(supabase);
