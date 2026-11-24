@@ -5083,6 +5083,47 @@ app.put('/api/admin/task-categories/:slug', adminMiddleware, async (req: Authent
   }
 });
 
+// YT Coin isolated advertising postback. Provider must sign the canonical payload server-side.
+app.post('/api/yt-ecosystem/ad-postback', async (req: Request, res: Response) => {
+  try {
+    const secret = String(process.env.YT_ECOSYSTEM_AD_POSTBACK_SECRET || '').trim();
+    if (!secret) return res.status(503).json({ error: 'YT_POSTBACK_SECRET_NOT_CONFIGURED' });
+    const payload = req.body || {};
+    const sessionId = String(payload.sessionId || payload.yt_session_id || req.query.yt_session_id || '').trim();
+    const userId = String(payload.userId || payload.yt_user_id || req.query.yt_user_id || '').trim();
+    const providerEventId = String(payload.providerEventId || payload.transactionId || '').trim();
+    const signature = String(payload.signature || payload.sig || '').trim().toLowerCase();
+    if (!sessionId || !userId || providerEventId.length < 4 || !/^[a-f0-9]{64}$/.test(signature)) {
+      return res.status(400).json({ error: 'INVALID_YT_POSTBACK' });
+    }
+    const expected = crypto.createHmac('sha256', secret)
+      .update(`${sessionId}:${userId}:${providerEventId}`)
+      .digest('hex');
+    const suppliedBuffer = Buffer.from(signature, 'hex');
+    const expectedBuffer = Buffer.from(expected, 'hex');
+    if (suppliedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) {
+      return res.status(403).json({ error: 'INVALID_YT_POSTBACK_SIGNATURE' });
+    }
+    const admin = getSupabaseAdminClient();
+    const { data: session, error: sessionError } = await admin
+      .from('yt_ad_sessions').select('id,user_id,status,expires_at')
+      .eq('id', sessionId).maybeSingle();
+    if (sessionError) throw sessionError;
+    if (!session || session.user_id !== userId || session.status !== 'pending' || new Date(session.expires_at).getTime() <= Date.now()) {
+      return res.status(409).json({ error: 'YT_AD_SESSION_NOT_ELIGIBLE' });
+    }
+    const { data, error } = await admin.rpc('yt_confirm_mining_ad_completion', {
+      p_session_id: sessionId, p_provider_event_id: providerEventId,
+    });
+    if (error) throw error;
+    if (data !== true) return res.status(409).json({ error: 'YT_AD_SESSION_ALREADY_PROCESSED' });
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[YT_ECOSYSTEM_POSTBACK]', err?.message || 'unknown error');
+    return res.status(500).json({ error: 'YT_POSTBACK_PROCESSING_FAILED' });
+  }
+});
+
 // Structured JSON 404 for unmatched API paths (prevents SPA HTML fallback on /api/*)
 app.use('/api', (req: Request, res: Response) => {
   return res.status(404).json({
