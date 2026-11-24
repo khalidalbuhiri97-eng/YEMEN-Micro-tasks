@@ -1,14 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api/client.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, TreasurySummary, CampaignItem, TaskBuilderMeta } from '../../types/index.ts';
+import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, CampaignItem, TaskBuilderMeta } from '../../types/index.ts';
 import { DatabaseErrorsView } from './DatabaseErrorsView.tsx';
-import { OwnerOverviewMetrics } from './finance/OwnerOverviewMetrics.tsx';
-import { TreasuryControlView } from './finance/TreasuryControlView.tsx';
-import { LedgerAuditView } from './finance/LedgerAuditView.tsx';
-import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
-import { TaxManagementView } from './finance/TaxManagementView.tsx';
-import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
 import { AdminSurveysAndAssetsView } from './AdminSurveysAndAssetsView.tsx';
 import { AdManagementHub } from './AdManagementHub.tsx';
@@ -48,19 +42,16 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_center' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'geo' | 'ad_center' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
   // Data state
-  const [stats, setStats] = useState<any>(null);
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [settings, setSettings] = useState<PlatformSettings | null>(null);
-  const [treasury, setTreasury] = useState<TreasurySummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isExportingCsv, setIsExportingCsv] = useState(false);
 
   // Action modals
   const [reviewingSubmission, setReviewingSubmission] = useState<TaskSubmission | null>(null);
@@ -128,25 +119,20 @@ export const AdminDashboard: React.FC = () => {
   const loadAllAdminData = async () => {
     setIsLoading(true);
     try {
-      const [overviewRes, subsRes, withsRes, tasksRes, campsRes, usersRes, setRes, treasuryRes] = await Promise.all([
-        api.getAdminOverview().catch(() => ({ stats: null })),
+      const [subsRes, withsRes, tasksRes, campsRes, usersRes, setRes] = await Promise.all([
         api.getAdminSubmissions().catch(() => ({ submissions: [] })),
         api.getAdminWithdrawals().catch(() => ({ withdrawals: [] })),
         api.getAdminTasks().catch(() => ({ tasks: [] })),
         api.getAdminCampaigns().catch(() => ({ campaigns: [] })),
         api.getAdminUsers().catch(() => ({ users: [] })),
         api.getSettings().catch(() => ({ settings: null })),
-        api.getTreasury().catch(() => ({ treasury: null })),
       ]);
-
-      if (overviewRes?.stats) setStats(overviewRes.stats);
       if (subsRes?.submissions) setSubmissions(subsRes.submissions);
       if (withsRes?.withdrawals) setWithdrawals(withsRes.withdrawals);
       if (tasksRes?.tasks) setTasks(tasksRes.tasks);
       if (campsRes?.campaigns) setCampaigns(campsRes.campaigns);
       if (usersRes?.users) setUsersList(usersRes.users);
       if (setRes?.settings) setSettings(setRes.settings);
-      if (treasuryRes?.treasury) setTreasury(treasuryRes.treasury);
     } catch (err) {
       console.error('Failed to load admin data', err);
     } finally {
@@ -568,18 +554,6 @@ export const AdminDashboard: React.FC = () => {
     });
   };
 
-  const handleQuickExportCsv = async () => {
-    setIsExportingCsv(true);
-    try {
-      await api.downloadFinancialCsv('ledger');
-      showToast('تم تصدير السجل المالي بصيغة CSV بنجاح.', 'success');
-    } catch (err: any) {
-      showToast(err.message || 'فشل تصدير السجل المالي.', 'error');
-    } finally {
-      setIsExportingCsv(false);
-    }
-  };
-
   const pendingSubmissionsCount = submissions.filter((s) => s.status === 'PENDING').length;
   const pendingWithdrawalsCount = withdrawals.filter((w) => w.status === 'PENDING').length;
 
@@ -633,26 +607,15 @@ export const AdminDashboard: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={loadAllAdminData}
-              title="تحديث البيانات"
-              className="px-3 py-2 text-xs font-semibold bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>تحديث البيانات</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleQuickExportCsv}
-              disabled={isExportingCsv}
-              className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{isExportingCsv ? 'جارِ التصدير...' : 'تصدير السجل المالي (CSV)'}</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={loadAllAdminData}
+            title="تحديث البيانات"
+            className="px-3 py-2 text-xs font-semibold bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>تحديث البيانات</span>
+          </button>
         </div>
       </div>
 
@@ -695,51 +658,42 @@ export const AdminDashboard: React.FC = () => {
         ))}
       </div>
 
-      {/* 1. OWNER OVERVIEW METRICS TAB */}
+      {/* Simplified administration overview */}
       {activeTab === 'overview' && (
-        <OwnerOverviewMetrics
-          stats={stats}
-          treasury={treasury}
-          pendingSubmissionsCount={pendingSubmissionsCount}
-          pendingWithdrawalsCount={pendingWithdrawalsCount}
-          isLoading={isLoading}
-          onNavigateTab={setActiveTab}
-        />
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              { label: 'المهام', value: tasks.length },
+              { label: 'المستخدمون', value: usersList.length },
+              { label: 'إثباتات بانتظار المراجعة', value: pendingSubmissionsCount },
+              { label: 'طلبات سحب معلقة', value: pendingWithdrawalsCount },
+            ].map((item) => (
+              <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <p className="text-[11px] font-semibold text-slate-500">{item.label}</p>
+                <p className="mt-2 text-2xl font-black tabular-nums text-slate-900 dark:text-white">{isLoading ? '—' : item.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+            <h2 className="font-bold text-slate-900 dark:text-white">الوصول السريع</h2>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {[
+                { id: 'tasks', label: 'إدارة المهام' },
+                { id: 'submissions', label: 'مراجعة الإثباتات' },
+                { id: 'withdrawals', label: 'طلبات السحب' },
+                { id: 'ad_center', label: 'مركز الإعلانات' },
+                { id: 'campaigns', label: 'حملات المعلنين' },
+                { id: 'settings', label: 'إعدادات المنصة' },
+              ].map((item) => (
+                <button key={item.id} type="button" onClick={() => setActiveTab(item.id as any)}
+                  className="rounded-xl bg-slate-100 px-3 py-3 text-xs font-bold text-slate-700 transition-colors hover:bg-emerald-50 hover:text-emerald-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-emerald-950/40">
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
-
-      {/* 2. TREASURY CONTROL TAB */}
-      {activeTab === 'treasury' && (
-        <TreasuryControlView treasury={treasury} onRefreshAll={loadAllAdminData} />
-      )}
-
-      {/* 2B. EXTERNAL ACCOUNTS & ADVERTISER DEPOSITS TAB */}
-      {activeTab === 'external_accounts' && (
-        <ExternalAccountsView treasury={treasury} onRefreshAll={loadAllAdminData} />
-      )}
-
-      {/* 3. GENERAL LEDGER & AUDIT TAB */}
-      {activeTab === 'ledger' && (
-        <LedgerAuditView onRefreshAll={loadAllAdminData} />
-      )}
-
-      {/* 4. COMPREHENSIVE FINANCIAL REPORTS TAB */}
-      {activeTab === 'reports' && (
-        <FinancialReportsView treasury={treasury} />
-      )}
-
-      {/* 5. TAX MANAGEMENT TAB */}
-      {activeTab === 'taxes' && (
-        <TaxManagementView treasury={treasury} onRefreshAll={loadAllAdminData} />
-      )}
-
-      {/* 5B. ARAB COUNTRIES & DIVISIONS GEOGRAPHY TAB */}
-      {activeTab === 'geo' && <GeoManagementView />}
-
-      {/* Unified advertising management hub */}
-      {activeTab === 'ad_center' && <AdManagementHub />}
-
-      {/* 5D. INTERACTIVE SURVEYS, ASSETS & CATEGORY ICONS TAB */}
-      {activeTab === 'surveys_assets' && <AdminSurveysAndAssetsView />}
 
       {/* DATABASE ERRORS MONITORING TAB */}
       {activeTab === 'db_errors' && <DatabaseErrorsView />}
