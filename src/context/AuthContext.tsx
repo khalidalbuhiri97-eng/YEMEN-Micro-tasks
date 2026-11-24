@@ -204,7 +204,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // DO NOT clear tokens or log the user out!
         const cachedProfile = await readCachedNonFinancialProfile();
         if (cachedProfile) {
-          setUser((prev) => prev || cachedProfile);
+          setUser((prev) => prev || normalizePlatformOwner(cachedProfile));
           setIsUsingOfflineSession(true);
         }
         setWallet(null);
@@ -260,7 +260,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (identifier: string, pass: string) => {
     const res = await api.login({ identifier, password: pass });
     setAuthTokens(res.token, res.refreshToken);
-    setUser(res.user);
+    setUser(normalizePlatformOwner(res.user));
     setWallet(res.wallet);
     setIsUsingOfflineSession(false);
     if (res.user) {
@@ -276,7 +276,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await api.register(payload);
     if (res.token) {
       setAuthTokens(res.token, res.refreshToken);
-      setUser(res.user);
+      setUser(normalizePlatformOwner(res.user));
       setWallet(res.wallet);
       setIsUsingOfflineSession(false);
       if (res.user) {
@@ -317,7 +317,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!token || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
     try {
       const res = await api.getMe();
-      setUser(res.user);
+      setUser(normalizePlatformOwner(res.user));
       if (res.wallet) setWallet(res.wallet);
       setIsUsingOfflineSession(false);
       if (res.user) {
