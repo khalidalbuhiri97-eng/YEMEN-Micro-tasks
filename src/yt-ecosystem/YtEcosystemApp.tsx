@@ -2,7 +2,7 @@ import React,{useCallback,useEffect,useMemo,useState} from 'react';
 import {ArrowDownToLine,BarChart3,CheckCircle2,ChevronLeft,Copy,Film,Gift,Gem,Loader2,LockKeyhole,Play,RefreshCw,ShieldCheck,Smartphone,Users,Wallet,X,Plus,Trash2,TrendingUp,Link2} from 'lucide-react';
 import {ytCoinService,ytFormat,type YtMetrics,type YtWallet,type YtAd,type YtCoinService} from './ytCoinService.ts';
 
-type Props={compact?:boolean;onOpen?:()=>void;onExit?:()=>void;onOpenEarnAds?:()=>void;initialTab?:'market'|'wallet'|'mine'|'admin';user?:{id:string;referralCode?:string}|null;isAdmin?:boolean;onLogin?:()=>void;service?:YtCoinService};
+type Props={compact?:boolean;onOpen?:()=>void;onExit?:()=>void;onOpenEarnAds?:()=>void;initialTab?:'market'|'wallet'|'mine'|'admin';user?:{id:string;referralCode?:string|null}|null;isAdmin?:boolean;onLogin?:()=>void;service?:YtCoinService};
 type Tab='market'|'wallet'|'mine'|'admin';
 const GOLD='border border-amber-400/40 shadow-[0_0_24px_rgba(212,175,55,.08)]';
 const usd=(v:number)=>'$'+Number(v||0).toFixed(8);
