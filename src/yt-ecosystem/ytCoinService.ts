@@ -4,7 +4,7 @@ export type YtMetrics={price_usd_per_yt:number;price_yer_per_yt:number;ad_pool_u
  total_mined_units:number;total_mined_yt:number;daily_mining_reward_units:number;daily_mining_reward_yt:number;
  daily_mining_reward_usd:number;max_supply_units:number;max_supply_yt:number;mining_remaining_units:number;
  referral_remaining_units:number;yer_per_usd:number;admin_pay_id:number|null};
-export type YtWallet={user_id:string;pay_id:number;mined_units:number;withdrawable_units:number;
+export type YtWallet={user_id:string;pay_id:number;mined_units:number;withdrawable_units:number;withdrawal_pending_units:number;
  referral_earned_units:number;last_daily_mine_date:string|null;wallet_status:string;is_frozen:boolean};
 export type YtAd={id:string;title:string;description:string|null;ad_url:string;ad_type:'video'|'smart_link'|'banner_ad';
  reward_units:number;duration_seconds:number;is_active:boolean;ad_code:string|null};
