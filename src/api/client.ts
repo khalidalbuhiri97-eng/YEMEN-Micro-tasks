@@ -2,6 +2,8 @@
  * Kasb Yemen - Frontend API Client (Connected to Real Backend with Session Refresh & Persistence)
  */
 
+import {supabase} from './supabase.ts';
+
 import type {
   AdCenterComfortSettings,
   AdCompletionRule,
@@ -71,6 +73,20 @@ export function getRefreshToken(): string | null {
   return token;
 }
 
+export async function syncSupabaseSession(): Promise<void> {
+  const accessToken = getAuthToken();
+  const refreshToken = getRefreshToken();
+  if (!accessToken || !refreshToken) return;
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  if (data.session?.access_token === accessToken) return;
+  const { error: setError } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (setError) throw setError;
+}
+
 export function setAuthTokens(token?: string | null, refreshToken?: string | null): void {
   if (token && token !== 'null' && token !== 'undefined') {
     localStorage.setItem('kasb_auth_token', token);
@@ -78,6 +94,7 @@ export function setAuthTokens(token?: string | null, refreshToken?: string | nul
   if (refreshToken && refreshToken !== 'null' && refreshToken !== 'undefined') {
     localStorage.setItem('kasb_refresh_token', refreshToken);
   }
+  if (token) void syncSupabaseSession().catch((error) => console.warn('Supabase session sync deferred:', error));
 }
 
 export function setAuthToken(token: string): void {
@@ -87,6 +104,7 @@ export function setAuthToken(token: string): void {
 export function clearAuthToken(): void {
   localStorage.removeItem('kasb_auth_token');
   localStorage.removeItem('kasb_refresh_token');
+  void supabase.auth.signOut().catch(() => undefined);
 }
 
 type RefreshOutcome =
