@@ -33,7 +33,7 @@ export function createYtCoinService(client:typeof supabase,syncAuth?:()=>Promise
    client.from('yt_ledger_transactions').select('id,transaction_type,balance_bucket,amount_units,balance_before_units,balance_after_units,description,source_allocation_code,created_at').eq('wallet_user_id',userId).order('created_at',{ascending:false}).limit(30),
    (isAdmin?client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').order('created_at',{ascending:false}).limit(50):client.from('yt_withdrawal_requests').select('id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at').eq('user_id',userId).order('created_at',{ascending:false}).limit(30)),
    client.from('yt_daily_click_claims').select('click_no,claim_date,reward_units').eq('user_id',userId).eq('claim_date',ytTodayAden()),
-   client.from('yt_daily_checkins').select('claim_date,reward_units').eq('user_id',userId).eq('claim_date',ytTodayAden()).maybeSingle()
+   client.from('yt_daily_checkins').select('claim_date,reward_units,created_at').eq('user_id',userId).gt('created_at',new Date(Date.now()-86400000).toISOString()).order('created_at',{ascending:false}).limit(1).maybeSingle()
   ]);
   const error=metricsRes.error||walletRes.error||adsRes.error||allocationsRes.error||historyRes.error||claimsRes.error||ledgerRes.error||withdrawalsRes.error||dailyClicksRes.error||checkinRes.error;
   if(error)throw error;
