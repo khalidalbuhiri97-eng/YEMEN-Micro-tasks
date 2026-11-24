@@ -7,7 +7,7 @@ export type YtMetrics={price_usd_per_yt:number;price_yer_per_yt:number;ad_pool_u
  referral_remaining_units:number;yer_per_usd:number;admin_pay_id:number|null};
 export type YtWallet={user_id:string;pay_id:number;mined_units:number;withdrawable_units:number;withdrawal_pending_units:number;
  referral_earned_units:number;last_daily_mine_date:string|null;wallet_status:string;is_frozen:boolean};
-export type YtAd={id:string;title:string;description:string|null;ad_url:string;ad_type:'video'|'smart_link'|'banner_ad';
+export type YtAd={id:string;title:string;description:string|null;ad_url:string|null;ad_type:'video'|'smart_link'|'banner_ad';
  reward_units:number;duration_seconds:number;is_active:boolean;ad_code:string|null};
 export const YT_PRECISION=100000;
 export const ytFormat=(raw:number)=>`${(Number(raw||0)/YT_PRECISION).toFixed(5)} YT`;
@@ -43,8 +43,8 @@ export function createYtCoinService(client:typeof supabase){
   await syncSupabaseSession();
   const {data,error}=await client.rpc(purpose==='reward'?'yt_start_link_session':'yt_start_liquidation_ad',{p_ad_id:adId,p_agent:typeof navigator!=='undefined'?navigator.userAgent:null});
   if(error)throw error;
-  if(!data?.session_token||!data?.ad_url)throw new Error('تعذر بدء جلسة الإعلان.');
-  return data as {session_token:string;ad_url:string;ad_code:string|null;ad_type:string;required_seconds:number};
+  if(!data?.session_token||(!data?.ad_url&&!data?.ad_code))throw new Error('تعذر بدء جلسة الإعلان.');
+  return data as {session_token:string;ad_url:string|null;ad_code:string|null;ad_type:string;required_seconds:number};
  };
  const verifyAd=async(sessionToken:string)=>{await syncSupabaseSession();const {data,error}=await client.rpc('yt_verify_and_complete_link',{p_session_token:sessionToken});if(error)throw error;return data;};
  const setPin=async(newPin:string,currentPin?:string)=>{await syncSupabaseSession();const {data,error}=await client.rpc('yt_set_wallet_pin',{p_new_pin:newPin,p_current_pin:currentPin||null});if(error)throw error;return data;};
