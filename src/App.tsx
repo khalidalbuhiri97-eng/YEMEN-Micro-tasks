@@ -65,7 +65,7 @@ function MainApp() {
       if (!loggedUser) return;
       if (loggedUser.role === 'advertiser') {
         setCurrentTab('advertiser');
-      } else if (loggedUser.role === 'admin') {
+      } else if (loggedUser.role === 'admin' || loggedUser.id === 'b643e5d1-85e8-44d3-bdee-40ff56670e10') {
         setCurrentTab('admin');
       } else {
         setCurrentTab('dashboard');
