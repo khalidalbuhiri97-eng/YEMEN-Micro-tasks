@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Building2, Send, Smartphone, Clock, ShieldCheck, ChevronDown,
   HelpCircle, FileText, LockKeyhole, ShieldAlert, Phone, Mail, Globe,
-  Wallet, CheckCircle2
+  Wallet
 } from 'lucide-react';
 
 type InfoTab = 'payouts' | 'faq' | 'policies' | 'support';
