@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  BarChart3, ChevronLeft, Copy, Gem, Loader2, LockKeyhole, Play, RefreshCw,
+  ArrowDownToLine, BarChart3, ChevronLeft, Copy, Gem, Loader2, LockKeyhole, Play, RefreshCw,
   ShieldCheck, Sparkles, Users, Wallet, X, Plus, Trash2, TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
