@@ -32,7 +32,7 @@ export async function ytLoadDashboard(userId: string) {
   const [metricsRes, walletRes, adsRes, allocationsRes, historyRes] = await Promise.all([
     supabase.rpc('yt_get_live_metrics'),
     supabase.from('yt_wallets').select('*').eq('user_id', userId).maybeSingle(),
-    supabase.from('yt_mining_ads').select('id,title,description,ad_url,placement,duration_seconds,sort_order').eq('is_active', true).order('sort_order'),
+    supabase.from('yt_mining_ads').select('id,title,description,ad_url,placement,duration_seconds,sort_order,is_active').eq('is_active', true).order('sort_order'),
     supabase.from('yt_token_allocations').select('*').order('percentage', { ascending: false }),
     supabase.from('yt_price_history').select('id,price_usd_per_yt,ad_pool_usd,total_mined_units,event_type,created_at').order('created_at', { ascending: false }).limit(24),
   ]);
