@@ -1,8 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ArrowDownToLine, ArrowLeftRight, ArrowUpRight, BarChart3, CheckCircle2, ChevronLeft,
-  CircleDollarSign, Copy, Gem, Loader2, LockKeyhole, Play, RefreshCw, ShieldCheck,
-  Sparkles, Users, Wallet, X, QrCode, Plus, Trash2, TrendingUp,
+  BarChart3, ChevronLeft, Copy, Gem, Loader2, LockKeyhole, Play, RefreshCw,
+  ShieldCheck, Sparkles, Users, Wallet, X, Plus, Trash2, TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.tsx';
 import {
@@ -66,7 +65,7 @@ export const YtEcosystemApp: React.FC<Props> = ({ compact = false, onOpen, onExi
       const target = new URL(session.ad_url);
       target.searchParams.set('yt_session_id', session.session_id);
       target.searchParams.set('yt_user_id', user!.id);\n      target.searchParams.set('yt_postback_url', `${window.location.origin}/api/yt-ecosystem/ad-postback`);
-      window.open(target.toString(), '_blank', 'noopener,noreferrer');
+      window.location.assign(target.toString());
       setNotice('بدأ الإعلان. ستُعتمد المكافأة فقط بعد وصول تأكيد موثّق من مزود الإعلان.');
     }, 'تم فتح الإعلان. انتظر التحقق قبل المطالبة.');
   };
@@ -108,9 +107,11 @@ export const YtEcosystemApp: React.FC<Props> = ({ compact = false, onOpen, onExi
         </section>}
 
         {tab==='wallet' && <section className="space-y-3">
-          <div className={`rounded-3xl bg-gradient-to-br from-amber-950/50 to-slate-900 p-5 ${GOLD}`}><p className="text-xs text-amber-100/70">رصيد التعدين</p><p className="my-2 text-3xl font-black text-amber-300">{ytFormat(wallet?.mined_units||0)}</p><p className="text-[11px] text-slate-400">رصيد غير قابل للسحب حتى إتمام إعلان التسييل</p><div className="mt-4 flex gap-2"><input value={liquidateAmount} onChange={e=>setLiquidateAmount(e.target.value)} inputMode="decimal" className="min-w-0 flex-1 rounded-xl bg-black/30 p-3 text-sm outline-none" placeholder="الوحدات الخام"/><button disabled={busy} onClick={()=>{const n=Math.round(Number(liquidateAmount)*1000);run(()=>ytLiquidate(n),'تم التسييل بنجاح.');}} className="rounded-xl bg-amber-400 px-3 text-xs font-black text-slate-950">تسييل</button></div><button disabled={busy} onClick={()=>startAd('liquidation')} className="mt-2 w-full rounded-xl border border-amber-300/40 py-3 text-xs font-bold text-amber-200"><Play size={14} className="inline ml-2"/>مشاهدة إعلان التسييل</button></div>
+          <div className={`rounded-3xl bg-gradient-to-br from-amber-950/50 to-slate-900 p-5 ${GOLD}`}><p className="text-xs text-amber-100/70">رصيد التعدين</p><p className="my-2 text-3xl font-black text-amber-300">{ytFormat(wallet?.mined_units||0)}</p><p className="text-[11px] text-slate-400">رصيد غير قابل للسحب حتى إتمام إعلان التسييل</p><div className="mt-4 flex gap-2"><input value={liquidateAmount} onChange={e=>setLiquidateAmount(e.target.value)} inputMode="decimal" className="min-w-0 flex-1 rounded-xl bg-black/30 p-3 text-sm outline-none" placeholder="مقدار التسييل بـ YT"/><button disabled={busy} onClick={()=>{const n=Math.round(Number(liquidateAmount)*1000);run(()=>ytLiquidate(n),'تم التسييل بنجاح.');}} className="rounded-xl bg-amber-400 px-3 text-xs font-black text-slate-950">تسييل</button></div><button disabled={busy} onClick={()=>startAd('liquidation')} className="mt-2 w-full rounded-xl border border-amber-300/40 py-3 text-xs font-bold text-amber-200"><Play size={14} className="inline ml-2"/>مشاهدة إعلان التسييل</button></div>
           <div className={`rounded-3xl bg-slate-900 p-5 ${GOLD}`}><p className="text-xs text-slate-400">الرصيد القابل للسحب وYT Pay</p><p className="my-2 text-3xl font-black text-emerald-300">{ytFormat(wallet?.withdrawable_units||0)}</p><div className="rounded-xl bg-black/20 p-3 text-xs"><span className="text-slate-400">Pay ID</span><div className="mt-1 flex items-center justify-between"><b className="text-lg tracking-widest">{wallet?.pay_id}</b><button onClick={()=>navigator.clipboard?.writeText(String(wallet?.pay_id))}><Copy size={15}/></button></div></div><img className="mx-auto mt-3 h-36 w-36 rounded-xl bg-white p-2" alt="YT Pay QR" src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent('YTPAY:'+wallet?.pay_id)}`}/><div className="mt-4 grid grid-cols-2 gap-2"><input value={payId} onChange={e=>setPayId(e.target.value)} inputMode="numeric" placeholder="Pay ID المستلم" className="min-w-0 rounded-xl bg-black/30 p-3 text-xs"/><input value={payAmount} onChange={e=>setPayAmount(e.target.value)} inputMode="decimal" placeholder="المبلغ بـ YT" className="min-w-0 rounded-xl bg-black/30 p-3 text-xs"/></div><input value={payNote} onChange={e=>setPayNote(e.target.value)} placeholder="ملاحظة اختيارية" className="mt-2 w-full rounded-xl bg-black/30 p-3 text-xs"/><button disabled={busy} onClick={()=>run(()=>ytSendPay(Number(payId),Math.round(Number(payAmount)*1000),payNote),'تم تحويل YT Pay بنجاح.')} className="mt-2 w-full rounded-xl bg-emerald-500 py-3 text-sm font-black text-slate-950">إرسال مجاني عبر YT Pay</button></div>
-          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-xs text-slate-400">طلبات السحب النقدي تُربط بإجراءات السحب المعتمدة في المنصة بعد اعتماد قابلية السحب وسياسة الصرف.</div>
+          <button type="button" disabled className="w-full rounded-xl border border-white/10 bg-white/5 py-3 text-xs font-bold text-slate-500"><span className="inline-flex items-center gap-2"><ArrowDownToLine size={15}/> السحب النقدي عبر YT Coin — غير مفعّل حتى اعتماد بوابة الصرف</span></button>
+          <div className="rounded-2xl border border-amber-400/20 bg-amber-400/5 p-3 text-xs text-amber-100/80">مساحة إعلان YT Coin</div>
+          {ads.filter(a=>a.placement==='both'||a.placement==='liquidation').slice(0,1).map(a=><a key={a.id} href={a.ad_url} target="_blank" rel="noreferrer" className={`block rounded-2xl bg-[#11151e] p-4 ${GOLD}`}><b className="text-sm text-amber-200">{a.title}</b><p className="mt-1 text-xs text-slate-400">{a.description||'إعلان من منظومة YT Coin'}</p></a>)}
         </section>}
 
         {tab==='mine' && <section className="space-y-3">
