@@ -64,8 +64,8 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
     },
     {
       id: 'how_it_works',
-      label: 'الدعم والدفع',
-      targetTab: 'how_it_works',
+      label: 'المعلومات والسحب',
+      targetTab: 'info_center',
       icon: HelpCircle,
       accent: 'text-cyan-700 bg-cyan-50 dark:text-cyan-300 dark:bg-cyan-950/50',
     },
