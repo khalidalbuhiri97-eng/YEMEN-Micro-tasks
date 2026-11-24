@@ -4271,6 +4271,13 @@ const offerwallGgHandlers = createOfferwallGgHandlers({
 
 // YT Coin: independent schema (100,000,000 YT final cap, BIGINT 1 YT = 1,000 integer sub-units, 0.001 YT min),
 // isolated from YER wallets and financial ledgers.
+// Retire legacy YT Coin endpoints after the isolated yt_* v2 cutover.
+const legacyYtCoinDisabled = (_req: Request, res: Response) =>
+  res.status(410).json({ error: 'YT_COIN_V1_RETIRED', message: 'تم إيقاف نظام YT Coin السابق. استخدم منظومة YT Coin الجديدة.' });
+app.use('/api/yt-coin', legacyYtCoinDisabled);
+app.use('/api/admin/yt-coin', legacyYtCoinDisabled);
+app.use('/api/postbacks/yt-coin-ads', legacyYtCoinDisabled);
+
 app.get('/api/yt-coin/summary', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     if (!req.authToken) return res.status(401).json({ error: 'جلسة الدخول مطلوبة.' });
