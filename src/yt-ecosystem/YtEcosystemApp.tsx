@@ -124,6 +124,18 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [showQrModal, setShowQrModal] = useState(false);
   const [pendingAdAction, setPendingAdAction] = useState<{ ad: YtAd; purpose: 'reward' | 'liquidation' } | null>(null);
   const bannerAdRef = useRef<HTMLDivElement | null>(null);
+  const socialBarScriptRef = useRef<HTMLScriptElement | null>(null);
+
+  // تحميل Social Bar بعد تفاعل المستخدم فقط، دون تشغيله تلقائياً عند فتح الصفحة.
+  const triggerSocialBar = useCallback(() => {
+    if (socialBarScriptRef.current || document.querySelector('script[src="https://bauval.org/14/df85fec7cf4e0f5cf87b135ab4f1bcd3"]')) return;
+    const script = document.createElement('script');
+    script.dataset.cfasync = 'false';
+    script.src = 'https://bauval.org/14/df85fec7cf4e0f5cf87b135ab4f1bcd3';
+    script.async = true;
+    socialBarScriptRef.current = script;
+    document.body.appendChild(script);
+  }, []);
 
   const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     setNotice({ text, type });
@@ -816,7 +828,14 @@ export const YtEcosystemApp: React.FC<Props> = ({
           {/* السعر اللحظي للعملة الواحدة بجانب صندوق السيولة مباشرة */}
           <div className="mt-2.5 grid grid-cols-2 gap-2">
             {/* 1. السعر اللحظي للعملة الواحدة (1 TSK) */}
-            <div className="flex flex-col justify-between rounded-2xl border border-emerald-500/25 bg-[#0E1422]/95 px-3 py-2">
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={triggerSocialBar}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerSocialBar(); } }}
+              aria-label="عرض سعر Taska Coin اللحظي"
+              className="flex cursor-pointer flex-col justify-between rounded-2xl border border-emerald-500/25 bg-[#0E1422]/95 px-3 py-2 transition active:scale-[0.99]"
+            >
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300">
                   <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
@@ -924,7 +943,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   <button
                     type="button"
                     disabled={busy || dailyCheckinClaimed}
-                    onClick={handleDailyCheckin}
+                    onClick={() => { triggerSocialBar(); void handleDailyCheckin(); }}
                     className="relative h-24 w-24 overflow-hidden rounded-full bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-500 p-0.5 shadow-[0_0_28px_rgba(245,158,11,0.45)] transition-transform hover:scale-105 active:scale-95 disabled:cursor-default"
                     style={{ animation: 'tskFloat 4s ease-in-out infinite' }}
                   >
@@ -943,7 +962,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
 
                 <button
                   disabled={busy || dailyCheckinClaimed}
-                  onClick={handleDailyCheckin}
+                  onClick={() => { triggerSocialBar(); void handleDailyCheckin(); }}
                   className="tsk-gold-btn mt-4 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-xs"
                 >
                   {dailyCheckinClaimed ? (
@@ -1087,7 +1106,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   ).map((f) => (
                     <button
                       key={f.id}
-                      onClick={() => setAdTypeFilter(f.id)}
+                      onClick={() => { if (f.id === 'video') triggerSocialBar(); setAdTypeFilter(f.id); }}
                       className={`shrink-0 rounded-xl px-3.5 py-1.5 text-[11px] font-bold transition ${
                         adTypeFilter === f.id
                           ? 'bg-amber-400 text-[#060910] shadow'
