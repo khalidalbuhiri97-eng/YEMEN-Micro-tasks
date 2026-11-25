@@ -123,6 +123,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [addressCopied, setAddressCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [pendingAdAction, setPendingAdAction] = useState<{ ad: YtAd; purpose: 'reward' | 'liquidation' } | null>(null);
+  const bannerAdRef = useRef<HTMLDivElement | null>(null);
 
   const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     setNotice({ text, type });
@@ -428,6 +429,19 @@ export const YtEcosystemApp: React.FC<Props> = ({
   };
 
   // تشغيل سريع ومباشر للإعلان مع قفل ضد النقر المزدوج وفتح الرابط فوراً
+  useEffect(() => {
+    if (tab !== 'mine' || !bannerAdRef.current) return;
+    const container = bannerAdRef.current;
+    container.innerHTML = '';
+    (window as any).atOptions = { key: '6e18ad3e7bb40480e41d4d20431b5bb4', format: 'iframe', height: 250, width: 300, params: {} };
+    const script = document.createElement('script');
+    script.src = 'https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4';
+    script.async = true;
+    script.setAttribute('data-cfasync', 'false');
+    container.appendChild(script);
+    return () => { container.innerHTML = ''; };
+  }, [tab]);
+
   const startAd = async (ad: YtAd, purpose: 'reward' | 'liquidation' = 'reward', instructionsConfirmed = false) => {
     if (ad.ad_type === 'smart_link' && !instructionsConfirmed) {
       setPendingAdAction({ ad, purpose });
@@ -1080,6 +1094,10 @@ export const YtEcosystemApp: React.FC<Props> = ({
                       {f.label}
                     </button>
                   ))}
+                </div>
+
+                <div className="my-4 flex w-full justify-center overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0A101C] p-2">
+                  <div ref={bannerAdRef} className="flex min-h-[250px] w-[300px] max-w-full items-center justify-center overflow-hidden" aria-label="إعلان بانر" />
                 </div>
 
                 {/* بطاقات الإعلانات */}
