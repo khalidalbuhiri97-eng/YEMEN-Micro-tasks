@@ -124,24 +124,6 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [showQrModal, setShowQrModal] = useState(false);
   const [pendingAdAction, setPendingAdAction] = useState<{ ad: YtAd; purpose: 'reward' | 'liquidation' } | null>(null);
   const bannerAdRef = useRef<HTMLDivElement | null>(null);
-  const nativeAdRef = useRef<HTMLDivElement | null>(null);
-
-  // تحميل Native Banner داخل موضعه في صفحة التعدين فقط.
-  useEffect(() => {
-    if (tab !== 'mine' || !nativeAdRef.current) return;
-    const container = nativeAdRef.current;
-    if (container.querySelector('script[src="https://bauval.org/21/1797abfd737f462d7441fb1c8b4a3c60"]')) return;
-    const script = document.createElement('script');
-    script.async = true;
-    script.setAttribute('fetchpriority', 'high');
-    script.setAttribute('data-cfasync', 'false');
-    script.src = 'https://bauval.org/21/1797abfd737f462d7441fb1c8b4a3c60';
-    container.appendChild(script);
-    return () => {
-      container.innerHTML = '';
-    };
-  }, [tab]);
-
   const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     setNotice({ text, type });
   }, []);
@@ -1123,16 +1105,6 @@ export const YtEcosystemApp: React.FC<Props> = ({
                       {f.label}
                     </button>
                   ))}
-                </div>
-
-                {/* وحدة Native من Adsterra أسفل الفلاتر وقبل بطاقات المهام */}
-                <div className="my-3 w-full overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0A101C] p-2">
-                  <div
-                    id="container-1797abfd737f462d7441fb1c8b4a3c60"
-                    ref={nativeAdRef}
-                    className="w-full min-h-[100px] overflow-hidden"
-                    aria-label="إعلان مدمج"
-                  />
                 </div>
 
                 {/* بطاقات الإعلانات */}
