@@ -7,17 +7,8 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Clock,
-  CheckCircle,
-  PlusCircle,
-  Banknote,
-  Send,
   Sparkles,
-  ArrowLeft,
-  ShieldCheck,
-  MapPin,
-  X,
 } from 'lucide-react';
-import { GeoLocationSelector, type GeoSingleValue } from '../common/GeoLocationSelector.tsx';
 import { formatYer } from '../../../shared/money.ts';
 
 interface OverviewViewProps {
@@ -25,19 +16,11 @@ interface OverviewViewProps {
 }
 
 export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => {
-  const { user, wallet, refreshUser, showToast } = useAuth();
+  const { user, wallet } = useAuth();
   const [recentTasks, setRecentTasks] = useState<TaskItem[]>([]);
   const [recentSubmissions, setRecentSubmissions] = useState<TaskSubmission[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<WalletTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
-  const [isSavingLocation, setIsSavingLocation] = useState(false);
-  const [editGeo, setEditGeo] = useState<GeoSingleValue>({
-    countryId: user?.countryId || '',
-    divisionId: user?.administrativeDivisionId || null,
-    pathTextAr: user?.locationPath || user?.city || '',
-    lowestNameAr: user?.city || '',
-  });
 
   useEffect(() => {
     let isMounted = true;
@@ -78,105 +61,63 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
   }, [user]);
 
   return (
-    <div className="space-y-8">
-      {/* Welcome Banner */}
-      <div className="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2 mb-1">
-            <span className="text-xs text-emerald-400 font-bold">
-              لوحة تحكم المستخدم · {user?.countryFlag ? `${user.countryFlag} ` : ''}{user?.locationPath || user?.city || 'صنعاء'}
+    <div className="space-y-6">
+      {/* 4 Financial Balances Compact Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-emerald-50/60 to-white dark:from-emerald-950/30 dark:to-slate-900 border border-emerald-200/80 dark:border-emerald-800/60 shadow-xs">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">الرصيد المتاح</span>
+            <span className="w-7 h-7 rounded-xl bg-emerald-100/80 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+              <Wallet className="w-3.5 h-3.5" />
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                setEditGeo({
-                  countryId: user?.countryId || '',
-                  divisionId: user?.administrativeDivisionId || null,
-                  pathTextAr: user?.locationPath || user?.city || '',
-                  lowestNameAr: user?.city || '',
-                });
-                setIsLocationModalOpen(true);
-              }}
-              className="text-[11px] font-semibold text-slate-300 hover:text-white underline underline-offset-2 flex items-center gap-1"
-            >
-              <MapPin className="w-3 h-3" />
-              <span>تعديل الموقع</span>
-            </button>
           </div>
-          <h1 className="text-xl sm:text-2xl font-extrabold text-white">
-            أهلاً بك مجدداً، {user?.fullName} 👋
-          </h1>
-          <p className="text-xs text-slate-300 mt-1 max-w-xl leading-relaxed">
-            محفظتك جاهزة لاستقبال مكافآت المهام المصغرة. أنجز مهام اليوم واطلب سحب أرباحك فوراً عبر الكريمي أو النجم.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            onClick={() => onNavigateTab('withdraw')}
-            className="px-5 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow transition-colors flex items-center gap-1.5"
-          >
-            <Banknote className="w-4 h-4" />
-            <span>طلب سحب أرباح</span>
-          </button>
-          <button
-            onClick={() => onNavigateTab('tasks')}
-            className="px-5 py-2.5 text-xs font-bold text-slate-900 bg-white hover:bg-slate-100 rounded-xl transition-colors flex items-center gap-1.5"
-          >
-            <span>المهام المتاحة</span>
-            <ArrowLeft className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* 4 Financial Balances Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span className="font-semibold text-emerald-700 dark:text-emerald-400">الرصيد المتاح</span>
-            <Wallet className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
+          <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
             {formatYer(wallet?.availableBalance ?? 0)}{' '}
-            <span className="text-xs font-bold text-emerald-600">ر.ي</span>
+            <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">ر.ي</span>
           </div>
-          <p className="text-[10px] text-slate-400 mt-1.5">قابل للسحب الفوري الآن</p>
+          <p className="text-[10px] text-slate-400 mt-1 truncate">قابل للسحب الفوري الآن</p>
         </div>
 
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span>الرصيد المعلق</span>
-            <Clock className="w-4 h-4 text-amber-500" />
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-900/60 border border-slate-200/80 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">الرصيد المعلق</span>
+            <span className="w-7 h-7 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-500 flex items-center justify-center shrink-0">
+              <Clock className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
+          <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
             {formatYer(wallet?.pendingBalance ?? 0)}{' '}
-            <span className="text-xs font-bold text-slate-400">ر.ي</span>
+            <span className="text-[11px] font-bold text-slate-400">ر.ي</span>
           </div>
-          <p className="text-[10px] text-slate-400 mt-1.5">طلبات سحب قيد الصرف</p>
+          <p className="text-[10px] text-slate-400 mt-1 truncate">طلبات سحب قيد الصرف</p>
         </div>
 
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span>إجمالي الأرباح</span>
-            <ArrowUpRight className="w-4 h-4 text-emerald-500" />
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-900/60 border border-slate-200/80 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">إجمالي الأرباح</span>
+            <span className="w-7 h-7 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-500 flex items-center justify-center shrink-0">
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
+          <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
             {formatYer(wallet?.totalEarned ?? 0)}{' '}
-            <span className="text-xs font-bold text-slate-400">ر.ي</span>
+            <span className="text-[11px] font-bold text-slate-400">ر.ي</span>
           </div>
-          <p className="text-[10px] text-slate-400 mt-1.5">الأرباح المعتمدة تاريخياً</p>
+          <p className="text-[10px] text-slate-400 mt-1 truncate">الأرباح المعتمدة تاريخياً</p>
         </div>
 
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span>إجمالي المسحوبات</span>
-            <ArrowDownLeft className="w-4 h-4 text-blue-500" />
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-900/60 border border-slate-200/80 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">إجمالي المسحوبات</span>
+            <span className="w-7 h-7 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-500 flex items-center justify-center shrink-0">
+              <ArrowDownLeft className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white">
+          <div className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate">
             {formatYer(wallet?.totalWithdrawn ?? 0)}{' '}
-            <span className="text-xs font-bold text-slate-400">ر.ي</span>
+            <span className="text-[11px] font-bold text-slate-400">ر.ي</span>
           </div>
-          <p className="text-[10px] text-slate-400 mt-1.5">تم استلامها نقداً</p>
+          <p className="text-[10px] text-slate-400 mt-1 truncate">تم استلامها نقداً</p>
         </div>
       </div>
 
@@ -368,73 +309,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({ onNavigateTab }) => 
           </table>
         </div>
       </div>
-
-      {/* Edit Geographic Location Modal */}
-      {isLocationModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2">
-                <MapPin className="w-4 h-4 text-emerald-600" />
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white">تحديث الموقع الجغرافي</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => !isSavingLocation && setIsLocationModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg"
-                aria-label="إغلاق"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-5 space-y-4">
-              <GeoLocationSelector
-                mode="single"
-                countryId={editGeo.countryId}
-                divisionId={editGeo.divisionId}
-                defaultCountryIso2={user?.countryCode || 'YE'}
-                required
-                onChange={setEditGeo}
-              />
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  disabled={isSavingLocation}
-                  onClick={() => setIsLocationModalOpen(false)}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 rounded-xl"
-                >
-                  إلغاء
-                </button>
-                <button
-                  type="button"
-                  disabled={isSavingLocation || !editGeo.countryId || !editGeo.divisionId}
-                  onClick={async () => {
-                    if (!editGeo.countryId || !editGeo.divisionId) return;
-                    setIsSavingLocation(true);
-                    try {
-                      await api.updateMyProfileLocation({
-                        countryId: editGeo.countryId,
-                        administrativeDivisionId: editGeo.divisionId,
-                        city: editGeo.lowestNameAr || editGeo.pathTextAr,
-                      });
-                      await refreshUser();
-                      showToast('تم تحديث موقعك الجغرافي بنجاح', 'success');
-                      setIsLocationModalOpen(false);
-                    } catch (err: any) {
-                      showToast(err?.message || 'تعذر تحديث الموقع الجغرافي', 'error');
-                    } finally {
-                      setIsSavingLocation(false);
-                    }
-                  }}
-                  className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl transition-colors"
-                >
-                  {isSavingLocation ? 'جاري الحفظ...' : 'حفظ الموقع'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

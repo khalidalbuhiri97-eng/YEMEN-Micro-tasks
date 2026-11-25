@@ -338,76 +338,86 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
   const walletAddr = wallet?.walletAddress || 'KY-XXXXXXXXXXXX';
 
   return (
-    <div className="space-y-8">
-      {/* Header & Wallet Address Badge */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white">
-              المحفظة الداخلية وسجل الحركات
-            </h1>
-            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
-              قيد مزدوج معتمد
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            دفتر أستاذ مالي ذري يضمن مطابقة الأرصدة والتحويلات المباشرة بين المحافظ بدون وسطاء.
-          </p>
-
-          {/* Wallet Address Chip */}
-          <div className="pt-2 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">عنوان محفظتك:</span>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400 shadow-inner">
-              <span>{walletAddr}</span>
-              <button
-                type="button"
-                onClick={() => handleCopyAddress()}
-                title="نسخ عنوان المحفظة"
-                className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-md transition-colors text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-              >
-                {hasCopiedAddress ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
+    <div dir="rtl" className="space-y-5">
+      {/* Unified Wallet Header, Address & Actions Card */}
+      <section className="rounded-3xl bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-emerald-500/20 dark:border-emerald-500/25 p-5 sm:p-6 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg sm:text-2xl font-extrabold text-slate-900 dark:text-white leading-snug">
+                المحفظة الداخلية وسجل الحركات
+              </h1>
+              <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                · قيد مزدوج معتمد
+              </span>
             </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              دفتر أستاذ مالي ذري يضمن مطابقة الأرصدة والتحويلات المباشرة بين المحافظ بدون وسطاء.
+            </p>
+          </div>
+
+          {/* Primary Actions */}
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => setIsReceiveModalOpen(true)}
-              className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 font-medium"
+              onClick={() => setIsTransferModalOpen(true)}
+              disabled={!isOnline || isUsingOfflineSession}
+              className="min-h-[42px] px-4 py-2 text-xs font-bold text-white bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 disabled:opacity-50 rounded-2xl shadow-xs transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 whitespace-nowrap"
             >
-              <QrCode className="w-3.5 h-3.5" />
-              <span>بطاقة الاستلام</span>
+              <ArrowRightLeft className="w-4 h-4 shrink-0" />
+              <span>تحويل رصيد</span>
+            </button>
+            <button
+              type="button"
+              onClick={onGoToWithdraw}
+              disabled={!isOnline || isUsingOfflineSession}
+              className="min-h-[42px] px-4 py-2 text-xs font-bold text-white bg-gradient-to-l from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 disabled:opacity-50 rounded-2xl shadow-xs transition-all active:scale-[0.98] flex items-center justify-center gap-1.5 whitespace-nowrap"
+            >
+              <Banknote className="w-4 h-4 shrink-0" />
+              <span>طلب سحب أرباح</span>
+            </button>
+            <button
+              type="button"
+              onClick={onGoToTasks}
+              className="col-span-2 sm:col-span-1 min-h-[40px] px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-2xl transition-colors whitespace-nowrap"
+            >
+              تصفح المهام
             </button>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        {/* Address Copy Bar + Receive Card Trigger */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-2xl bg-slate-50/90 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/70">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              عنوان محفظتك:
+            </span>
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400 shadow-2xs">
+              <span dir="ltr">{walletAddr}</span>
+              <button
+                type="button"
+                onClick={() => handleCopyAddress()}
+                title="نسخ عنوان المحفظة"
+                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md transition-colors text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+              >
+                {hasCopiedAddress ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+
           <button
-            onClick={() => setIsTransferModalOpen(true)}
-            disabled={!isOnline || isUsingOfflineSession}
-            className="px-4 py-2 text-xs font-bold text-white bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 disabled:opacity-50 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
+            type="button"
+            onClick={() => setIsReceiveModalOpen(true)}
+            className="min-h-[36px] px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-800/70 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
           >
-            <ArrowRightLeft className="w-4 h-4" />
-            <span>تحويل رصيد</span>
-          </button>
-          <button
-            onClick={onGoToWithdraw}
-            disabled={!isOnline || isUsingOfflineSession}
-            className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 rounded-xl shadow-sm transition-colors flex items-center gap-1.5"
-          >
-            <Banknote className="w-4 h-4" />
-            <span>طلب سحب أرباح</span>
-          </button>
-          <button
-            onClick={onGoToTasks}
-            className="px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 rounded-xl transition-colors"
-          >
-            تصفح المهام
+            <QrCode className="w-3.5 h-3.5 shrink-0" />
+            <span>بطاقة الاستلام</span>
           </button>
         </div>
-      </div>
+      </section>
 
       {(!isOnline || isUsingOfflineSession) && (
-        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2.5">
+        <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200 text-xs flex items-center gap-2.5">
           <WifiOff className="w-4 h-4 text-amber-600 shrink-0" />
           <span>
             أنت في وضع عدم الاتصال: حمايةً لدقة أرصدتك، التحويلات وطلبات السحب تتطلب اتصالاً نشطاً بالإنترنت وسيتم تحديث الرصيد تلقائياً فور عودة الشبكة.
@@ -415,111 +425,106 @@ export const WalletView: React.FC<WalletViewProps> = ({ onGoToWithdraw, onGoToTa
         </div>
       )}
 
-      {/* 4 Financial Balance Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Compact 2x2 Financial Summary Grid (2x2 on mobile, 4-col on desktop) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {/* Card 1: Available Balance */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-500/10 via-white to-white dark:from-emerald-950/40 dark:via-slate-900 dark:to-slate-900 border border-emerald-500/30 dark:border-emerald-600/30 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span className="font-semibold text-emerald-700 dark:text-emerald-400">الرصيد المتاح للتحويل والسحب</span>
-            <Wallet className="w-4 h-4 text-emerald-600" />
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-emerald-50/70 to-white dark:from-emerald-950/35 dark:to-slate-900 border border-emerald-300/70 dark:border-emerald-700/50 border-t-2 border-t-emerald-500 shadow-xs relative overflow-hidden">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-emerald-800 dark:text-emerald-300 leading-snug">
+              الرصيد المتاح للتحويل والسحب
+            </span>
+            <span className="w-7 h-7 rounded-xl bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+              <Wallet className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.availableBalance || 0)} ر.ي`}>
+          <div
+            className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full"
+            title={`${formatYer(wallet?.availableBalance || 0)} ر.ي`}
+          >
             {formatYer(wallet?.availableBalance || 0)}{' '}
-            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">ر.ي</span>
+            <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">ر.ي</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-2">جاهز للتحويل المباشر أو السحب عبر الصرافة</p>
+          <p className="text-[10px] text-slate-400 mt-1.5 truncate">
+            جاهز للتحويل أو السحب المباشر
+          </p>
         </div>
 
         {/* Card 2: Pending Balance */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span>الرصيد المعلق (قيد السحب)</span>
-            <Clock className="w-4 h-4 text-amber-500" />
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-900/60 border border-slate-200/80 dark:border-slate-800 border-t-2 border-t-amber-400 shadow-xs relative overflow-hidden">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+              الرصيد المعلق (قيد السحب)
+            </span>
+            <span className="w-7 h-7 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-500 flex items-center justify-center shrink-0">
+              <Clock className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.pendingBalance || 0)} ر.ي`}>
+          <div
+            className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full"
+            title={`${formatYer(wallet?.pendingBalance || 0)} ر.ي`}
+          >
             {formatYer(wallet?.pendingBalance || 0)}{' '}
-            <span className="text-xs font-bold text-slate-500">ر.ي</span>
+            <span className="text-[11px] font-bold text-slate-500">ر.ي</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-2">محجوز لطلبات السحب حتى إشعار التحويل</p>
+          <p className="text-[10px] text-slate-400 mt-1.5 truncate">
+            محجوز حتى تأكيد الصرف
+          </p>
         </div>
 
         {/* Card 3: Total Transferred */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span>إجمالي التحويلات الصادرة</span>
-            <ArrowRightLeft className="w-4 h-4 text-blue-500" />
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-900/60 border border-slate-200/80 dark:border-slate-800 border-t-2 border-t-blue-500 shadow-xs relative overflow-hidden">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+              إجمالي التحويلات الصادرة
+            </span>
+            <span className="w-7 h-7 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-500 flex items-center justify-center shrink-0">
+              <ArrowRightLeft className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.totalTransferred || 0)} ر.ي`}>
+          <div
+            className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full"
+            title={`${formatYer(wallet?.totalTransferred || 0)} ر.ي`}
+          >
             {formatYer(wallet?.totalTransferred || 0)}{' '}
-            <span className="text-xs font-bold text-slate-500">ر.ي</span>
+            <span className="text-[11px] font-bold text-slate-500">ر.ي</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-2">تم تحويلها لمحفظات أخرى عبر المنصة</p>
+          <p className="text-[10px] text-slate-400 mt-1.5 truncate">
+            محوّلة لمحافظ أخرى بالمنصة
+          </p>
         </div>
 
         {/* Card 4: Total Earned */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden">
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
-            <span>إجمالي الأرباح المكتسبة</span>
-            <ArrowUpRight className="w-4 h-4 text-emerald-500" />
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-b from-white to-slate-50/80 dark:from-slate-900 dark:to-slate-900/60 border border-slate-200/80 dark:border-slate-800 border-t-2 border-t-teal-500 shadow-xs relative overflow-hidden">
+          <div className="flex items-start justify-between gap-2 mb-2">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 leading-snug">
+              إجمالي الأرباح المكتسبة
+            </span>
+            <span className="w-7 h-7 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <div className="text-xl sm:text-2xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full" title={`${formatYer(wallet?.totalEarned || 0)} ر.ي`}>
+          <div
+            className="text-lg sm:text-xl font-extrabold font-mono tabular-nums text-slate-900 dark:text-white truncate max-w-full"
+            title={`${formatYer(wallet?.totalEarned || 0)} ر.ي`}
+          >
             {formatYer(wallet?.totalEarned || 0)}{' '}
-            <span className="text-xs font-bold text-slate-500">ر.ي</span>
+            <span className="text-[11px] font-bold text-slate-500">ر.ي</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-2">مجموع مكافآت المهام المعتمدة</p>
+          <p className="text-[10px] text-slate-400 mt-1.5 truncate">
+            مجموع مكافآت المهام المعتمدة
+          </p>
         </div>
       </div>
 
-      {/* Independent YT Coin balance: separate system & BIGINT integer sub-unit ledger */}
-      <section className="rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-gradient-to-l from-amber-50 via-white to-yellow-50 dark:from-slate-900 dark:via-slate-900 dark:to-amber-950/20 p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="h-11 w-11 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 flex items-center justify-center shrink-0"><Coins className="w-6 h-6" /></div>
-            <div className="min-w-0">
-              <h2 className="font-extrabold text-sm text-slate-900 dark:text-white">محفظة YT Coin المستقلة</h2>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                نظام مستقل بأعداد صحيحة BIGINT (1 YT = 1,000 جزء • أصغر وحدة 0.001 YT) — تبقى محفظة يمن تاسك بالريال اليمني دون مساس
-              </p>
-            </div>
-          </div>
-          <div className="text-left shrink-0">
-            <strong className="block text-xl font-extrabold font-mono text-amber-700 dark:text-amber-300">
-              {formatYtCoinAmount(
-                ytCoinSummary?.balanceYt ?? ytCoinSummary?.balance_yt,
-                ytCoinSummary?.balanceUnits ?? ytCoinSummary?.balance_units,
-                ytCoinSummary?.unitScale
-              )}
-            </strong>
-            <span className="text-xs font-bold text-amber-700 dark:text-amber-300">YT</span>
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-amber-100 dark:border-amber-900/40 pt-3 text-[11px]">
-          <span className="text-slate-600 dark:text-slate-300">
-            إجمالي المكتسب:{' '}
-            <b className="font-mono">
-              {formatYtCoinAmount(
-                ytCoinSummary?.lifetimeEarnedYt ?? ytCoinSummary?.lifetime_earned_yt,
-                ytCoinSummary?.lifetimeEarnedUnits ?? ytCoinSummary?.lifetime_earned_units,
-                ytCoinSummary?.unitScale
-              )}{' '}
-              YT
-            </b>
-          </span>
-          <span className="text-slate-500 dark:text-slate-400">
-            الدخول اليومي ({formatYtCoinAmount(ytCoinSummary?.baseRewardYt ?? 0.5)} YT) • نقرة الإعلان ({formatYtCoinAmount(ytCoinSummary?.adClickRewardYt ?? 0.01)} YT) • المشاهدة ({formatYtCoinAmount(ytCoinSummary?.adViewRewardYt ?? 0.01)} YT)
-          </span>
-        </div>
-      </section>
-
-      {/* Ledger Security Note */}
-      <div className="p-4 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+      {/* Compact Double-Entry Ledger Verification Strip */}
+      <div className="px-4 py-3 rounded-2xl bg-slate-50/90 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
           <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>
+          <span className="leading-snug">
             نظام محاسبي مغلق (Closed-Loop Ledger) مسجل بقيد محاسبي مزدوج بدقة 6 منازل عشرية.
           </span>
         </div>
-        <span className="font-mono text-[11px] text-slate-500">
+        <span className="font-mono text-[11px] font-semibold text-slate-500 dark:text-slate-400 shrink-0">
           العملة: YER (ريال يمني)
         </span>
       </div>
