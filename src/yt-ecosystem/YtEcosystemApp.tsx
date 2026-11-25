@@ -428,8 +428,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
   };
 
   // تشغيل سريع ومباشر للإعلان مع قفل ضد النقر المزدوج وفتح الرابط فوراً
-  const startAd = async (ad: YtAd, purpose: 'reward' | 'liquidation' = 'reward') => {
-    if (ad.ad_type === 'smart_link') {
+  const startAd = async (ad: YtAd, purpose: 'reward' | 'liquidation' = 'reward', instructionsConfirmed = false) => {
+    if (ad.ad_type === 'smart_link' && !instructionsConfirmed) {
       setPendingAdAction({ ad, purpose });
       return;
     }
@@ -485,7 +485,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
     if (!pendingAdAction) return;
     const next = pendingAdAction;
     setPendingAdAction(null);
-    void startAd(next.ad, next.purpose);
+    void startAd(next.ad, next.purpose, true);
   };
 
   const verifyAd = async () => {
