@@ -125,8 +125,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [pendingAdAction, setPendingAdAction] = useState<{ ad: YtAd; purpose: 'reward' | 'liquidation' } | null>(null);
   const bannerAdRef = useRef<HTMLDivElement | null>(null);
 
-  // تحميل Social Bar عند فتح صفحة التعدين حتى يسجل مستمعات النقر قبل تفاعل المستخدم.
-  useEffect(() => {
+  // تحميل Social Bar فقط عند الأحداث المحددة، ومنع إضافة السكربت أكثر من مرة.
+  const triggerSocialBar = useCallback(() => {
     const src = 'https://bauval.org/14/df85fec7cf4e0f5cf87b135ab4f1bcd3';
     if (document.querySelector(`script[src="${src}"]`)) return;
     const script = document.createElement('script');
@@ -390,7 +390,10 @@ export const YtEcosystemApp: React.FC<Props> = ({
     if (!res || res.success === false) {
       setDailyCheckinClaimed(prevClaimed);
       if (prevWallet) setWallet(prevWallet);
+      return;
     }
+    // لا يتم تفعيل الإعلان إلا بعد تأكيد نجاح استلام المكافأة.
+    triggerSocialBar();
   };
 
   // تنفيذ فائق السرعة للنقرات اليومية مع منع التكرار المتزامن (Synchronous Lock)
@@ -1106,7 +1109,10 @@ export const YtEcosystemApp: React.FC<Props> = ({
                     <button
                       key={f.id}
                       type="button"
-                      onClick={() => setAdTypeFilter(f.id)}
+                      onClick={() => {
+                        if (f.id === 'video') triggerSocialBar();
+                        setAdTypeFilter(f.id);
+                      }}
                       className={`shrink-0 rounded-xl px-3.5 py-1.5 text-[11px] font-bold transition ${
                         adTypeFilter === f.id
                           ? 'bg-amber-400 text-[#060910] shadow'
