@@ -587,24 +587,13 @@ const TrackedVastVideoBox: React.FC<{
               className="mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-[#0B0E14] font-black text-xs cursor-pointer shadow-lg"
             >
               <PlayCircle className="w-4 h-4" />
-              <span>تشغيل إعلان الفيديو الموثق ({nonLinearDurationSec} ثانية)</span>
+              <span>تشغيل إعلان الفيديو الموثق</span>
             </button>
           )}
 
           {(nonLinearPlaying || finished) && (
-            <div className="w-full max-w-sm mt-3 space-y-1.5">
-              <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-l from-amber-400 to-emerald-400 transition-all duration-300"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <div className="flex items-center justify-between text-[11px] font-mono text-gray-300">
-                <span>{finished ? 'اكتمل عرض الإعلان (VAST Complete)' : 'جاري تشغيل إعلان VAST...'}</span>
-                <span>
-                  {nonLinearElapsedSec} / {nonLinearDurationSec}ث
-                </span>
-              </div>
+            <div className="mt-3 text-[11px] text-gray-300" aria-live="polite">
+              {finished ? 'اكتمل عرض الإعلان' : 'جارٍ عرض الإعلان والتحقق في الخلفية...'}
             </div>
           )}
         </div>
@@ -1042,7 +1031,7 @@ export const MiningAdTemplateCard: React.FC<{
     if (
       isPreview ||
       compact ||
-      !isDisplayBanner ||
+      !(isDisplayBanner || template.templateType === 'external_link') ||
       !trackingSession ||
       trackingSession.verificationMode !== 'dwell' ||
       ['completed', 'rejected', 'expired'].includes(trackingSession.sessionStatus) ||
@@ -1082,6 +1071,7 @@ export const MiningAdTemplateCard: React.FC<{
     isDisplayBanner,
     trackingSession,
     template.completionRule?.requiredWatchSec,
+    template.templateType,
     localActiveTick,
     pageVisible,
     sessionToken,
