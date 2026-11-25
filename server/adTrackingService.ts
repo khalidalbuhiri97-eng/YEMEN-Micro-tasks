@@ -530,10 +530,15 @@ export class AdTrackingEngine {
       }
       patch.returnAt = nowIso;
       patch.sessionStatus = 'returned';
-      const exitMs = new Date(session.exitAt).getTime();
-      const gapSec = Math.max(0, (nowMs - exitMs) / 1000);
-      // Note: exit-to-return gap records approximate time away, capped cleanly
-      patch.activeDurationSec = Number(Math.max(session.activeDurationSec, Math.min(gapSec, 600)).toFixed(2));
+      // Time spent outside the app is intentionally NOT credited.
+    } else if (
+      input.eventName === 'visibility_visible' &&
+      session.exitAt &&
+      !session.returnAt
+    ) {
+      // Returning to the app resumes the same session automatically.
+      patch.returnAt = nowIso;
+      patch.sessionStatus = 'returned';
     }
 
     // Credit active time on non-paused heartbeat-like visible events
