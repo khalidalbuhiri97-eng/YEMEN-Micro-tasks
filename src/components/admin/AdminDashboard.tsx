@@ -2,7 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../api/client.ts';
 import { YtEcosystemApp } from '../../yt-ecosystem/YtEcosystemApp.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
-import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, CampaignItem, TaskBuilderMeta } from '../../types/index.ts';
+import type { TaskItem, TaskSubmission, WithdrawalRequest, PlatformSettings, CampaignItem, TaskBuilderMeta, TreasurySummary } from '../../types/index.ts';
+import { OwnerOverviewMetrics } from './finance/OwnerOverviewMetrics.tsx';
+import { TreasuryControlView } from './finance/TreasuryControlView.tsx';
+import { LedgerAuditView } from './finance/LedgerAuditView.tsx';
+import { FinancialReportsView } from './finance/FinancialReportsView.tsx';
+import { TaxManagementView } from './finance/TaxManagementView.tsx';
+import { ExternalAccountsView } from './finance/ExternalAccountsView.tsx';
 import { DatabaseErrorsView } from './DatabaseErrorsView.tsx';
 import { GeoManagementView } from './GeoManagementView.tsx';
 import { AdminSurveysAndAssetsView } from './AdminSurveysAndAssetsView.tsx';
@@ -43,8 +49,12 @@ import { addMoney, formatYer, mulMoney, roundYer6 } from '../../../shared/money.
 
 export const AdminDashboard: React.FC = () => {
   const { user, isAdmin, showToast, openConfirmModal } = useAuth();
-  const [activeTab, setActiveTab] = useState<'overview' | 'geo' | 'ad_center' | 'taska_coin' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'treasury' | 'external_accounts' | 'ledger' | 'reports' | 'taxes' | 'geo' | 'ad_center' | 'taska_coin' | 'surveys_assets' | 'db_errors' | 'submissions' | 'withdrawals' | 'tasks' | 'campaigns' | 'users' | 'settings'>('overview');
   
+  // Platform YER finance state (separate from TASKA mining)
+  const [stats, setStats] = useState<any>(null);
+  const [treasury, setTreasury] = useState<TreasurySummary | null>(null);
+
   // Data state
   const [submissions, setSubmissions] = useState<TaskSubmission[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
@@ -120,20 +130,24 @@ export const AdminDashboard: React.FC = () => {
   const loadAllAdminData = async () => {
     setIsLoading(true);
     try {
-      const [subsRes, withsRes, tasksRes, campsRes, usersRes, setRes] = await Promise.all([
+      const [overviewRes, subsRes, withsRes, tasksRes, campsRes, usersRes, setRes, treasuryRes] = await Promise.all([
+        api.getAdminOverview().catch(() => ({ stats: null })),
         api.getAdminSubmissions().catch(() => ({ submissions: [] })),
         api.getAdminWithdrawals().catch(() => ({ withdrawals: [] })),
         api.getAdminTasks().catch(() => ({ tasks: [] })),
         api.getAdminCampaigns().catch(() => ({ campaigns: [] })),
         api.getAdminUsers().catch(() => ({ users: [] })),
         api.getSettings().catch(() => ({ settings: null })),
+        api.getTreasury().catch(() => ({ treasury: null })),
       ]);
+      if (overviewRes?.stats) setStats(overviewRes.stats);
       if (subsRes?.submissions) setSubmissions(subsRes.submissions);
       if (withsRes?.withdrawals) setWithdrawals(withsRes.withdrawals);
       if (tasksRes?.tasks) setTasks(tasksRes.tasks);
       if (campsRes?.campaigns) setCampaigns(campsRes.campaigns);
       if (usersRes?.users) setUsersList(usersRes.users);
       if (setRes?.settings) setSettings(setRes.settings);
+      if (treasuryRes?.treasury) setTreasury(treasuryRes.treasury);
     } catch (err) {
       console.error('Failed to load admin data', err);
     } finally {
@@ -624,8 +638,13 @@ export const AdminDashboard: React.FC = () => {
       <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-slate-200 dark:border-slate-800 text-xs">
         {[
           { id: 'overview', label: 'المؤشرات المالية', count: null },
+          { id: 'treasury', label: 'الخزينة والعمليات المالية', count: null },
+          { id: 'external_accounts', label: 'الحسابات الخارجية وإيداعات المعلنين', count: null },
+          { id: 'ledger', label: 'دفتر الأستاذ والتدقيق', count: null },
+          { id: 'reports', label: 'التقارير والإيرادات', count: null },
+          { id: 'taxes', label: 'إدارة الضرائب', count: null },
           { id: 'ad_center', label: 'مركز الإعلانات والقوالب', count: null },
-          { id: 'taska_coin', label: 'Taska Coin · المحافظ والإعدادات', count: null },
+          { id: 'taska_coin', label: 'TASKA · نظام التعدين المستقل', count: null },
           { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
           { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
           { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
@@ -660,41 +679,31 @@ export const AdminDashboard: React.FC = () => {
         ))}
       </div>
 
-      {/* Simplified administration overview */}
+      {/* Platform YER financial dashboard — independent from TASKA */}
       {activeTab === 'overview' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {[
-              { label: 'المهام', value: tasks.length },
-              { label: 'المستخدمون', value: usersList.length },
-              { label: 'إثباتات بانتظار المراجعة', value: pendingSubmissionsCount },
-              { label: 'طلبات سحب معلقة', value: pendingWithdrawalsCount },
-            ].map((item) => (
-              <div key={item.label} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-                <p className="text-[11px] font-semibold text-slate-500">{item.label}</p>
-                <p className="mt-2 text-2xl font-black tabular-nums text-slate-900 dark:text-white">{isLoading ? '—' : item.value}</p>
-              </div>
-            ))}
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-            <h2 className="font-bold text-slate-900 dark:text-white">الوصول السريع</h2>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {[
-                { id: 'tasks', label: 'إدارة المهام' },
-                { id: 'submissions', label: 'مراجعة الإثباتات' },
-                { id: 'withdrawals', label: 'طلبات السحب' },
-                { id: 'ad_center', label: 'مركز الإعلانات' },
-                { id: 'campaigns', label: 'حملات المعلنين' },
-                { id: 'settings', label: 'إعدادات المنصة' },
-              ].map((item) => (
-                <button key={item.id} type="button" onClick={() => setActiveTab(item.id as any)}
-                  className="rounded-xl bg-slate-100 px-3 py-3 text-xs font-bold text-slate-700 transition-colors hover:bg-emerald-50 hover:text-emerald-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-emerald-950/40">
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <OwnerOverviewMetrics
+          stats={stats}
+          treasury={treasury}
+          pendingSubmissionsCount={pendingSubmissionsCount}
+          pendingWithdrawalsCount={pendingWithdrawalsCount}
+          isLoading={isLoading}
+          onNavigateTab={setActiveTab}
+        />
+      )}
+      {activeTab === 'treasury' && (
+        <TreasuryControlView treasury={treasury} onRefreshAll={loadAllAdminData} />
+      )}
+      {activeTab === 'external_accounts' && (
+        <ExternalAccountsView treasury={treasury} onRefreshAll={loadAllAdminData} />
+      )}
+      {activeTab === 'ledger' && (
+        <LedgerAuditView onRefreshAll={loadAllAdminData} />
+      )}
+      {activeTab === 'reports' && (
+        <FinancialReportsView treasury={treasury} />
+      )}
+      {activeTab === 'taxes' && (
+        <TaxManagementView treasury={treasury} onRefreshAll={loadAllAdminData} />
       )}
 
       {activeTab === 'taska_coin' && isAdmin && (
