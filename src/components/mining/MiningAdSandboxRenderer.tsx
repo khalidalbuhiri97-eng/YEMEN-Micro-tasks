@@ -1031,7 +1031,7 @@ export const MiningAdTemplateCard: React.FC<{
     if (
       isPreview ||
       compact ||
-      !(isDisplayBanner || template.templateType === 'external_link') ||
+      !isDisplayBanner ||
       !trackingSession ||
       trackingSession.verificationMode !== 'dwell' ||
       ['completed', 'rejected', 'expired'].includes(trackingSession.sessionStatus) ||
