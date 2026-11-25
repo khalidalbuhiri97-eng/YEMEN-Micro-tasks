@@ -9,7 +9,6 @@ import {
 import { api } from '../../api/client.ts';
 import { ClixWallIcon } from '../common/ClixWallIcon.tsx';
 import { ClixWallHomeCard } from '../home/ClixWallHomeCard.tsx';
-import { HomeAdWindow } from '../ads/HomeAdWindow.tsx';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
 
 interface HeroProps {
@@ -94,17 +93,6 @@ export const Hero: React.FC<HeroProps> = ({
               />
             </div>
           </div>
-        </div>
-
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-white/80 p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/70">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-xs font-extrabold text-slate-800 dark:text-slate-100">إعلان ممول من Adsterra</h2>
-              <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">مساحة إعلانية مستقلة عن بوابة العروض الخارجية</p>
-            </div>
-            <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">Adsterra</span>
-          </div>
-          <HomeAdWindow className="mx-auto" />
         </div>
 
         <div className="mt-7 pt-5 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-4">
