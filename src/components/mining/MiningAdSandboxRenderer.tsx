@@ -398,7 +398,8 @@ const TrackedVastVideoBox: React.FC<{
       accImpressions: string[],
       accTracking: Record<string, string[]>
     ): Promise<ParsedVastResult> => {
-      const resp = await fetch(targetVastUrl, { mode: 'cors' });
+      const proxyUrl = `/api/mining-ads/vast-proxy?url=${encodeURIComponent(targetVastUrl)}`;
+      const resp = await fetch(proxyUrl, { method: 'GET', credentials: 'same-origin' });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const xml = await resp.text();
       const parsed = parseVastXmlSafe(xml);
