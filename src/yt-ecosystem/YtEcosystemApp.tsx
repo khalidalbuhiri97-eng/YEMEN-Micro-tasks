@@ -48,22 +48,21 @@ type Props = {
   service?: YtCoinService;
 };
 
-type Tab = 'market' | 'wallet' | 'mine' | 'referrals' | 'settings' | 'admin';
+type Tab = 'mine' | 'wallet' | 'market' | 'referrals' | 'settings' | 'admin';
 
-const GOLD_CARD =
-  'border border-amber-400/25 bg-gradient-to-b from-[#141926]/95 to-[#0c1018]/95 shadow-[0_12px_36px_-10px_rgba(245,158,11,0.12)] backdrop-blur-xl';
-
-const usd = (v: number) => '$' + Number(v || 0).toFixed(8);
+const usd = (v: number) => '$' + Number(v || 0).toFixed(6);
+const usdShort = (v: number) =>
+  '$' + Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 const ytc = (v: number) => ytFormat(v);
 
 const msg = (e: any) => {
   const s = String(e?.message || e || '');
   const map: [string, string][] = [
     ['AD_ALREADY_COMPLETED_TODAY', 'أكملت هذا الإعلان اليوم. يمكنك العودة إليه غداً.'],
-    ['AD_DURATION_NOT_COMPLETED', 'لم تنتهِ مدة الإعلان بعد. انتظر ثم أعد التحقق.'],
+    ['AD_DURATION_NOT_COMPLETED', 'لم تنتهِ مدة الإعلان بعد. انتظر اكتمال العداد ثم تحقق.'],
     ['SESSION_NOT_PENDING', 'هذه الجلسة لم تعد صالحة. ابدأ جلسة جديدة.'],
     ['SESSION_EXPIRED', 'انتهت صلاحية جلسة الإعلان. ابدأ من جديد.'],
-    ['PIN_NOT_SET_OR_INVALID', 'رمز الحماية غير مضبوط أو غير صحيح.'],
+    ['PIN_NOT_SET_OR_INVALID', 'رمز الحماية PIN غير مضبوط أو غير صحيح.'],
     ['CURRENT_PIN_INVALID', 'رمز الحماية الحالي غير صحيح.'],
     ['INSUFFICIENT_LIQUIDITY', 'رصيد صندوق السيولة لا يكفي للتسييل.'],
     ['INSUFFICIENT_MINED_BALANCE', 'رصيد التعدين غير كافٍ.'],
@@ -74,7 +73,7 @@ const msg = (e: any) => {
     ['MINING_ALLOCATION_EXHAUSTED', 'انتهى رصيد مخصص التعدين.'],
     ['INVALID_AMOUNT_PRECISION', 'المبلغ يجب أن يحتوي على خمس خانات عشرية كحد أقصى.'],
     ['TRADING_PHASE_LOCKED', 'التداول والسحب الخارجي مغلقان خلال مرحلة الإطلاق.'],
-    ['INVALID_WALLET_ADDRESS', 'عنوان TSK Pay غير صحيح.'],
+    ['INVALID_WALLET_ADDRESS', 'عنوان محفظة TSK Pay غير صحيح.'],
     ['DAILY_CLICK_ALREADY_CLAIMED', 'سبق تسجيل هذه النقرة اليوم، ولم تتم إضافة مكافأة مكررة.'],
     ['yt_daily_click_claims_pkey', 'سبق تسجيل هذه النقرة اليوم، ولم تتم إضافة مكافأة مكررة.'],
     ['duplicate key value violates unique constraint', 'هذه العملية مسجلة مسبقاً، ولم تتم إضافة مكافأة مكررة.']
@@ -86,7 +85,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
   compact = false,
   onOpen,
   onExit,
-  initialTab = 'market',
+  initialTab = 'mine',
   user = null,
   isAdmin = false,
   onLogin,
@@ -107,9 +106,20 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [ledger, setLedger] = useState<any[]>([]);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState('');
+  const [startingAdId, setStartingAdId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; type: 'info' | 'success' | 'error' } | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+
+  const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
+    setNotice({ text, type });
+  }, []);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 4500);
+    return () => window.clearTimeout(t);
+  }, [notice]);
 
   const copyWalletAddress = async () => {
     const address = String(wallet?.pay_id || '');
@@ -117,9 +127,10 @@ export const YtEcosystemApp: React.FC<Props> = ({
     try {
       await navigator.clipboard.writeText(address);
       setAddressCopied(true);
+      notify('تم نسخ عنوان محفظتك بنجاح.', 'success');
       window.setTimeout(() => setAddressCopied(false), 1800);
     } catch {
-      setNotice('تعذر نسخ العنوان تلقائياً.');
+      notify('تعذر نسخ العنوان تلقائياً.', 'error');
     }
   };
 
@@ -130,7 +141,9 @@ export const YtEcosystemApp: React.FC<Props> = ({
     token: string;
     purpose: 'reward' | 'liquidation';
     adId: string;
+    adTitle: string;
     startedAt: number;
+    requiredSeconds: number;
     adUrl: string | null;
     adCode: string | null;
   } | null>(null);
@@ -158,11 +171,11 @@ export const YtEcosystemApp: React.FC<Props> = ({
     ad_url: '',
     ad_code: '',
     reward_yt: '0.01000',
-    duration_seconds: '30',
+    duration_seconds: '15',
     is_active: true
   });
-  const [adTypeFilter, setAdTypeFilter] = useState<'video' | 'smart_link' | 'banner_ad'>('video');
-  const [adminSubTab, setAdminSubTab] = useState<'ads' | 'revenue' | 'wallets' | 'withdrawals' | 'system'>('ads');
+  const [adTypeFilter, setAdTypeFilter] = useState<'all' | 'video' | 'smart_link' | 'banner_ad'>('all');
+  const [adminSubTab, setAdminSubTab] = useState<'ads' | 'revenue' | 'withdrawals' | 'wallets'>('ads');
 
   const [phase, setPhase] = useState<any>(null);
   const [referralStats, setReferralStats] = useState<any>(null);
@@ -188,116 +201,172 @@ export const YtEcosystemApp: React.FC<Props> = ({
   }, [user?.id, isAdmin, api]);
 
   useEffect(() => {
-    refresh().catch((e) => setNotice(msg(e)));
-  }, [refresh]);
+    refresh().catch((e) => notify(msg(e), 'error'));
+  }, [refresh, notify]);
 
   useEffect(() => {
     const id = window.setInterval(() => setClockNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
 
+  // حساب السعر اللحظي للعملة الواحدة استناداً إلى صندوق السيولة وعدد العملات المعدّنة
+  const computedLivePriceUsd = useMemo(() => {
+    const apiPrice = Number(metrics?.price_usd_per_yt || 0);
+    if (apiPrice > 0) return apiPrice;
+    const poolUsd = Number(metrics?.ad_pool_usd || 0);
+    const minedYt = Number(metrics?.total_mined_yt || 0);
+    if (poolUsd > 0 && minedYt > 0) return poolUsd / minedYt;
+    return 0;
+  }, [metrics]);
+
+  const computedLivePriceYer = useMemo(() => {
+    const apiYer = Number(metrics?.price_yer_per_yt || 0);
+    if (apiYer > 0) return apiYer;
+    const rate = Number(metrics?.yer_per_usd || 530);
+    return computedLivePriceUsd * rate;
+  }, [metrics, computedLivePriceUsd]);
+
   const tradingLocked = !!phase?.is_trading_locked;
   const remainingSeconds = Math.max(
     0,
     Math.floor((new Date(phase?.trading_unlock_at || 0).getTime() - clockNow) / 1000)
   );
-  const countdown = `${Math.floor(remainingSeconds / 86400)} يوم · ${Math.floor(
+  const countdown = `${Math.floor(remainingSeconds / 86400)}ي · ${Math.floor(
     (remainingSeconds % 86400) / 3600
-  )} ساعة · ${Math.floor((remainingSeconds % 3600) / 60)} دقيقة`;
+  )}س · ${Math.floor((remainingSeconds % 3600) / 60)}د`;
+
+  // عداد الجلسة النشطة للإعلان في الوقت الفعلي
+  const sessionElapsedSec = session ? Math.floor((clockNow - session.startedAt) / 1000) : 0;
+  const sessionRemainingSec = session ? Math.max(0, session.requiredSeconds - sessionElapsedSec) : 0;
+  const sessionProgressPct = session
+    ? Math.min(100, Math.round((sessionElapsedSec / Math.max(1, session.requiredSeconds)) * 100))
+    : 0;
 
   const run = async (fn: () => Promise<any>, success: string) => {
     setBusy(true);
-    setNotice('');
     try {
       const result = await fn();
       await refresh().catch(() => undefined);
       if (result?.success === false) {
-        setNotice(result?.message_ar || msg({ message: result?.code || 'تعذر إتمام العملية.' }));
+        notify(result?.message_ar || msg({ message: result?.code || 'تعذر إتمام العملية.' }), 'error');
         return result;
       }
-      setNotice(
-        typeof result?.message_ar === 'string' && result.message_ar.trim() ? result.message_ar : success
+      notify(
+        typeof result?.message_ar === 'string' && result.message_ar.trim() ? result.message_ar : success,
+        'success'
       );
       return result;
     } catch (e) {
-      setNotice(msg(e));
+      notify(msg(e), 'error');
       return null;
     } finally {
       setBusy(false);
     }
   };
 
+  // تشغيل سريع ومباشر للإعلان مع فتح الرابط فوراً
   const startAd = async (ad: YtAd, purpose: 'reward' | 'liquidation' = 'reward') => {
-    const result = await run(
-      () => api.startAd(ad.id, purpose),
-      'بدأت جلسة الإعلان. افتح الإعلان ثم تحقق بعد انتهاء المدة.'
-    );
-    if (!result) return;
-    setSession({
-      token: result.session_token,
-      purpose,
-      adId: ad.id,
-      startedAt: Date.now(),
-      adUrl: result.ad_url,
-      adCode: result.ad_code
-    });
-    if (purpose === 'liquidation') setLiquidationToken('');
-    if (result.ad_url) window.open(result.ad_url, '_blank', 'noopener,noreferrer');
+    if (startingAdId || busy) return;
+    setStartingAdId(ad.id);
+
+    // فتح الرابط فوراً في نافذة جديدة لتجنب حظر النوافذ المنبثقة في المتصفح
+    let openedWindow: Window | null = null;
+    if (ad.ad_url && ad.ad_url.startsWith('http')) {
+      openedWindow = window.open(ad.ad_url, '_blank', 'noopener,noreferrer');
+    }
+
+    try {
+      const result = await api.startAd(ad.id, purpose);
+      if (!result?.session_token) {
+        if (openedWindow) openedWindow.close();
+        notify('تعذر بدء جلسة الإعلان.', 'error');
+        return;
+      }
+      if (!openedWindow && result.ad_url) {
+        window.open(result.ad_url, '_blank', 'noopener,noreferrer');
+      }
+      setSession({
+        token: result.session_token,
+        purpose,
+        adId: ad.id,
+        adTitle: ad.title,
+        startedAt: Date.now(),
+        requiredSeconds: Number(result.required_seconds || ad.duration_seconds || 10),
+        adUrl: result.ad_url,
+        adCode: result.ad_code
+      });
+      if (purpose === 'liquidation') setLiquidationToken('');
+      notify(`بدأت جلسة "${ad.title}" — انتظر ${result.required_seconds || ad.duration_seconds} ثانية ثم استلم المكافأة.`, 'info');
+    } catch (e) {
+      if (openedWindow) openedWindow.close();
+      notify(msg(e), 'error');
+    } finally {
+      setStartingAdId(null);
+    }
   };
 
   const verifyAd = async () => {
     if (!session) return;
+    const currentSession = session;
     const result = await run(
-      () => api.verifyAd(session.token),
-      'تم التحقق من الإعلان وتسجيل المكافأة.'
+      () => api.verifyAd(currentSession.token),
+      'تم التحقق من الإعلان وإضافة المكافأة إلى رصيدك!'
     );
     if (result?.success) {
-      if (session.purpose === 'liquidation') setLiquidationToken(result.session_token || session.token);
+      if (currentSession.purpose === 'liquidation') {
+        setLiquidationToken(result.session_token || currentSession.token);
+      }
       setSession(null);
     }
   };
 
   const dailyClaimed = useMemo(() => new Set(claims.map((c) => c.ad_id)), [claims]);
   const nextDailyClick = [1, 2, 3, 4, 5].find((n) => !dailyClickClaims.includes(n)) || 6;
-  const price = metrics?.price_usd_per_yt || 0;
+  const totalUserUnits = Number(wallet?.mined_units || 0) + Number(wallet?.withdrawable_units || 0);
+  const totalUserValueUsd = (totalUserUnits / 100000) * computedLivePriceUsd;
   const fee = Number(payAmount || 0) * 0.03;
   const net = Number(payAmount || 0) - fee;
+
+  const filteredAds = useMemo(() => {
+    if (adTypeFilter === 'all') return ads;
+    return ads.filter((a) => a.ad_type === adTypeFilter);
+  }, [ads, adTypeFilter]);
 
   if (compact) {
     return (
       <button
         type="button"
         onClick={onOpen}
-        className={`group relative w-full overflow-hidden rounded-3xl bg-gradient-to-br from-[#0e131f] via-[#151c2e] to-[#261c0b] p-4 text-right text-white transition-all hover:scale-[1.01] ${GOLD_CARD}`}
+        className="group relative w-full overflow-hidden rounded-3xl border border-amber-400/40 bg-gradient-to-br from-[#131B2E] via-[#090D16] to-[#161E31] p-4 text-right text-white shadow-[0_15px_35px_-10px_rgba(212,175,55,0.22)] transition-all hover:scale-[1.01]"
       >
-        <div className="pointer-events-none absolute -left-8 -top-8 h-28 w-28 rounded-full bg-amber-400/10 blur-2xl" />
+        <div className="pointer-events-none absolute -left-8 -top-8 h-28 w-28 rounded-full bg-amber-400/15 blur-2xl" />
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-2.5 font-black">
             <img
               src="/images/taska-coin.png"
               alt="Taska Coin"
-              className="h-8 w-8 rounded-full object-cover ring-2 ring-amber-400/50"
+              className="h-9 w-9 rounded-full object-cover ring-2 ring-amber-400/60"
             />
             <div>
-              <span className="block text-sm text-amber-100">منظومة Taska Coin</span>
-              <span className="block text-[10px] font-normal text-amber-300/70">TSK · التعدين والمحفظة</span>
+              <span className="block text-sm text-amber-200">منظومة Taska Coin (TSK)</span>
+              <span className="block text-[10px] font-normal text-slate-400">التعدين السحابي والمحفظة الرقمية</span>
             </div>
           </span>
           <span className="grid h-8 w-8 place-items-center rounded-full bg-amber-400/15 text-amber-300 transition-transform group-hover:-translate-x-1">
             <ChevronLeft className="h-4 w-4" />
           </span>
         </div>
-        <div className="mt-4 grid grid-cols-2 gap-2 rounded-2xl bg-black/30 p-3">
+        <div className="mt-3.5 grid grid-cols-2 gap-2 rounded-2xl border border-amber-500/20 bg-[#060910]/80 p-3">
           <div>
-            <p className="text-[10px] text-slate-400">السعر اللحظي</p>
-            <p className="mt-0.5 text-base font-black text-amber-300" dir="ltr">
-              {usd(price)}
+            <p className="text-[10px] text-slate-400">سعر العملة (1 TSK)</p>
+            <p className="mt-0.5 font-mono text-sm font-black text-emerald-400" dir="ltr">
+              {usd(computedLivePriceUsd)}
             </p>
           </div>
           <div className="text-left">
-            <p className="text-[10px] text-slate-400">مكافآت الإعلانات</p>
-            <p className="mt-0.5 text-sm font-black text-emerald-300">
-              {ytc(metrics?.daily_mining_reward_units || 0)}
+            <p className="text-[10px] text-slate-400">صندوق السيولة</p>
+            <p className="mt-0.5 font-mono text-sm font-black text-amber-300" dir="ltr">
+              {usdShort(metrics?.ad_pool_usd || 0)}
             </p>
           </div>
         </div>
@@ -309,20 +378,20 @@ export const YtEcosystemApp: React.FC<Props> = ({
     return (
       <div
         dir="rtl"
-        className="flex min-h-[75dvh] flex-col items-center justify-center gap-5 bg-[#060911] p-6 text-center text-white"
+        className="flex min-h-[75dvh] flex-col items-center justify-center gap-5 bg-[#060910] p-6 text-center text-white"
       >
-        <div className="relative grid h-24 w-24 place-items-center rounded-full bg-gradient-to-tr from-amber-500/20 to-yellow-300/10 p-1.5 ring-2 ring-amber-400/40">
+        <div className="relative grid h-24 w-24 place-items-center rounded-full bg-gradient-to-tr from-amber-500/25 to-yellow-300/10 p-1.5 ring-2 ring-amber-400/50 shadow-[0_0_30px_rgba(245,158,11,0.3)]">
           <img src="/images/taska-coin.png" alt="Taska Coin" className="h-full w-full rounded-full object-cover" />
         </div>
         <div>
-          <h2 className="text-2xl font-black text-amber-200">منظومة Taska Coin</h2>
+          <h2 className="text-2xl font-black text-amber-300">Taska Coin (TSK)</h2>
           <p className="mt-1.5 max-w-xs text-xs leading-6 text-slate-400">
             سجّل الدخول بحسابك في منصة Yemen Micro-tasks للوصول إلى محفظتك وبدء التعدين السحابي.
           </p>
         </div>
         <button
           onClick={() => onLogin?.()}
-          className="rounded-2xl bg-gradient-to-l from-amber-400 to-yellow-500 px-8 py-3.5 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/20"
+          className="rounded-2xl bg-gradient-to-l from-[#FDE68A] via-[#D4AF37] to-[#F59E0B] px-8 py-3.5 text-sm font-black text-[#060910] shadow-lg shadow-amber-500/25"
         >
           تسجيل الدخول الموحّد
         </button>
@@ -333,701 +402,665 @@ export const YtEcosystemApp: React.FC<Props> = ({
   return (
     <main
       dir="rtl"
-      className="min-h-[100dvh] w-full max-w-full overflow-x-hidden bg-[#060911] pb-[calc(env(safe-area-inset-bottom)+1.5rem)] text-slate-100 selection:bg-amber-400 selection:text-slate-950"
+      className="min-h-[100dvh] w-full max-w-full overflow-x-hidden bg-[#060910] pb-[calc(env(safe-area-inset-bottom)+5.5rem)] text-slate-100 selection:bg-amber-400 selection:text-slate-950"
+      style={{
+        backgroundImage:
+          'radial-gradient(circle at 50% 0%, rgba(212, 175, 55, 0.14) 0%, transparent 55%), linear-gradient(to right, rgba(245, 158, 11, 0.03) 1px, transparent 1px), linear-gradient(to bottom, rgba(245, 158, 11, 0.03) 1px, transparent 1px)',
+        backgroundSize: '100% 100%, 24px 24px, 24px 24px'
+      }}
     >
       <style>{`
-        @keyframes tskOrbitSlow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        @keyframes tskOrbitRev { 0% { transform: rotate(360deg); } 100% { transform: rotate(0deg); } }
-        @keyframes tskCoinFloat { 0%, 100% { transform: translateY(0px) scale(1); } 50% { transform: translateY(-4px) scale(1.03); } }
+        @keyframes tskSpinSlow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes tskSpinRev { from { transform: rotate(360deg); } to { transform: rotate(0deg); } }
+        @keyframes tskFloat { 0%, 100% { transform: translateY(0px) scale(1); } 50% { transform: translateY(-4px) scale(1.03); } }
+        @keyframes tskPulse { 0%, 100% { box-shadow: 0 0 22px rgba(245, 158, 11, 0.35); } 50% { box-shadow: 0 0 46px rgba(253, 230, 138, 0.8); } }
+        .tsk-card {
+          background: linear-gradient(155deg, rgba(16, 23, 40, 0.96), rgba(8, 12, 22, 0.98));
+          border: 1px solid rgba(212, 175, 55, 0.32);
+          box-shadow: 0 14px 34px -12px rgba(0, 0, 0, 0.85);
+          backdrop-filter: blur(12px);
+        }
+        .tsk-vip-card {
+          background:
+            radial-gradient(circle at 15% 15%, rgba(253, 230, 138, 0.16) 0%, transparent 45%),
+            radial-gradient(circle at 85% 85%, rgba(245, 158, 11, 0.18) 0%, transparent 50%),
+            linear-gradient(135deg, #131B2E 0%, #090D16 60%, #161E31 100%);
+          border: 1px solid rgba(212, 175, 55, 0.52);
+          box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.85), inset 0 1px 1px rgba(253, 230, 138, 0.25);
+        }
+        .tsk-gold-btn {
+          background: linear-gradient(135deg, #FDE68A 0%, #D4AF37 45%, #F59E0B 100%);
+          color: #060910;
+          font-weight: 900;
+          box-shadow: 0 6px 20px -4px rgba(212, 175, 55, 0.45);
+          transition: transform 0.15s ease, filter 0.15s ease;
+        }
+        .tsk-gold-btn:hover:not(:disabled) { filter: brightness(1.06); }
+        .tsk-gold-btn:active:not(:disabled) { transform: scale(0.97); }
+        .tsk-gold-btn:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.4); box-shadow: none; }
       `}</style>
 
-      <div className="mx-auto w-full max-w-4xl px-3 pt-3 sm:px-5">
-        {/* Top App Bar */}
-        <header className="flex items-center justify-between gap-3 rounded-2xl border border-white/[0.06] bg-[#0c111d]/90 px-3.5 py-2.5 backdrop-blur-xl">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="relative grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-amber-300/30 to-amber-700/20 p-0.5 ring-1 ring-amber-400/50">
-              <img
-                src="/images/taska-coin.png"
-                alt="Taska Coin"
-                className="h-full w-full rounded-full object-cover"
-              />
-              <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-[#0c111d] bg-emerald-400" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h1 className="truncate text-base font-black tracking-tight text-white">Taska Coin</h1>
-                <span className="rounded-md bg-amber-400/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-300">
-                  TSK
-                </span>
-              </div>
-              <p className="truncate text-[11px] text-slate-400">
-                الرصيد الكلي:{' '}
-                <b className="text-amber-200">
-                  {ytc(Number(wallet?.mined_units || 0) + Number(wallet?.withdrawable_units || 0))}
-                </b>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-1.5">
-            <button
-              onClick={() => refresh().catch((e) => setNotice(msg(e)))}
-              aria-label="تحديث البيانات"
-              className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/[0.03] text-slate-300 transition hover:border-amber-400/40 hover:text-amber-300"
-            >
-              <RefreshCw size={16} className={busy ? 'animate-spin text-amber-300' : ''} />
-            </button>
-            {onExit && (
-              <button
-                onClick={onExit}
-                aria-label="إغلاق"
-                className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/[0.03] text-slate-300 transition hover:border-rose-400/40 hover:text-rose-300"
-              >
-                <X size={16} />
-              </button>
-            )}
-          </div>
-        </header>
-
-        {/* Navigation Pill Bar */}
-        <nav className="my-3.5 grid grid-cols-5 gap-1 rounded-2xl border border-white/[0.07] bg-[#0c111d] p-1.5 sm:flex">
-          {(
-            [
-              { id: 'market', label: 'السوق', icon: TrendingUp },
-              { id: 'mine', label: 'التعدين', icon: Play },
-              { id: 'wallet', label: 'المحفظة', icon: Wallet },
-              { id: 'referrals', label: 'الإحالات', icon: Users },
-              { id: 'settings', label: 'الأمان', icon: LockKeyhole },
-              { id: 'admin', label: 'الإدارة', icon: ShieldCheck }
-            ] as const
-          )
-            .filter((x) => x.id !== 'admin' || isAdmin)
-            .map((x) => {
-              const active = tab === x.id;
-              return (
-                <button
-                  key={x.id}
-                  onClick={() => setTab(x.id)}
-                  className={`flex flex-1 flex-col items-center justify-center gap-1 rounded-xl px-1.5 py-2 text-[10px] font-bold transition-all sm:flex-row sm:gap-2 sm:py-2.5 sm:text-xs ${
-                    active
-                      ? 'bg-gradient-to-l from-amber-400 via-amber-300 to-yellow-500 text-slate-950 shadow-md shadow-amber-500/20'
-                      : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200'
-                  }`}
-                >
-                  <x.icon size={15} />
-                  <span className="truncate">{x.label}</span>
-                </button>
-              );
-            })}
-        </nav>
-
-        {/* Status & Loader Banners */}
-        {notice && (
+      {/* Floating Toast Notification */}
+      {notice && (
+        <div className="fixed left-1/2 top-4 z-50 w-[92%] max-w-md -translate-x-1/2">
           <div
             role="status"
-            className="mb-3.5 flex items-start justify-between gap-2 rounded-2xl border border-amber-400/35 bg-amber-400/10 px-3.5 py-3 text-xs leading-6 text-amber-100"
+            className={`flex items-center justify-between gap-2.5 rounded-2xl border px-4 py-3 text-xs font-bold shadow-2xl backdrop-blur-xl transition-all ${
+              notice.type === 'error'
+                ? 'border-rose-500/50 bg-[#210F14]/95 text-rose-200'
+                : notice.type === 'success'
+                ? 'border-emerald-500/50 bg-[#0C1D18]/95 text-emerald-200'
+                : 'border-amber-500/50 bg-[#141926]/95 text-amber-200'
+            }`}
           >
-            <span>{notice}</span>
-            <button onClick={() => setNotice('')} className="shrink-0 text-amber-300/70 hover:text-amber-200">
+            <span>{notice.text}</span>
+            <button onClick={() => setNotice(null)} className="shrink-0 opacity-75 hover:opacity-100">
               <X size={14} />
             </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {busy && (
-          <div className="mb-3.5 flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-300">
-            <Loader2 size={14} className="animate-spin" />
-            <span>جارٍ تنفيذ العملية ومزامنة السجل مع قاعدة البيانات…</span>
-          </div>
-        )}
-
-        {/* ==================== 1. MARKET TAB ==================== */}
-        {tab === 'market' && (
-          <section className="space-y-4">
-            {/* Hero Live Price Card */}
-            <div className={`relative overflow-hidden rounded-3xl p-5 sm:p-6 ${GOLD_CARD}`}>
-              <div className="pointer-events-none absolute -left-16 -top-16 h-48 w-48 rounded-full bg-amber-400/10 blur-3xl" />
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-[10px] font-bold text-amber-300">
-                    <Sparkles size={12} /> السعر اللحظي المدعوم بالسيولة
+      <div className="mx-auto w-full max-w-2xl px-3 pt-3 sm:px-5">
+        {/* ==================== STICKY HEADER WITH LIVE PRICE & LIQUIDITY SIDE-BY-SIDE ==================== */}
+        <header className="sticky top-2 z-30 rounded-3xl border border-amber-500/30 bg-[#060910]/92 px-3.5 py-3 shadow-2xl backdrop-blur-xl">
+          <div className="flex items-center justify-between gap-2">
+            {/* Logo & Title */}
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="relative h-10 w-10 shrink-0 rounded-full bg-gradient-to-br from-[#FDE68A] via-[#D4AF37] to-[#B45309] p-0.5 shadow-lg">
+                <img
+                  src="/images/taska-coin.png"
+                  alt="TSK"
+                  className="h-full w-full rounded-full bg-[#0A0F1C] object-cover"
+                />
+                <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[#060910] bg-emerald-400" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <h1 className="truncate bg-gradient-to-l from-amber-200 via-amber-400 to-yellow-500 bg-clip-text text-base font-black tracking-wide text-transparent">
+                    TASKA COIN
+                  </h1>
+                  <span className="rounded border border-amber-500/35 bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-extrabold text-amber-300">
+                    TSK
                   </span>
-                  <p className="mt-3 text-3xl font-black tracking-tight text-white sm:text-4xl" dir="ltr">
-                    {usd(price)}
-                  </p>
-                  <p className="mt-1 text-xs font-medium text-amber-300/90">
-                    ≈ {(metrics?.price_yer_per_yt || 0).toLocaleString('en-US', { maximumFractionDigits: 5 })}{' '}
-                    ريال يمني / TSK
-                  </p>
                 </div>
-
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-amber-400/30 bg-amber-400/10 p-1.5">
-                  <img
-                    src="/images/taska-coin.png"
-                    alt="TSK"
-                    className="h-full w-full rounded-full object-cover"
-                  />
-                </div>
+                <p className="truncate text-[10px] text-slate-400">
+                  رصيدك: <b className="font-mono text-amber-200">{ytc(totalUserUnits)}</b>
+                </p>
               </div>
+            </div>
 
-              <div className="mt-5 grid grid-cols-2 gap-2.5">
-                <div className="rounded-2xl border border-white/[0.06] bg-black/35 p-3.5">
-                  <p className="text-[11px] text-slate-400">صندوق سيولة الإعلانات</p>
-                  <p className="mt-1 text-lg font-black text-emerald-300" dir="ltr">
-                    {usd(metrics?.ad_pool_usd || 0)}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/[0.06] bg-black/35 p-3.5">
-                  <p className="text-[11px] text-slate-400">مكافآت الإعلانات النشطة</p>
-                  <p className="mt-1 text-base font-black text-amber-300">
-                    {ytc(metrics?.daily_mining_reward_units || 0)}
-                  </p>
-                  <p className="text-[10px] text-slate-500" dir="ltr">
-                    = {usd(metrics?.daily_mining_reward_usd || 0)}
-                  </p>
-                </div>
+            {/* Action Buttons */}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {isAdmin && (
+                <button
+                  onClick={() => setTab('admin')}
+                  className={`flex items-center gap-1 rounded-xl border px-2.5 py-2 text-[10px] font-black transition ${
+                    tab === 'admin'
+                      ? 'border-amber-300 bg-amber-400 text-[#060910]'
+                      : 'border-amber-500/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                  }`}
+                >
+                  <ShieldCheck size={13} />
+                  <span>الإدارة</span>
+                </button>
+              )}
+              <button
+                onClick={() => refresh().catch((e) => notify(msg(e), 'error'))}
+                title="تحديث البيانات"
+                className="grid h-9 w-9 place-items-center rounded-xl border border-amber-500/25 bg-[#0E1422] text-amber-300 transition hover:bg-amber-500/10"
+              >
+                <RefreshCw size={15} className={busy ? 'animate-spin' : ''} />
+              </button>
+              {onExit && (
+                <button
+                  onClick={onExit}
+                  title="إغلاق"
+                  className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-[#0E1422] text-slate-300 transition hover:border-rose-400/40 hover:text-rose-300"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* السعر اللحظي للعملة الواحدة بجانب صندوق السيولة مباشرة */}
+          <div className="mt-2.5 grid grid-cols-2 gap-2">
+            {/* 1. السعر اللحظي للعملة الواحدة (1 TSK) */}
+            <div className="flex flex-col justify-between rounded-2xl border border-emerald-500/25 bg-[#0E1422]/95 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-[10px] font-bold text-slate-300">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+                  سعر العملة (1 TSK)
+                </span>
+                <span className="font-mono text-[9px] text-emerald-400/80">LIVE</span>
               </div>
+              <div className="mt-0.5 flex items-baseline justify-between gap-1">
+                <span className="font-mono text-sm font-black text-emerald-400" dir="ltr">
+                  {usd(computedLivePriceUsd)}
+                </span>
+                <span className="truncate font-mono text-[9px] text-slate-400">
+                  {computedLivePriceYer.toFixed(2)} ر.ي
+                </span>
+              </div>
+            </div>
 
-              <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.03] px-3 py-2 text-[11px] text-slate-400">
-                <span>إجمالي المعروض المعدّن حالياً</span>
-                <b className="font-mono text-slate-200" dir="ltr">
-                  {(metrics?.total_mined_yt || 0).toLocaleString('en-US', {
+            {/* 2. صندوق السيولة الداعم للعملة */}
+            <div className="flex flex-col justify-between rounded-2xl border border-amber-500/25 bg-[#0E1422]/95 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-300">💧 صندوق السيولة</span>
+                <span className="rounded bg-amber-500/15 px-1.5 font-mono text-[9px] text-amber-300">POOL</span>
+              </div>
+              <div className="mt-0.5 flex items-baseline justify-between gap-1">
+                <span className="font-mono text-sm font-black text-amber-300" dir="ltr">
+                  {usdShort(metrics?.ad_pool_usd || 0)}
+                </span>
+                <span className="truncate font-mono text-[9px] text-slate-400">
+                  معدّن: {Number(metrics?.total_mined_yt || 0).toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* شريط تقدم المعروض المعدّن */}
+          <div className="mt-2 rounded-xl border border-slate-800/90 bg-[#0E1422]/80 px-3 py-1.5">
+            <div className="mb-1 flex items-center justify-between text-[10px]">
+              <span className="text-slate-400">
+                المعدّن المتداول:{' '}
+                <strong className="font-mono text-slate-200">
+                  {Number(metrics?.total_mined_yt || 0).toLocaleString('en-US', {
                     minimumFractionDigits: 5,
                     maximumFractionDigits: 5
                   })}{' '}
                   TSK
-                </b>
-              </div>
+                </strong>
+              </span>
+              <span className="font-mono font-bold text-amber-400">
+                السقف: {Number(metrics?.max_supply_yt || 100000000).toLocaleString('en-US')}
+              </span>
             </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-l from-[#FDE68A] via-[#D4AF37] to-[#F59E0B] transition-all duration-500"
+                style={{
+                  width: `${Math.min(
+                    100,
+                    Math.max(
+                      1,
+                      (Number(metrics?.total_mined_yt || 0) /
+                        Math.max(1, Number(metrics?.max_supply_yt || 100000000))) *
+                        100
+                    )
+                  )}%`
+                }}
+              />
+            </div>
+          </div>
+        </header>
 
-            {/* Vesting / Launch Lock Banner */}
-            {phase && (
-              <div className={`rounded-2xl p-4 ${GOLD_CARD}`}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="grid h-8 w-8 place-items-center rounded-xl bg-amber-400/15 text-amber-300">
-                      <LockKeyhole size={15} />
-                    </span>
-                    <div>
-                      <b className="block text-xs text-white">مرحلة التأسيس وحماية السيولة (365 يوماً)</b>
-                      <span className="text-[10px] text-slate-400">
-                        {tradingLocked ? 'التداول الخارجي مقفل لضمان نمو القيمة' : 'اكتملت فترة الحظر'}
-                      </span>
-                    </div>
-                  </div>
-                  <span className="rounded-xl border border-amber-400/25 bg-black/40 px-3 py-1.5 text-xs font-black text-amber-300">
-                    {countdown}
+        {/* ==================== MAIN CONTENT AREA ==================== */}
+        <div className="mt-4 space-y-4">
+          {/* -------------------- TAB 1: التعدين السحابي والمهام الإعلانية -------------------- */}
+          {tab === 'mine' && (
+            <section className="space-y-4">
+              {/* بطاقة مفاعل التعدين الدائري */}
+              <div className="tsk-card relative overflow-hidden rounded-3xl p-5 text-center">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-0.5 font-mono text-[10px] text-emerald-400">
+                    <span className="h-1.5 w-1.5 animate-ping rounded-full bg-emerald-400" />
+                    عقدة التعدين نشطة
                   </span>
+                  <span className="font-mono text-[10px] text-amber-300">CLOUD AD MINING</span>
                 </div>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/50 p-0.5">
+
+                {/* الشعار الدائري الذهبي للعملة محاطاً بحلقات الطاقة الدوارة */}
+                <div className="relative mx-auto my-3 flex h-36 w-36 items-center justify-center">
                   <div
-                    className="h-full rounded-full bg-gradient-to-l from-amber-400 to-yellow-200 transition-all"
+                    className="absolute inset-0 rounded-full border-2 border-dashed border-amber-400/55"
                     style={{
-                      width: `${Math.min(100, Math.max(2, (Number(phase.days_elapsed || 0) / 365) * 100))}%`
+                      animation: `tskSpinSlow ${session || busy || startingAdId ? '3s' : '18s'} linear infinite`
                     }}
                   />
+                  <div
+                    className="absolute inset-2.5 rounded-full border-2 border-dotted border-amber-200/45"
+                    style={{
+                      animation: `tskSpinRev ${session || busy || startingAdId ? '2s' : '11s'} linear infinite`
+                    }}
+                  />
+                  <div
+                    className="absolute inset-5 rounded-full bg-amber-500/20 blur-md"
+                    style={{ animation: 'tskPulse 2s ease-in-out infinite' }}
+                  />
+
+                  <button
+                    type="button"
+                    disabled={busy || dailyCheckinClaimed}
+                    onClick={() =>
+                      run(
+                        () => api.claimDailyCheckin(),
+                        'تم استلام مكافأة الدخول اليومي (+0.20000 TSK) بنجاح!'
+                      )
+                    }
+                    className="relative h-24 w-24 overflow-hidden rounded-full bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-500 p-0.5 shadow-[0_0_28px_rgba(245,158,11,0.45)] transition-transform hover:scale-105 active:scale-95 disabled:cursor-default"
+                    style={{ animation: 'tskFloat 4s ease-in-out infinite' }}
+                  >
+                    <img
+                      src="/images/taska-coin.png"
+                      alt="Taska Coin TSK"
+                      className="h-full w-full rounded-full object-cover"
+                    />
+                  </button>
                 </div>
-              </div>
-            )}
 
-            {/* Price History Chart */}
-            <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-black text-white">مؤشر نمو السعر والسيولة</h2>
-                  <p className="text-[11px] text-slate-400">تحديث تراكمي مع كل إيداع أرباح إعلانية</p>
-                </div>
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-400/10 text-amber-300">
-                  <BarChart3 size={18} />
-                </span>
-              </div>
-              <div className="flex h-36 items-end gap-1.5 rounded-2xl border border-white/[0.05] bg-black/30 p-3">
-                {history.length ? (
-                  history.map((p: any) => {
-                    const maxP = Math.max(...history.map((h: any) => Number(h.price_usd_per_yt)), 0.00000001);
-                    const pct = Math.max(8, Math.min(100, (Number(p.price_usd_per_yt) / maxP) * 100));
-                    return (
-                      <div
-                        key={p.id}
-                        title={`${new Date(p.created_at).toLocaleString('ar')} — ${usd(p.price_usd_per_yt)}`}
-                        className="group relative flex-1 rounded-t-lg bg-gradient-to-t from-amber-700 via-amber-500 to-yellow-300 transition-all hover:brightness-125"
-                        style={{ height: `${pct}%` }}
-                      />
-                    );
-                  })
-                ) : (
-                  <p className="m-auto text-xs text-slate-500">لا توجد نقاط سعر مسجلة في السجل بعد</p>
-                )}
-              </div>
-            </div>
+                <h2 className="text-sm font-black text-white">التعدين السحابي والتسجيل اليومي</h2>
+                <p className="mt-1 text-xs text-slate-400">
+                  رصيد التعدين الحالي: <strong className="font-mono text-amber-300">{ytc(wallet?.mined_units || 0)}</strong>
+                </p>
 
-            {/* Tokenomics Distribution */}
-            <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-black text-white">توزيع المعروض الكلي · 100,000,000 TSK</h2>
-                <Layers size={16} className="text-amber-300" />
-              </div>
-              <div className="space-y-3">
-                {allocations.map((a: any) => (
-                  <div key={a.allocation_code} className="rounded-xl bg-black/25 p-2.5">
-                    <div className="mb-1.5 flex justify-between gap-2 text-xs">
-                      <span className="font-bold text-slate-200">{a.name_ar}</span>
-                      <b className="font-mono text-amber-300" dir="ltr">
-                        {a.percentage}% · {(Number(a.allocated_units) / 100000).toLocaleString('en-US')} TSK
-                      </b>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-gradient-to-l from-amber-500 to-yellow-300"
-                        style={{ width: `${a.percentage}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== 2. MINING TAB (WITH CIRCULAR HERO LOGO) ==================== */}
-        {tab === 'mine' && (
-          <section className="space-y-4">
-            {/* Circular Coin Reactor Hero Card */}
-            <div className={`relative overflow-hidden rounded-3xl p-5 text-center ${GOLD_CARD}`}>
-              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(245,185,55,0.16),transparent_65%)]" />
-
-              <div className="relative flex items-center justify-between">
-                <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-[10px] font-bold text-amber-200">
-                  التعدين السحابي النشط
-                </span>
-                <span
-                  className={`rounded-full px-3 py-1 text-[10px] font-bold ${
-                    dailyCheckinClaimed
-                      ? 'border border-emerald-400/30 bg-emerald-500/15 text-emerald-300'
-                      : 'border border-amber-400/40 bg-amber-400/20 text-amber-200 animate-pulse'
-                  }`}
-                >
-                  {dailyCheckinClaimed ? 'تم استلام مكافأة اليوم ✓' : 'مكافأة 0.20000 TSK جاهزة'}
-                </span>
-              </div>
-
-              {/* Circular Coin Reactor */}
-              <div className="relative mx-auto my-5 flex h-44 w-44 items-center justify-center">
-                {/* Outer Rotating Dashed Ring */}
-                <div
-                  className="absolute inset-0 rounded-full border-2 border-dashed border-amber-400/35"
-                  style={{ animation: 'tskOrbitSlow 18s linear infinite' }}
-                />
-                {/* Inner Counter-Rotating Glow Ring */}
-                <div
-                  className="absolute inset-3 rounded-full border border-amber-300/40 border-t-amber-300 border-b-transparent shadow-[0_0_30px_rgba(245,185,55,0.22)]"
-                  style={{ animation: `tskOrbitRev ${session || busy ? '2.5s' : '8s'} linear infinite` }}
-                />
-                {/* Interactive Coin Button */}
                 <button
-                  type="button"
                   disabled={busy || dailyCheckinClaimed}
                   onClick={() =>
                     run(
                       () => api.claimDailyCheckin(),
-                      'تم استلام مكافأتك اليومية وإضافة 0.20000 TSK إلى رصيد التعدين.'
+                      'تم استلام مكافأة الدخول اليومي (+0.20000 TSK) بنجاح!'
                     )
                   }
-                  aria-label="استلام المكافأة اليومية 0.20000 TSK"
-                  className={`group relative grid h-32 w-32 place-items-center rounded-full border-[3px] border-amber-300/90 bg-gradient-to-br from-amber-200 via-amber-500 to-amber-800 p-1 shadow-[0_0_40px_rgba(245,185,55,0.38)] transition-transform ${
-                    dailyCheckinClaimed ? 'cursor-default opacity-90' : 'hover:scale-105 active:scale-95'
-                  }`}
-                  style={{ animation: 'tskCoinFloat 3.6s ease-in-out infinite' }}
+                  className="tsk-gold-btn mt-4 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-xs"
                 >
-                  <img
-                    src="/images/taska-coin.png"
-                    alt="Taska Coin TSK"
-                    className="h-full w-full rounded-full object-cover"
-                  />
-                </button>
-              </div>
-
-              <div className="relative">
-                <p className="text-xs text-slate-400">رصيد التعدين الحالي</p>
-                <p className="mt-0.5 text-2xl font-black text-amber-300">{ytc(wallet?.mined_units || 0)}</p>
-                <p className="mt-1 text-[11px] text-slate-400">
-                  {dailyCheckinClaimed
-                    ? 'أكملت تسجيل الحضور اليومي (+0.20000 TSK). واصل التعدين عبر الإعلانات أدناه.'
-                    : 'اضغط على شعار Taska Coin الدائري أعلاه لاستلام مكافأة الدخول اليومي 0.20000 TSK'}
-                </p>
-              </div>
-
-              {/* 5 Sequential Daily Clicks */}
-              {dailyCheckinClaimed && (
-                <div className="relative mt-5 rounded-2xl border border-amber-400/20 bg-black/35 p-3.5 text-right">
-                  <div className="mb-2.5 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-xs font-black text-amber-100">
-                      <Gift size={14} className="text-amber-300" /> سلسلة النقرات اليومية الإضافية
-                    </span>
-                    <span className="rounded-lg bg-amber-400/15 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
-                      {dailyClickClaims.length} / 5
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-5 gap-2">
-                    {[1, 2, 3, 4, 5].map((n) => {
-                      const claimed = dailyClickClaims.includes(n);
-                      const nextAllowed = n === nextDailyClick;
-                      return (
-                        <button
-                          key={n}
-                          type="button"
-                          disabled={busy || claimed || !nextAllowed}
-                          onClick={() =>
-                            run(
-                              () => api.claimDailyClick(n),
-                              `تم تسجيل النقرة رقم ${n} وإضافة 0.01000 TSK إلى رصيد التعدين.`
-                            )
-                          }
-                          className={`flex flex-col items-center gap-1 rounded-xl border py-2.5 transition-all ${
-                            claimed
-                              ? 'border-emerald-400/35 bg-emerald-950/50 text-emerald-300'
-                              : nextAllowed
-                              ? 'border-amber-300/80 bg-gradient-to-b from-amber-400/25 to-amber-900/25 text-amber-100 shadow-[0_0_15px_rgba(245,185,55,0.2)]'
-                              : 'border-white/[0.06] bg-white/[0.02] text-slate-600 opacity-60'
-                          }`}
-                        >
-                          <img
-                            src="/images/taska-coin.png"
-                            alt="TSK"
-                            className={`h-7 w-7 rounded-full object-cover ${!claimed && !nextAllowed ? 'grayscale' : ''}`}
-                          />
-                          <span className="text-[9px] font-bold">{claimed ? 'مكتملة' : `نقرة ${n}`}</span>
-                          <span className="font-mono text-[8px] font-black" dir="ltr">
-                            +0.01
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Active Verification Session Card */}
-            {session && (
-              <div className="rounded-3xl border-2 border-amber-400/60 bg-gradient-to-br from-amber-950/60 to-[#111624] p-4 shadow-xl">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 text-sm font-black text-amber-200">
-                    <Loader2 size={16} className="animate-spin text-amber-300" /> جلسة تحقق خادمية نشطة
-                  </span>
-                  <span className="rounded-lg bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold text-amber-300">
-                    قيد الانتظار
-                  </span>
-                </div>
-                <p className="mt-1.5 text-xs leading-5 text-slate-300">
-                  أكمل مشاهدة الإعلان للمدة المحددة ثم اضغط زر التحقق بالأسفل لاعتماد المكافأة في رصيدك.
-                </p>
-                {session.adUrl ? (
-                  <a
-                    href={session.adUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-3 block rounded-xl border border-amber-300/40 bg-black/30 py-2.5 text-center text-xs font-bold text-amber-200 hover:bg-amber-400/10"
-                  >
-                    إعادة فتح رابط الإعلان ↗
-                  </a>
-                ) : session.adCode ? (
-                  <iframe
-                    title="Taska Coin rewarded ad"
-                    sandbox="allow-scripts allow-forms"
-                    referrerPolicy="no-referrer"
-                    srcDoc={session.adCode}
-                    className="mt-3 h-48 w-full rounded-xl border border-amber-300/25 bg-white"
-                  />
-                ) : null}
-                <button
-                  disabled={busy}
-                  onClick={verifyAd}
-                  className="mt-2.5 w-full rounded-xl bg-gradient-to-l from-amber-400 to-yellow-500 py-3 text-xs font-black text-slate-950 shadow-lg"
-                >
-                  تحقق من الإكمال {session.purpose === 'liquidation' ? 'لفتح التسييل' : 'واستلام المكافأة'}
-                </button>
-              </div>
-            )}
-
-            {/* Ad Category Filter & Cards */}
-            <div className={`rounded-3xl p-4 ${GOLD_CARD}`}>
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-black text-white">مهام التعدين الإعلانية</h2>
-                  <p className="text-[11px] text-slate-400">مكافأة يومية متجددة لكل إعلان</p>
-                </div>
-                <span className="rounded-lg bg-white/[0.05] px-2.5 py-1 text-[10px] font-bold text-slate-300">
-                  {ads.filter((a) => a.ad_type === adTypeFilter).length} متاح
-                </span>
-              </div>
-
-              <div className="grid grid-cols-3 gap-1.5 rounded-2xl bg-black/40 p-1.5">
-                {(
-                  [
-                    { id: 'video', label: 'فيديوهات', icon: Film },
-                    { id: 'smart_link', label: 'روابط ذكية', icon: Link2 },
-                    { id: 'banner_ad', label: 'سريعة', icon: Smartphone }
-                  ] as const
-                ).map((x) => (
-                  <button
-                    key={x.id}
-                    onClick={() => setAdTypeFilter(x.id)}
-                    className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-[11px] font-bold transition-all ${
-                      adTypeFilter === x.id
-                        ? 'bg-gradient-to-l from-amber-400 to-yellow-500 text-slate-950 shadow'
-                        : 'text-slate-400 hover:text-amber-100'
-                    }`}
-                  >
-                    <x.icon size={14} />
-                    <span>{x.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="mt-3 space-y-2.5">
-                {ads
-                  .filter((a) => a.ad_type === adTypeFilter)
-                  .map((a) => {
-                    const done = dailyClaimed.has(a.id);
-                    return (
-                      <article
-                        key={a.id}
-                        className="flex flex-col justify-between gap-3 rounded-2xl border border-white/[0.07] bg-black/30 p-3.5 sm:flex-row sm:items-center"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-amber-400/15 text-amber-300">
-                              {a.ad_type === 'video' ? (
-                                <Film size={15} />
-                              ) : a.ad_type === 'smart_link' ? (
-                                <Link2 size={15} />
-                              ) : (
-                                <Smartphone size={15} />
-                              )}
-                            </span>
-                            <div className="min-w-0">
-                              <h3 className="truncate text-xs font-black text-white">{a.title}</h3>
-                              <p className="mt-0.5 text-[10px] text-slate-400">
-                                المدة المطلوبة: {a.duration_seconds} ثانية · المكافأة:{' '}
-                                <b className="text-amber-300">{ytc(a.reward_units)}</b>
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <button
-                          disabled={busy || done}
-                          onClick={() => startAd(a, 'reward')}
-                          className={`shrink-0 rounded-xl px-4 py-2.5 text-xs font-black transition-all ${
-                            done
-                              ? 'border border-emerald-400/30 bg-emerald-500/15 text-emerald-300'
-                              : 'bg-gradient-to-l from-amber-400 to-yellow-500 text-slate-950 shadow-md shadow-amber-500/15 hover:brightness-105'
-                          }`}
-                        >
-                          {done ? (
-                            <>
-                              <CheckCircle2 size={14} className="ml-1.5 inline" /> مكتمل اليوم
-                            </>
-                          ) : (
-                            <>
-                              <Play size={14} className="ml-1.5 inline" /> ابدأ التعدين
-                            </>
-                          )}
-                        </button>
-                      </article>
-                    );
-                  })}
-
-                {!ads.some((a) => a.ad_type === adTypeFilter) && (
-                  <div className="rounded-2xl border border-dashed border-white/10 py-8 text-center text-xs text-slate-500">
-                    لا توجد إعلانات نشطة في هذا القسم حالياً.
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== 3. WALLET TAB ==================== */}
-        {tab === 'wallet' && (
-          <section className="space-y-4">
-            {/* Platinum Wallet Card */}
-            <div className={`relative overflow-hidden rounded-3xl p-5 ${GOLD_CARD}`}>
-              <div className="pointer-events-none absolute -left-12 -top-12 h-40 w-40 rounded-full bg-amber-400/10 blur-3xl" />
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-2 text-xs font-black text-amber-200">
-                  <Wallet size={15} className="text-amber-300" /> محفظة TSK Pay الرقمية
-                </span>
-                <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-bold text-emerald-300">
-                  {wallet?.is_frozen ? 'مجمّدة' : 'محفظة نشطة'}
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-2.5">
-                <div className="rounded-2xl border border-amber-400/20 bg-black/35 p-3.5">
-                  <p className="text-[10px] text-slate-400">رصيد التعدين</p>
-                  <p className="mt-1 text-lg font-black text-amber-300">{ytc(wallet?.mined_units || 0)}</p>
-                </div>
-                <div className="rounded-2xl border border-emerald-400/20 bg-black/35 p-3.5">
-                  <p className="text-[10px] text-slate-400">الرصيد القابل للسحب</p>
-                  <p className="mt-1 text-lg font-black text-emerald-300">
-                    {ytc(wallet?.withdrawable_units || 0)}
-                  </p>
-                </div>
-              </div>
-
-              {/* Wallet Address + QR Toggle */}
-              <div className="mt-3.5 rounded-2xl border border-white/[0.08] bg-black/40 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] font-bold text-slate-400">عنوان الاستقبال (TSK Pay ID)</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowQrModal(!showQrModal)}
-                    className="flex items-center gap-1 text-[10px] font-bold text-amber-300 hover:underline"
-                  >
-                    <QrCode size={12} /> {showQrModal ? 'إخفاء QR' : 'عرض رمز QR'}
-                  </button>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <b className="min-w-0 flex-1 truncate font-mono text-xs text-slate-100" dir="ltr">
-                    {shortWalletAddress(String(wallet?.pay_id || ''))}
-                  </b>
-                  <button
-                    type="button"
-                    onClick={copyWalletAddress}
-                    className="flex shrink-0 items-center gap-1.5 rounded-xl border border-amber-400/30 bg-amber-400/15 px-3 py-1.5 text-[10px] font-bold text-amber-200"
-                  >
-                    {addressCopied ? 'تم النسخ ✓' : 'نسخ العنوان'}
-                    <Copy size={12} />
-                  </button>
-                </div>
-                {showQrModal && wallet?.pay_id && (
-                  <div className="mt-3 flex flex-col items-center border-t border-white/10 pt-3">
-                    <img
-                      className="h-36 w-36 rounded-2xl bg-white p-2"
-                      alt="TSK Pay QR"
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-                        'YTPAY:' + wallet.pay_id
-                      )}`}
-                    />
-                    <span className="mt-2 font-mono text-[10px] text-slate-400" dir="ltr">
-                      {wallet.pay_id}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Liquidation Box */}
-            <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-              <h3 className="text-sm font-black text-white">تسييل رصيد التعدين إلى قابل للسحب</h3>
-              <p className="mt-1 text-[11px] leading-5 text-slate-400">
-                شاهد إعلان التسييل أولاً لفتح الجلسة، ثم أدخل المبلغ ورمز PIN الخاص بمحفظتك.
-              </p>
-
-              <button
-                disabled={busy}
-                onClick={() => {
-                  const a = ads.find((x) => x.ad_type === 'banner_ad');
-                  if (a) startAd(a, 'liquidation');
-                  else setNotice('لا يوجد إعلان تسييل نشط حالياً.');
-                }}
-                className="mt-3 w-full rounded-xl border border-amber-400/40 bg-amber-400/10 py-2.5 text-xs font-bold text-amber-200 hover:bg-amber-400/20"
-              >
-                <Play size={13} className="ml-1.5 inline" /> 1. مشاهدة إعلان التحقق للتسييل
-              </button>
-
-              {session?.purpose === 'liquidation' && (
-                <div className="mt-2.5 rounded-xl border border-amber-400/30 bg-black/35 p-3">
-                  {session.adUrl && (
-                    <a
-                      href={session.adUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block text-center text-xs font-bold text-amber-300 underline"
-                    >
-                      فتح نافذة الإعلان
-                    </a>
+                  {dailyCheckinClaimed ? (
+                    <>
+                      <CheckCircle2 size={15} /> تم استلام مكافأة اليوم (+0.20000 TSK)
+                    </>
+                  ) : (
+                    <>
+                      <span>⚡</span> المطالبة بمكافأة اليوم (+0.20000 TSK)
+                    </>
                   )}
-                  <button
-                    disabled={busy}
-                    onClick={verifyAd}
-                    className="mt-2 w-full rounded-xl bg-amber-400 py-2 text-xs font-black text-slate-950"
-                  >
-                    تأكيد انتهاء إعلان التسييل
-                  </button>
+                </button>
+
+                {/* سلسلة النقرات اليومية السريعة (5 نقرات × 0.01000 TSK) */}
+                {dailyCheckinClaimed && (
+                  <div className="mt-4 rounded-2xl border border-amber-500/20 bg-[#060910]/85 p-3 text-right">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-[11px] font-extrabold text-amber-200">
+                        <Gift size={13} className="text-amber-400" /> سلسلة النقرات اليومية الإضافية
+                      </span>
+                      <span className="font-mono text-[10px] font-bold text-emerald-400">
+                        {dailyClickClaims.length} / 5
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {[1, 2, 3, 4, 5].map((n) => {
+                        const claimed = dailyClickClaims.includes(n);
+                        const isNext = n === nextDailyClick;
+                        return (
+                          <button
+                            key={n}
+                            type="button"
+                            disabled={busy || claimed || !isNext}
+                            onClick={() =>
+                              run(
+                                () => api.claimDailyClick(n),
+                                `تم تسجيل النقرة ${n} وإضافة +0.01000 TSK!`
+                              )
+                            }
+                            className={`flex flex-col items-center gap-1 rounded-xl border py-2 transition-all ${
+                              claimed
+                                ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                                : isNext
+                                ? 'border-amber-400 bg-amber-500/20 text-amber-200 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                                : 'border-slate-800 bg-[#0A0F1C] text-slate-500 opacity-60'
+                            }`}
+                          >
+                            <img
+                              src="/images/taska-coin.png"
+                              alt="TSK"
+                              className={`h-6 w-6 rounded-full object-cover ${!claimed && !isNext ? 'grayscale' : ''}`}
+                            />
+                            <span className="text-[9px] font-bold">{claimed ? 'مكتمل ✓' : `نقرة ${n}`}</span>
+                            <span className="font-mono text-[8px] font-bold" dir="ltr">
+                              +0.01
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* شريط الجلسة الإعلانية النشطة (يظهر فوراً عند بدء أي إعلان) */}
+              {session && (
+                <div className="tsk-card rounded-3xl border-2 border-amber-400/70 p-4 shadow-[0_0_30px_rgba(245,158,11,0.2)]">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 text-xs font-black text-amber-300">
+                      <Loader2 size={15} className="animate-spin" /> جلسة تعدين إعلانية نشطة
+                    </span>
+                    <span className="rounded-lg bg-amber-500/20 px-2.5 py-0.5 font-mono text-xs font-black text-amber-200">
+                      {sessionRemainingSec > 0 ? `${sessionRemainingSec}s` : 'جاهز ✓'}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs font-bold text-white">{session.adTitle}</p>
+
+                  <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className="h-full bg-gradient-to-l from-[#FDE68A] via-[#D4AF37] to-[#F59E0B] transition-all duration-500"
+                      style={{ width: `${sessionProgressPct}%` }}
+                    />
+                  </div>
+
+                  {session.adCode && (
+                    <iframe
+                      title="Taska Coin rewarded ad"
+                      sandbox="allow-scripts allow-forms"
+                      referrerPolicy="no-referrer"
+                      srcDoc={session.adCode}
+                      className="mt-3 h-40 w-full rounded-xl border border-amber-500/25 bg-white"
+                    />
+                  )}
+
+                  <div className="mt-3 flex gap-2">
+                    {session.adUrl && (
+                      <a
+                        href={session.adUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 rounded-xl border border-amber-400/40 bg-amber-500/10 py-2.5 text-center text-xs font-bold text-amber-200 hover:bg-amber-500/20"
+                      >
+                        فتح الرابط ↗
+                      </a>
+                    )}
+                    <button
+                      disabled={busy || sessionRemainingSec > 0}
+                      onClick={verifyAd}
+                      className="tsk-gold-btn flex-1 rounded-xl py-2.5 text-xs"
+                    >
+                      {sessionRemainingSec > 0
+                        ? `انتظر (${sessionRemainingSec}ث)...`
+                        : session.purpose === 'liquidation'
+                        ? 'تأكيد إعلان التسييل ✓'
+                        : 'استلام المكافأة الآن ✓'}
+                    </button>
+                  </div>
                 </div>
               )}
 
-              {liquidationToken && (
-                <p className="mt-2 rounded-lg bg-emerald-500/15 px-3 py-1.5 text-[11px] font-bold text-emerald-300">
-                  ✓ تم التحقق من الإعلان. أدخل المبلغ ورمز PIN لإتمام التسييل.
-                </p>
-              )}
+              {/* قسم المهام الإعلانية السريعة والمنظمة */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="flex items-center gap-1.5 text-xs font-extrabold text-amber-300">
+                    <span>🎯</span> المهام الإعلانية المتاحة للتعدين
+                  </h3>
+                  <span className="font-mono text-[10px] text-emerald-400">
+                    مكتمل اليوم: {claims.length} / {ads.filter((a) => a.is_active).length}
+                  </span>
+                </div>
 
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <input
-                  value={liquidateAmount}
-                  onChange={(e) => setLiquidateAmount(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="المبلغ بـ TSK"
-                  className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                />
-                <input
-                  value={pin}
-                  onChange={(e) => setPin(e.target.value)}
-                  inputMode="numeric"
-                  type="password"
-                  maxLength={6}
-                  placeholder="PIN المحفظة"
-                  className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                />
+                {/* أزرار التصفية السريعة */}
+                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                  {(
+                    [
+                      { id: 'all', label: 'الكل' },
+                      { id: 'video', label: '🎬 فيديو' },
+                      { id: 'smart_link', label: '🔗 روابط ذكية' },
+                      { id: 'banner_ad', label: '🖼️ سريعة وبانر' }
+                    ] as const
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setAdTypeFilter(f.id)}
+                      className={`shrink-0 rounded-xl px-3.5 py-1.5 text-[11px] font-bold transition ${
+                        adTypeFilter === f.id
+                          ? 'bg-amber-400 text-[#060910] shadow'
+                          : 'border border-slate-800 bg-[#0E1422] text-slate-300 hover:border-amber-500/30'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* بطاقات الإعلانات */}
+                <div className="space-y-2.5">
+                  {filteredAds.length ? (
+                    filteredAds.map((ad) => {
+                      const isClaimed = dailyClaimed.has(ad.id);
+                      const isStarting = startingAdId === ad.id;
+                      const typeBadge =
+                        ad.ad_type === 'video'
+                          ? '🎬 فيديو مكافأة'
+                          : ad.ad_type === 'smart_link'
+                          ? '🔗 رابط ذكي'
+                          : '🖼️ إعلان سريع';
+
+                      return (
+                        <div
+                          key={ad.id}
+                          className="tsk-card flex items-center justify-between gap-3 rounded-2xl p-3.5 transition hover:border-amber-400/50"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-1 flex items-center gap-1.5">
+                              <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                                {typeBadge}
+                              </span>
+                              <span className="font-mono text-[10px] text-slate-400">
+                                ⏱ {ad.duration_seconds}ث
+                              </span>
+                            </div>
+                            <h4 className="truncate text-xs font-bold text-slate-100">{ad.title}</h4>
+                            <p className="mt-0.5 font-mono text-[11px] font-extrabold text-emerald-400">
+                              +{ytc(ad.reward_units)}
+                            </p>
+                          </div>
+
+                          <button
+                            disabled={isClaimed || isStarting || busy}
+                            onClick={() => startAd(ad, 'reward')}
+                            className={`shrink-0 rounded-xl px-3.5 py-2.5 text-xs font-extrabold transition ${
+                              isClaimed
+                                ? 'cursor-not-allowed bg-slate-800/90 text-emerald-400 border border-emerald-500/25'
+                                : 'tsk-gold-btn'
+                            }`}
+                          >
+                            {isStarting ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : isClaimed ? (
+                              'مكتمل ✓'
+                            ) : (
+                              'ابدأ التعدين'
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="rounded-2xl border border-slate-800/80 bg-[#0E1422]/60 py-7 text-center text-xs text-slate-500">
+                      لا توجد مهام إعلانية في هذا القسم حالياً.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* -------------------- TAB 2: المحفظة والتحويلات -------------------- */}
+          {tab === 'wallet' && (
+            <section className="space-y-4">
+              {/* بطاقة المحفظة الذهبية الفاخرة VIP Wallet Card */}
+              <div className="tsk-vip-card relative overflow-hidden rounded-3xl p-5">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shadow-[0_0_8px_#F59E0B]" />
+                    <span className="text-xs font-extrabold tracking-wide text-amber-200">
+                      محفظة Taska Coin الرسمية
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setShowQrModal(!showQrModal)}
+                    className="flex items-center gap-1 rounded-xl border border-amber-400/40 bg-amber-500/15 px-2.5 py-1 text-[10px] font-bold text-amber-200 transition hover:bg-amber-500/25"
+                  >
+                    <QrCode size={12} /> {showQrModal ? 'إخفاء QR' : 'رمز QR'}
+                  </button>
+                </div>
+
+                {/* الأرصدة */}
+                <div className="my-2">
+                  <span className="block text-[11px] text-slate-400">إجمالي رصيدك في المحفظة</span>
+                  <div className="mt-0.5 flex items-baseline gap-2">
+                    <span className="bg-gradient-to-l from-white via-amber-100 to-amber-300 bg-clip-text font-mono text-3xl font-black tracking-tight text-transparent">
+                      {(totalUserUnits / 100000).toFixed(5)}
+                    </span>
+                    <span className="font-mono text-sm font-extrabold text-amber-400">TSK</span>
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-2xl border border-amber-500/20 bg-[#060910]/80 p-2.5">
+                    <span className="block text-[10px] text-slate-400">رصيد التعدين</span>
+                    <span className="mt-0.5 block font-mono text-sm font-extrabold text-amber-300">
+                      {ytc(wallet?.mined_units || 0)}
+                    </span>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-500/20 bg-[#060910]/80 p-2.5">
+                    <span className="block text-[10px] text-slate-400">القابل للسحب والتحويل</span>
+                    <span className="mt-0.5 block font-mono text-sm font-extrabold text-emerald-400">
+                      {ytc(wallet?.withdrawable_units || 0)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* القيمة التقديرية بالدولار والريال اليمني */}
+                <div className="mt-2.5 grid grid-cols-2 gap-2 border-t border-amber-500/20 pt-2.5">
+                  <div className="rounded-2xl border border-slate-800 bg-[#060910]/70 p-2.5">
+                    <span className="block text-[10px] text-slate-400">قيمة محفظتك (USD)</span>
+                    <span className="font-mono text-xs font-extrabold text-emerald-400" dir="ltr">
+                      {usd(totalUserValueUsd)}
+                    </span>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-[#060910]/70 p-2.5">
+                    <span className="block text-[10px] text-slate-400">المعادل التقريبي (YER)</span>
+                    <span className="font-mono text-xs font-extrabold text-amber-300">
+                      {(totalUserValueUsd * Number(metrics?.yer_per_usd || 530)).toFixed(2)} ر.ي
+                    </span>
+                  </div>
+                </div>
+
+                {/* عنوان المحفظة TSK Pay */}
+                <div className="mt-3 rounded-2xl border border-amber-500/30 bg-[#060910]/90 p-3">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-slate-400">عنوان محفظتك (TSK Pay)</span>
+                    <span className="font-mono text-[10px] text-amber-400">0xTSK ADDRESS</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <code className="truncate font-mono text-xs text-amber-200" dir="ltr">
+                      {shortWalletAddress(String(wallet?.pay_id || '0xTSK...'))}
+                    </code>
+                    <button
+                      onClick={copyWalletAddress}
+                      className="flex shrink-0 items-center gap-1 rounded-xl border border-amber-400/50 bg-amber-500/20 px-3 py-1.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/30 active:scale-95"
+                    >
+                      <Copy size={12} /> <span>{addressCopied ? 'تم النسخ' : 'نسخ'}</span>
+                    </button>
+                  </div>
+
+                  {showQrModal && wallet?.pay_id && (
+                    <div className="mt-3 flex flex-col items-center border-t border-slate-800 pt-3">
+                      <img
+                        className="h-36 w-36 rounded-2xl bg-white p-2"
+                        alt="TSK Pay QR"
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
+                          'YTPAY:' + wallet.pay_id
+                        )}`}
+                      />
+                      <span className="mt-1.5 break-all font-mono text-[10px] text-slate-400" dir="ltr">
+                        {wallet.pay_id}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <button
-                disabled={busy || !liquidationToken || !pin}
-                onClick={() =>
-                  run(
-                    () =>
-                      api.liquidate(Number(liquidateAmount), pin, liquidationToken).then((x) => {
-                        setLiquidationToken('');
-                        return x;
-                      }),
-                    'تم تسييل الرصيد بنجاح.'
-                  )
-                }
-                className="mt-2.5 w-full rounded-xl bg-gradient-to-l from-amber-400 to-yellow-500 py-3 text-xs font-black text-slate-950 disabled:opacity-40"
-              >
-                2. تأكيد التسييل الآن
-              </button>
-            </div>
-
-            {/* Internal P2P Transfer (TSK Pay) */}
-            <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-black text-white">تحويل داخلي فوري · TSK Pay</h3>
-                <span className="rounded-lg bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
-                  رسوم الشبكة: 3%
-                </span>
+              {/* بطاقة تسييل رصيد التعدين */}
+              <div className="tsk-card rounded-3xl p-4 space-y-3">
+                <h3 className="text-xs font-extrabold text-amber-300">
+                  ⚡ تسييل رصيد التعدين إلى قابل للسحب
+                </h3>
+                <button
+                  disabled={busy || startingAdId !== null}
+                  onClick={() => {
+                    const a = ads.find((x) => x.ad_type === 'banner_ad') || ads[0];
+                    if (a) startAd(a, 'liquidation');
+                    else notify('لا يوجد إعلان تسييل نشط حالياً.', 'error');
+                  }}
+                  className="w-full rounded-xl border border-amber-400/40 bg-amber-500/15 py-2.5 text-xs font-bold text-amber-200 transition hover:bg-amber-500/25"
+                >
+                  1. مشاهدة إعلان التحقق لفتح التسييل
+                </button>
+                {liquidationToken && (
+                  <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-bold text-emerald-300">
+                    ✓ تم التحقق من الإعلان. أدخل المبلغ ورمز PIN للتأكيد.
+                  </p>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    value={liquidateAmount}
+                    onChange={(e) => setLiquidateAmount(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="المبلغ بـ TSK"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 font-mono text-xs text-white outline-none focus:border-amber-400"
+                  />
+                  <input
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                    inputMode="numeric"
+                    type="password"
+                    maxLength={6}
+                    placeholder="PIN المحفظة"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-center font-mono text-xs text-amber-300 outline-none focus:border-amber-400"
+                  />
+                </div>
+                <button
+                  disabled={busy || !liquidationToken || !pin}
+                  onClick={() =>
+                    run(
+                      () =>
+                        api.liquidate(Number(liquidateAmount), pin, liquidationToken).then((x) => {
+                          setLiquidationToken('');
+                          return x;
+                        }),
+                      'تم تسييل الرصيد بنجاح.'
+                    )
+                  }
+                  className="tsk-gold-btn w-full rounded-xl py-2.5 text-xs"
+                >
+                  2. تأكيد التسييل الآن
+                </button>
               </div>
 
-              <div className="mt-3 space-y-2">
+              {/* بطاقة التحويل الداخلي (TSK Pay P2P) */}
+              <div className="tsk-card rounded-3xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-extrabold text-amber-300">💸 تحويل داخلي فوري (TSK Pay)</h3>
+                  <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] text-emerald-400">
+                    رسوم 3%
+                  </span>
+                </div>
+
                 <input
                   value={payId}
                   onChange={(e) => setPayId(e.target.value)}
-                  inputMode="text"
                   placeholder="عنوان محفظة المستلم (0xTSK...)"
-                  className="w-full rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-white"
                   dir="ltr"
+                  className="w-full rounded-xl border border-slate-700 bg-[#060910] p-2.5 font-mono text-xs text-amber-100 outline-none focus:border-amber-400"
                 />
+
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
                     inputMode="decimal"
                     placeholder="المبلغ بـ TSK"
-                    className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 font-mono text-xs text-white outline-none focus:border-amber-400"
                   />
                   <input
                     value={pin}
@@ -1036,467 +1069,493 @@ export const YtEcosystemApp: React.FC<Props> = ({
                     type="password"
                     maxLength={6}
                     placeholder="رمز PIN"
-                    className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-center font-mono text-xs text-amber-300 outline-none focus:border-amber-400"
                   />
                 </div>
+
                 <input
                   value={payNote}
                   onChange={(e) => setPayNote(e.target.value)}
                   placeholder="ملاحظة للتحويل (اختياري)"
-                  className="w-full rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
+                  className="w-full rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-xs text-white outline-none focus:border-amber-400"
                 />
-              </div>
 
-              <div className="mt-3 grid grid-cols-3 gap-1.5 rounded-2xl bg-black/35 p-2.5 text-center text-[10px]">
-                <div>
-                  <span className="text-slate-400">المبلغ المرسل</span>
-                  <b className="mt-0.5 block font-mono text-white">{Number(payAmount || 0).toFixed(5)}</b>
+                <div className="grid grid-cols-3 gap-1.5 rounded-2xl border border-amber-500/20 bg-[#060910] p-2.5 text-center text-[10px]">
+                  <div>
+                    <span className="text-slate-400">المبلغ</span>
+                    <b className="mt-0.5 block font-mono text-white">{Number(payAmount || 0).toFixed(5)}</b>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">العمولة 3%</span>
+                    <b className="mt-0.5 block font-mono text-amber-300">{fee.toFixed(5)}</b>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">الصافي 97%</span>
+                    <b className="mt-0.5 block font-mono text-emerald-400">{net.toFixed(5)}</b>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-400">رسوم الشبكة 3%</span>
-                  <b className="mt-0.5 block font-mono text-amber-300">{fee.toFixed(5)}</b>
-                </div>
-                <div>
-                  <span className="text-slate-400">الصافي للمستلم</span>
-                  <b className="mt-0.5 block font-mono text-emerald-300">{net.toFixed(5)}</b>
-                </div>
-              </div>
 
-              <button
-                disabled={busy || !payId || !payAmount || !pin}
-                onClick={() =>
-                  run(
-                    () => api.sendPay(payId, Number(payAmount), pin, payNote),
-                    'تم تحويل TSK Pay وتسجيل العمولة بنجاح.'
-                  )
-                }
-                className="mt-3 w-full rounded-xl bg-emerald-500 py-3 text-xs font-black text-slate-950 shadow-lg shadow-emerald-500/15 disabled:opacity-40"
-              >
-                <Send size={14} className="ml-1.5 inline" /> إرسال التحويل الآن
-              </button>
-              <p className="mt-2 flex items-center gap-1 text-[10px] text-slate-400">
-                <Flame size={12} className="shrink-0 text-amber-400" />
-                تُخصم رسوم الشبكة والتحويل (3%) تلقائياً (حرق دائم + دعم الخزينة).
-              </p>
-            </div>
-
-            {/* External Withdrawal Request */}
-            <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-black text-white">طلب سحب خارجي</h3>
-                <span className="text-[10px] text-slate-400">
-                  محجوز: {ytc(wallet?.withdrawal_pending_units || 0)}
-                </span>
-              </div>
-              {tradingLocked && (
-                <p className="mt-1.5 rounded-xl bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">
-                  السحب الخارجي مغلق مؤقتاً حتى انتهاء مرحلة الإطلاق (365 يوماً).
-                </p>
-              )}
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <input
-                  value={withdrawAmount}
-                  onChange={(e) => setWithdrawAmount(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="المبلغ بـ TSK"
-                  className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                />
-                <input
-                  value={payoutMethod}
-                  onChange={(e) => setPayoutMethod(e.target.value)}
-                  placeholder="الوسيلة (الكريمي / جوالي...)"
-                  className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                />
-              </div>
-              <input
-                value={payoutDestination}
-                onChange={(e) => setPayoutDestination(e.target.value)}
-                placeholder="رقم الحساب أو المحفظة المستلمة"
-                className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-              />
-              <button
-                disabled={busy || tradingLocked || !withdrawAmount || !payoutMethod || !payoutDestination || !pin}
-                onClick={() =>
-                  run(
-                    () => api.requestWithdrawal(Number(withdrawAmount), payoutMethod, payoutDestination, pin),
-                    'تم حجز المبلغ وإرسال طلب السحب للمراجعة.'
-                  )
-                }
-                className="mt-2.5 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950 disabled:opacity-40"
-              >
-                <ArrowDownToLine size={14} className="ml-1.5 inline" /> إرسال طلب السحب
-              </button>
-
-              {withdrawals.length > 0 && (
-                <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
-                  {withdrawals.map((w: any) => (
-                    <div key={w.id} className="rounded-xl bg-black/30 p-3 text-xs">
-                      <div className="flex items-center justify-between">
-                        <b>{ytc(w.amount_units)}</b>
-                        <span
-                          className={
-                            w.status === 'paid'
-                              ? 'text-emerald-300'
-                              : w.status === 'rejected'
-                              ? 'text-rose-300'
-                              : 'text-amber-300'
-                          }
-                        >
-                          {w.status === 'paid' ? 'تم الصرف' : w.status === 'rejected' ? 'مرفوض' : 'قيد المراجعة'}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-[10px] text-slate-400">
-                        {w.payout_method} · {new Date(w.created_at).toLocaleDateString('ar')}
-                      </p>
-                      {w.receipt_url && (
-                        <a
-                          className="mt-1 inline-block text-emerald-300 underline"
-                          href={w.receipt_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          عرض إيصال الصرف
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Wallet Ledger History */}
-            <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-              <h3 className="mb-2.5 text-sm font-black text-white">سجل حركات المحفظة</h3>
-              {ledger.length ? (
-                <div className="divide-y divide-white/[0.06]">
-                  {ledger.map((l: any) => (
-                    <div key={l.id} className="flex items-center justify-between gap-2 py-2.5 text-xs">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium text-slate-200">
-                          {l.description || l.transaction_type}
-                        </p>
-                        <p className="text-[10px] text-slate-500">
-                          {new Date(l.created_at).toLocaleString('ar')}
-                        </p>
-                      </div>
-                      <b
-                        className={`shrink-0 font-mono ${
-                          l.amount_units < 0 ? 'text-rose-300' : 'text-emerald-300'
-                        }`}
-                        dir="ltr"
-                      >
-                        {l.amount_units < 0 ? '−' : '+'}
-                        {ytc(Math.abs(l.amount_units))}
-                      </b>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="py-4 text-center text-xs text-slate-500">لا توجد حركات مسجلة في محفظتك بعد.</p>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* ==================== 4. REFERRALS TAB ==================== */}
-        {tab === 'referrals' && (
-          <section className="space-y-4">
-            <div className={`rounded-3xl p-5 ${GOLD_CARD}`}>
-              <div className="flex items-center gap-2.5">
-                <span className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-400/15 text-amber-300">
-                  <Users size={20} />
-                </span>
-                <div>
-                  <h2 className="text-base font-black text-white">برنامج سفراء Taska Coin</h2>
-                  <p className="text-[11px] text-slate-400">مكافأة تفعيل 0.50000 TSK + عمولة 5% مستمرة</p>
-                </div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-2xl border border-white/[0.06] bg-black/35 p-3">
-                  <b className="block text-xl font-black text-amber-300">
-                    {referralStats?.invited_count || 0}
-                  </b>
-                  <span className="text-[10px] text-slate-400">المدعوون</span>
-                </div>
-                <div className="rounded-2xl border border-white/[0.06] bg-black/35 p-3">
-                  <b className="block text-xl font-black text-emerald-300">
-                    {referralStats?.activated_count || 0}
-                  </b>
-                  <span className="text-[10px] text-slate-400">المفعّلون</span>
-                </div>
-                <div className="rounded-2xl border border-white/[0.06] bg-black/35 p-3">
-                  <b className="block text-xs font-black text-amber-200 sm:text-sm">
-                    {ytc(referralStats?.earnings_units || 0)}
-                  </b>
-                  <span className="text-[10px] text-slate-400">أرباحك</span>
-                </div>
-              </div>
-
-              <div className="mt-4 rounded-2xl border border-amber-400/20 bg-black/40 p-3">
-                <p className="text-[10px] font-bold text-slate-400">رابط الدعوة الخاص بك</p>
-                <div className="mt-1.5 break-all font-mono text-xs text-amber-200" dir="ltr">
-                  {user.referralCode
-                    ? `${window.location.origin}/?ref=${user.referralCode}`
-                    : 'كود الإحالة غير متاح حالياً'}
-                </div>
-                {user.referralCode && (
-                  <button
-                    onClick={() => {
-                      navigator.clipboard?.writeText(`${window.location.origin}/?ref=${user.referralCode}`);
-                      setNotice('تم نسخ رابط الدعوة الخاص بك.');
-                    }}
-                    className="mt-2.5 w-full rounded-xl bg-amber-400/15 py-2 text-xs font-bold text-amber-200 hover:bg-amber-400/25"
-                  >
-                    <Copy size={13} className="ml-1.5 inline" /> نسخ رابط الدعوة ومشاركته
-                  </button>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== 5. SETTINGS TAB ==================== */}
-        {tab === 'settings' && (
-          <section className="space-y-4">
-            <div className={`rounded-3xl p-5 ${GOLD_CARD}`}>
-              <div className="flex items-center gap-2.5">
-                <span className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-400/15 text-amber-300">
-                  <LockKeyhole size={18} />
-                </span>
-                <div>
-                  <h2 className="text-base font-black text-white">حماية المحفظة برمز PIN</h2>
-                  <p className="text-[11px] text-slate-400">مطلوب لتأكيد التحويلات والتسييل</p>
-                </div>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-2.5">
-                <input
-                  value={currentPin}
-                  onChange={(e) => setCurrentPin(e.target.value)}
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="PIN الحالي (إن وجد)"
-                  className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                />
-                <input
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value)}
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder="PIN جديد (4-6 أرقام)"
-                  className="min-w-0 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                />
-              </div>
-
-              <button
-                disabled={busy || !newPin}
-                onClick={() =>
-                  run(
-                    () =>
-                      api.setPin(newPin, currentPin || undefined).then((x) => {
-                        setNewPin('');
-                        setCurrentPin('');
-                        return x;
-                      }),
-                    'تم حفظ رمز الحماية PIN للمحفظة.'
-                  )
-                }
-                className="mt-3 w-full rounded-xl bg-gradient-to-l from-amber-400 to-yellow-500 py-3 text-xs font-black text-slate-950 disabled:opacity-40"
-              >
-                حفظ وتحديث رمز PIN
-              </button>
-            </div>
-
-            <div className={`rounded-3xl p-4 ${GOLD_CARD}`}>
-              <h3 className="text-xs font-black text-white">معلومات وحالة المحفظة</h3>
-              <div className="mt-2.5 space-y-1.5 text-xs text-slate-400">
-                <p>
-                  حالة الحساب:{' '}
-                  <b className={wallet?.is_frozen ? 'text-rose-300' : 'text-emerald-300'}>
-                    {wallet?.is_frozen ? 'مجمدة' : 'نشطة ومفعّلة'}
-                  </b>
-                </p>
-                <p>
-                  معرّف المستخدم: <span className="font-mono text-[11px] text-slate-300">{user.id}</span>
-                </p>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ==================== 6. EXCLUSIVE ADMIN STUDIO (isAdmin ONLY) ==================== */}
-        {tab === 'admin' && isAdmin && (
-          <section className="space-y-4">
-            {/* Admin Executive KPI Bar */}
-            <div className={`rounded-3xl p-4 ${GOLD_CARD}`}>
-              <div className="mb-3 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck size={18} className="text-amber-300" />
-                  <h2 className="text-sm font-black text-white">مركز قيادة وإدارة Taska Coin</h2>
-                </div>
                 <button
-                  disabled={busy}
-                  onClick={() => refresh().catch((e) => setNotice(msg(e)))}
-                  className="rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[10px] font-bold text-amber-200"
+                  disabled={busy || !payId || !payAmount || !pin}
+                  onClick={() =>
+                    run(
+                      () => api.sendPay(payId, Number(payAmount), pin, payNote),
+                      'تم تحويل TSK Pay وتسجيل العمولة بنجاح.'
+                    )
+                  }
+                  className="tsk-gold-btn flex w-full items-center justify-center gap-1.5 rounded-xl py-3 text-xs"
                 >
-                  <RefreshCw size={12} className="ml-1 inline" /> مزامنة
+                  <Send size={14} /> إرسال التحويل الآن
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <div className="rounded-2xl bg-black/35 p-3">
-                  <span className="text-[10px] text-slate-400">المحافظ المسجلة</span>
-                  <b className="mt-1 block text-lg font-black text-amber-300">{adminWallets.length}</b>
+              {/* طلب سحب خارجي */}
+              <div className="tsk-card rounded-3xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-extrabold text-slate-100">🏦 طلب سحب خارجي</h3>
+                  <span className="text-[10px] text-slate-400">
+                    محجوز: {ytc(wallet?.withdrawal_pending_units || 0)}
+                  </span>
                 </div>
-                <div className="rounded-2xl bg-black/35 p-3">
-                  <span className="text-[10px] text-slate-400">إجمالي التعدين</span>
-                  <b className="mt-1 block text-xs font-black text-amber-200 sm:text-sm">
-                    {ytc(adminWallets.reduce((s, w) => s + Number(w.mined_units || 0), 0))}
-                  </b>
+                {tradingLocked && (
+                  <p className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-200">
+                    🔒 السحب الخارجي مغلق مؤقتاً حتى انتهاء مرحلة الإطلاق ({countdown}).
+                  </p>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="المبلغ بـ TSK"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 font-mono text-xs text-white"
+                  />
+                  <input
+                    value={payoutMethod}
+                    onChange={(e) => setPayoutMethod(e.target.value)}
+                    placeholder="الوسيلة (الكريمي / جوالي...)"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-xs text-white"
+                  />
                 </div>
-                <div className="rounded-2xl bg-black/35 p-3">
-                  <span className="text-[10px] text-slate-400">قابل للسحب</span>
-                  <b className="mt-1 block text-xs font-black text-emerald-300 sm:text-sm">
-                    {ytc(adminWallets.reduce((s, w) => s + Number(w.withdrawable_units || 0), 0))}
-                  </b>
+                <input
+                  value={payoutDestination}
+                  onChange={(e) => setPayoutDestination(e.target.value)}
+                  placeholder="رقم الحساب أو المحفظة المستلمة"
+                  className="w-full rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-xs text-white"
+                />
+                <button
+                  disabled={
+                    busy || tradingLocked || !withdrawAmount || !payoutMethod || !payoutDestination || !pin
+                  }
+                  onClick={() =>
+                    run(
+                      () => api.requestWithdrawal(Number(withdrawAmount), payoutMethod, payoutDestination, pin),
+                      'تم حجز المبلغ وإرسال طلب السحب للمراجعة.'
+                    )
+                  }
+                  className="tsk-gold-btn w-full rounded-xl py-2.5 text-xs"
+                >
+                  <ArrowDownToLine size={13} className="ml-1 inline" /> إرسال طلب السحب
+                </button>
+              </div>
+
+              {/* سجل حركات المحفظة */}
+              <div className="tsk-card rounded-3xl p-4">
+                <h3 className="mb-2.5 text-xs font-extrabold text-slate-100">📜 سجل حركات المحفظة</h3>
+                {ledger.length ? (
+                  <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                    {ledger.map((l: any) => (
+                      <div
+                        key={l.id}
+                        className="flex items-center justify-between gap-2 rounded-2xl border border-slate-800/90 bg-[#060910]/90 p-2.5 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-bold text-slate-100">
+                            {l.description || l.transaction_type}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {new Date(l.created_at).toLocaleString('ar')}
+                          </p>
+                        </div>
+                        <b
+                          className={`shrink-0 font-mono ${
+                            l.amount_units < 0 ? 'text-rose-400' : 'text-emerald-400'
+                          }`}
+                          dir="ltr"
+                        >
+                          {l.amount_units < 0 ? '-' : '+'}
+                          {ytc(Math.abs(l.amount_units))}
+                        </b>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="py-4 text-center text-xs text-slate-500">لا توجد حركات مسجلة بعد.</p>
+                )}
+              </div>
+            </section>
+          )}
+
+          {/* -------------------- TAB 3: السوق والبيانات الاقتصادية -------------------- */}
+          {tab === 'market' && (
+            <section className="space-y-4">
+              {/* بطاقة السعر اللحظي والسيولة التفصيلية */}
+              <div className="tsk-vip-card rounded-3xl p-5">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-0.5 font-mono text-[10px] text-emerald-300">
+                  <Sparkles size={11} /> التسعير الديناميكي المربوط بالسيولة
+                </span>
+
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[11px] text-slate-400">سعر العملة الواحدة (1 TSK)</p>
+                    <p className="mt-0.5 font-mono text-2xl font-black text-emerald-400" dir="ltr">
+                      {usd(computedLivePriceUsd)}
+                    </p>
+                    <p className="font-mono text-[11px] text-amber-300">
+                      ≈ {computedLivePriceYer.toFixed(3)} ر.ي
+                    </p>
+                  </div>
+                  <div className="border-r border-amber-500/20 pr-3">
+                    <p className="text-[11px] text-slate-400">صندوق سيولة الإعلانات</p>
+                    <p className="mt-0.5 font-mono text-2xl font-black text-amber-300" dir="ltr">
+                      {usdShort(metrics?.ad_pool_usd || 0)}
+                    </p>
+                    <p className="text-[10px] text-slate-400">موزّع على العملات المعدّنة</p>
+                  </div>
                 </div>
-                <div className="rounded-2xl bg-black/35 p-3">
-                  <span className="text-[10px] text-slate-400">الإعلانات النشطة</span>
-                  <b className="mt-1 block text-lg font-black text-white">
-                    {ads.filter((a) => a.is_active).length} / {ads.length}
-                  </b>
+
+                {phase && (
+                  <div className="mt-4 rounded-2xl border border-amber-500/25 bg-[#060910]/85 p-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-amber-200">🔒 مرحلة التأسيس (365 يوماً)</span>
+                      <span className="font-mono font-black text-amber-400">{countdown}</span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-l from-[#FDE68A] to-[#F59E0B]"
+                        style={{
+                          width: `${Math.min(100, Math.max(2, (Number(phase.days_elapsed || 0) / 365) * 100))}%`
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* منحنى تطور السعر والسيولة */}
+              <div className="tsk-card rounded-3xl p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-xs font-extrabold text-amber-300">📈 منحنى نمو السعر والسيولة</h2>
+                  <BarChart3 size={16} className="text-amber-400" />
+                </div>
+                <div className="flex h-32 items-end gap-1.5 rounded-2xl border border-slate-800 bg-[#060910] p-3">
+                  {history.length ? (
+                    history.map((p: any) => {
+                      const maxP = Math.max(
+                        ...history.map((h: any) => Number(h.price_usd_per_yt)),
+                        0.00000001
+                      );
+                      const pct = Math.max(8, Math.min(100, (Number(p.price_usd_per_yt) / maxP) * 100));
+                      return (
+                        <div
+                          key={p.id}
+                          title={`${new Date(p.created_at).toLocaleString('ar')} — ${usd(p.price_usd_per_yt)}`}
+                          className="flex-1 rounded-t-md bg-gradient-to-t from-amber-700 via-amber-500 to-yellow-300 transition-all hover:brightness-125"
+                          style={{ height: `${pct}%` }}
+                        />
+                      );
+                    })
+                  ) : (
+                    <p className="m-auto text-xs text-slate-500">لا توجد نقاط سعر مسجلة بعد</p>
+                  )}
                 </div>
               </div>
 
-              {/* Admin Sub-Navigation */}
-              <div className="mt-3.5 flex gap-1.5 overflow-x-auto pb-1">
-                {(
-                  [
-                    { id: 'ads', label: 'إدارة الإعلانات' },
-                    { id: 'revenue', label: 'الأرباح 70/30' },
-                    { id: 'withdrawals', label: 'طلبات السحب' },
-                    { id: 'wallets', label: 'المحافظ' },
-                    { id: 'system', label: 'النظام والقفل' }
-                  ] as const
-                ).map((sub) => (
-                  <button
-                    key={sub.id}
-                    onClick={() => setAdminSubTab(sub.id)}
-                    className={`shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold transition ${
-                      adminSubTab === sub.id
-                        ? 'bg-amber-400 text-slate-950'
-                        : 'border border-white/10 bg-black/30 text-slate-300 hover:border-amber-400/30'
-                    }`}
-                  >
-                    {sub.label}
-                  </button>
-                ))}
+              {/* توزيع العملة */}
+              <div className="tsk-card rounded-3xl p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-xs font-extrabold text-slate-100">
+                    💎 التوزيع الثابت · {Number(metrics?.max_supply_yt || 100000000).toLocaleString('en-US')} TSK
+                  </h2>
+                  <Layers size={15} className="text-amber-300" />
+                </div>
+                <div className="space-y-2.5">
+                  {allocations.map((a: any) => (
+                    <div key={a.allocation_code} className="rounded-xl bg-[#060910]/80 p-2.5">
+                      <div className="mb-1 flex justify-between text-xs">
+                        <span className="font-bold text-slate-200">{a.name_ar}</span>
+                        <b className="font-mono text-amber-300" dir="ltr">
+                          {a.percentage}% · {(Number(a.allocated_units) / 100000).toLocaleString('en-US')} TSK
+                        </b>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-l from-amber-500 to-yellow-300"
+                          style={{ width: `${a.percentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            </section>
+          )}
 
-            {/* SUB-TAB A: PROFESSIONAL AD STUDIO */}
-            {adminSubTab === 'ads' && (
-              <div className="space-y-4">
-                <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-                  <div className="mb-3.5 flex items-center justify-between">
+          {/* -------------------- TAB 4: الإحالات -------------------- */}
+          {tab === 'referrals' && (
+            <section className="space-y-4">
+              <div className="tsk-vip-card rounded-3xl p-5">
+                <h2 className="text-base font-black text-amber-300">🤝 برنامج سفراء Taska Coin</h2>
+                <p className="mt-1 text-xs leading-6 text-slate-300">
+                  احصل على <strong className="text-emerald-400">0.50000 TSK</strong> مكافأة تفعيل عند إكمال المدعو 3
+                  إعلانات تعدين، بالإضافة إلى <strong className="text-amber-300">5%</strong> من مكافآت نشاطه.
+                </p>
+
+                <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-2xl border border-slate-800 bg-[#060910]/85 p-3">
+                    <b className="block font-mono text-xl font-black text-amber-300">
+                      {referralStats?.invited_count || 0}
+                    </b>
+                    <span className="text-[10px] text-slate-400">المدعوون</span>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-[#060910]/85 p-3">
+                    <b className="block font-mono text-xl font-black text-emerald-400">
+                      {referralStats?.activated_count || 0}
+                    </b>
+                    <span className="text-[10px] text-slate-400">المفعّلون</span>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-[#060910]/85 p-3">
+                    <b className="block font-mono text-xs font-black text-amber-200">
+                      {ytc(referralStats?.earnings_units || 0)}
+                    </b>
+                    <span className="text-[10px] text-slate-400">أرباحك</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-amber-500/30 bg-[#060910]/90 p-3">
+                  <span className="text-[10px] font-bold text-slate-400">رابط الدعوة الخاص بك:</span>
+                  <div className="mt-1 break-all font-mono text-xs text-amber-200" dir="ltr">
+                    {user.referralCode
+                      ? `${window.location.origin}/?ref=${user.referralCode}`
+                      : 'كود الإحالة غير متاح حالياً'}
+                  </div>
+                  {user.referralCode && (
+                    <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(`${window.location.origin}/?ref=${user.referralCode}`);
+                        notify('تم نسخ رابط الدعوة الخاص بك!', 'success');
+                      }}
+                      className="tsk-gold-btn mt-2.5 w-full rounded-xl py-2.5 text-xs"
+                    >
+                      📋 نسخ رابط الدعوة
+                    </button>
+                  )}
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* -------------------- TAB 5: الإعدادات والأمان -------------------- */}
+          {tab === 'settings' && (
+            <section className="space-y-4">
+              <div className="tsk-card rounded-3xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-extrabold text-amber-300">🔐 أمان المحفظة (رمز PIN)</h2>
+                  <span className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                    حماية مشفرة
+                  </span>
+                </div>
+                <p className="text-xs leading-relaxed text-slate-400">
+                  قم بتعيين أو تحديث رمز PIN (من 4 إلى 6 أرقام) لتأكيد جميع عمليات التحويل وتسييل الأرباح.
+                </p>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <input
+                    value={currentPin}
+                    onChange={(e) => setCurrentPin(e.target.value)}
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="PIN الحالي (إن وجد)"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-center font-mono text-xs text-amber-300 outline-none focus:border-amber-400"
+                  />
+                  <input
+                    value={newPin}
+                    onChange={(e) => setNewPin(e.target.value)}
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="PIN جديد (4-6 أرقام)"
+                    className="min-w-0 rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-center font-mono text-xs text-amber-300 outline-none focus:border-amber-400"
+                  />
+                </div>
+
+                <button
+                  disabled={busy || !newPin}
+                  onClick={() =>
+                    run(
+                      () =>
+                        api.setPin(newPin, currentPin || undefined).then((x) => {
+                          setNewPin('');
+                          setCurrentPin('');
+                          return x;
+                        }),
+                      'تم حفظ رمز الأمان PIN بنجاح!'
+                    )
+                  }
+                  className="tsk-gold-btn w-full rounded-xl py-2.5 text-xs"
+                >
+                  حفظ وتفعيل رمز الأمان PIN
+                </button>
+              </div>
+            </section>
+          )}
+
+          {/* -------------------- TAB 6: لوحة تحكم المدير الحصرية (isAdmin ONLY) -------------------- */}
+          {tab === 'admin' && isAdmin && (
+            <section className="space-y-4">
+              {/* بطاقة رأس لوحة المدير */}
+              <div className="tsk-vip-card rounded-3xl border border-amber-400/60 p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-400/50 bg-amber-500/20 text-lg">
+                      👑
+                    </span>
                     <div>
-                      <h3 className="text-sm font-black text-white">استوديو إضافة إعلان تعدين جديد</h3>
-                      <p className="text-[11px] text-slate-400">
-                        أدخل بيانات الإعلان وعاينه مباشرة قبل النشر للمستخدمين
+                      <h2 className="text-sm font-black text-amber-300">لوحة تحكم المدير العام</h2>
+                      <p className="font-mono text-[10px] text-emerald-400" dir="ltr">
+                        ADMIN EXCLUSIVE • PRIVATE STUDIO
                       </p>
                     </div>
-                    <span className="rounded-xl bg-amber-400/15 px-2.5 py-1 text-[10px] font-bold text-amber-300">
-                      yt_mining_ads
+                  </div>
+                  <button
+                    disabled={busy}
+                    onClick={() => refresh().catch((e) => notify(msg(e), 'error'))}
+                    className="rounded-xl border border-amber-400/40 bg-amber-500/15 px-3 py-1.5 text-[10px] font-bold text-amber-200"
+                  >
+                    🔄 تحديث
+                  </button>
+                </div>
+
+                {/* مؤشرات الإدارة */}
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-2xl border border-amber-500/25 bg-[#060910]/85 p-2.5">
+                    <span className="block text-[9px] text-slate-400">إيرادات الإدارة</span>
+                    <span className="font-mono text-xs font-black text-amber-300" dir="ltr">
+                      {usdShort(metrics?.admin_revenue_usd || 0)}
                     </span>
                   </div>
+                  <div className="rounded-2xl border border-emerald-500/25 bg-[#060910]/85 p-2.5">
+                    <span className="block text-[9px] text-slate-400">سيولة العملة (70%)</span>
+                    <span className="font-mono text-xs font-black text-emerald-400" dir="ltr">
+                      {usdShort(metrics?.ad_pool_usd || 0)}
+                    </span>
+                  </div>
+                  <div className="rounded-2xl border border-sky-500/25 bg-[#060910]/85 p-2.5">
+                    <span className="block text-[9px] text-slate-400">المحافظ / الإعلانات</span>
+                    <span className="font-mono text-xs font-black text-sky-300">
+                      {adminWallets.length} / {ads.length}
+                    </span>
+                  </div>
+                </div>
 
-                  <div className="space-y-3">
+                {/* تبويبات الإدارة الداخلية */}
+                <div className="mt-3 grid grid-cols-4 gap-1.5 rounded-2xl bg-[#060910]/90 p-1.5">
+                  {(
+                    [
+                      { id: 'ads', label: '📢 الإعلانات' },
+                      { id: 'revenue', label: '💰 الأرباح' },
+                      { id: 'withdrawals', label: '🏦 السحب' },
+                      { id: 'wallets', label: '🛡️ النظام' }
+                    ] as const
+                  ).map((sub) => (
+                    <button
+                      key={sub.id}
+                      onClick={() => setAdminSubTab(sub.id)}
+                      className={`rounded-xl py-2 text-[10px] font-extrabold transition ${
+                        adminSubTab === sub.id
+                          ? 'bg-amber-400 text-[#060910]'
+                          : 'text-slate-400 hover:text-amber-200'
+                      }`}
+                    >
+                      {sub.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* القسم الفرعي 1: استوديو إضافة وإدارة الإعلانات الاحترافي */}
+              {adminSubTab === 'ads' && (
+                <div className="space-y-4">
+                  <div className="tsk-card rounded-3xl p-4 space-y-3.5">
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                      <div>
+                        <h3 className="text-xs font-extrabold text-amber-300">
+                          📢 استوديو إضافة وإدارة الإعلانات
+                        </h3>
+                        <p className="text-[10px] text-slate-400">
+                          أدخل بيانات الإعلان وعاينه مباشرة قبل النشر للمعدّنين
+                        </p>
+                      </div>
+                      <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] text-amber-300">
+                        yt_mining_ads
+                      </span>
+                    </div>
+
+                    {/* 1. اختيار نوع الإعلان بأزرار بصرية منظمة */}
                     <div>
-                      <label className="mb-1 block text-[11px] font-bold text-slate-300">عنوان الإعلان</label>
+                      <label className="mb-1.5 block text-[11px] font-bold text-slate-300">
+                        1. اختر نوع الإعلان (ad_type)
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(
+                          [
+                            { id: 'video', icon: '🎬', label: 'فيديو VAST' },
+                            { id: 'smart_link', icon: '🔗', label: 'رابط ذكي' },
+                            { id: 'banner_ad', icon: '🖼️', label: 'إعلان بانر' }
+                          ] as const
+                        ).map((t) => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setAdDraft({ ...adDraft, ad_type: t.id })}
+                            className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2 text-[11px] transition ${
+                              adDraft.ad_type === t.id
+                                ? 'border-amber-400 bg-amber-500/20 font-extrabold text-amber-200'
+                                : 'border-slate-800 bg-[#060910] font-bold text-slate-400 hover:border-slate-700'
+                            }`}
+                          >
+                            <span className="text-base">{t.icon}</span>
+                            <span>{t.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 2. عنوان المهمة */}
+                    <div>
+                      <label className="mb-1 block text-[11px] font-bold text-slate-300">
+                        2. عنوان المهمة الإعلانية
+                      </label>
                       <input
                         value={adDraft.title}
                         onChange={(e) => setAdDraft({ ...adDraft, title: e.target.value })}
-                        placeholder="مثال: شاهد الفيديو الإعلاني واربح 0.01000 TSK"
-                        className="w-full rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
+                        placeholder="مثال: مشاهدة إعلان فيديو ترويجي"
+                        className="w-full rounded-xl border border-slate-700 bg-[#060910] px-3 py-2.5 text-xs text-white outline-none focus:border-amber-400"
                       />
                     </div>
 
-                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                      <div>
-                        <label className="mb-1 block text-[11px] font-bold text-slate-300">نوع الإعلان</label>
-                        <select
-                          value={adDraft.ad_type}
-                          onChange={(e) => setAdDraft({ ...adDraft, ad_type: e.target.value as any })}
-                          className="w-full rounded-xl border border-white/10 bg-[#0e1422] p-3 text-xs text-white"
-                        >
-                          <option value="video">فيديو مكافأة (Video)</option>
-                          <option value="smart_link">رابط ذكي (Smart Link)</option>
-                          <option value="banner_ad">إعلان سريع / تسييل (Banner)</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-bold text-slate-300">
-                          المكافأة (TSK)
-                        </label>
-                        <input
-                          value={adDraft.reward_yt}
-                          onChange={(e) => setAdDraft({ ...adDraft, reward_yt: e.target.value })}
-                          inputMode="decimal"
-                          placeholder="0.01000"
-                          className="w-full rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-amber-300"
-                          dir="ltr"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="mb-1 block text-[11px] font-bold text-slate-300">
-                          المدة (بالثواني)
-                        </label>
-                        <input
-                          value={adDraft.duration_seconds}
-                          onChange={(e) => setAdDraft({ ...adDraft, duration_seconds: e.target.value })}
-                          inputMode="numeric"
-                          placeholder="30"
-                          className="w-full rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-white"
-                          dir="ltr"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Quick Presets */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[10px] text-slate-400">قوالب سريعة:</span>
-                      {[
-                        { label: '0.01 TSK · 15ث', r: '0.01000', d: '15' },
-                        { label: '0.01 TSK · 30ث', r: '0.01000', d: '30' },
-                        { label: '0.02 TSK · 45ث', r: '0.02000', d: '45' },
-                        { label: '0.05 TSK · 60ث', r: '0.05000', d: '60' }
-                      ].map((p) => (
-                        <button
-                          key={p.label}
-                          type="button"
-                          onClick={() => setAdDraft({ ...adDraft, reward_yt: p.r, duration_seconds: p.d })}
-                          className="rounded-lg border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-[10px] font-bold text-amber-200 hover:bg-amber-400/20"
-                        >
-                          {p.label}
-                        </button>
-                      ))}
-                    </div>
-
+                    {/* 3. الرابط أو كود الإعلان */}
                     <div>
                       <label className="mb-1 block text-[11px] font-bold text-slate-300">
-                        رابط الإعلان المباشر (HTTPS URL)
+                        3. رابط الإعلان المستهدف (HTTPS URL)
                       </label>
                       <input
                         value={adDraft.ad_url}
                         onChange={(e) => setAdDraft({ ...adDraft, ad_url: e.target.value })}
-                        placeholder="https://..."
-                        className="w-full rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-white"
                         dir="ltr"
+                        placeholder="https://..."
+                        className="w-full rounded-xl border border-slate-700 bg-[#060910] px-3 py-2.5 font-mono text-xs text-amber-100 outline-none focus:border-amber-400"
                       />
                     </div>
 
@@ -1505,235 +1564,275 @@ export const YtEcosystemApp: React.FC<Props> = ({
                         أو كود HTML / Script للإعلان المدمج (اختياري)
                       </label>
                       <textarea
-                        rows={3}
+                        rows={2}
                         value={adDraft.ad_code}
                         onChange={(e) => setAdDraft({ ...adDraft, ad_code: e.target.value })}
-                        placeholder="<script>...</script> أو كود البانر"
-                        className="w-full rounded-xl border border-white/10 bg-black/40 p-3 font-mono text-xs text-slate-200"
                         dir="ltr"
+                        placeholder="<script>...</script>"
+                        className="w-full rounded-xl border border-slate-700 bg-[#060910] px-3 py-2 font-mono text-xs text-slate-200 outline-none focus:border-amber-400"
                       />
                     </div>
 
-                    {/* Live Preview Box */}
-                    <div className="rounded-2xl border border-amber-400/25 bg-black/35 p-3">
-                      <div className="mb-2 flex items-center gap-1.5 text-[10px] font-bold text-amber-300">
-                        <Eye size={13} /> معاينة بطاقة الإعلان كما ستظهر للمعدّنين
+                    {/* 4. المدة والمكافأة + قوالب سريعة */}
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="mb-1 block text-[11px] font-bold text-slate-300">
+                          4. مدة التحقق (ثانية)
+                        </label>
+                        <input
+                          type="number"
+                          value={adDraft.duration_seconds}
+                          onChange={(e) => setAdDraft({ ...adDraft, duration_seconds: e.target.value })}
+                          min={5}
+                          max={120}
+                          className="w-full rounded-xl border border-slate-700 bg-[#060910] px-3 py-2 font-mono text-xs text-white outline-none focus:border-amber-400"
+                        />
                       </div>
-                      <div className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-[#121826] p-3">
-                        <div className="min-w-0">
-                          <b className="block truncate text-xs text-white">
-                            {adDraft.title || 'عنوان الإعلان سيظهر هنا'}
-                          </b>
-                          <span className="text-[10px] text-slate-400">
-                            {adDraft.duration_seconds || 0} ثانية ·{' '}
-                            {adDraft.ad_type === 'video'
-                              ? 'فيديو مكافأة'
-                              : adDraft.ad_type === 'smart_link'
-                              ? 'رابط ذكي'
-                              : 'إعلان سريع'}
-                          </span>
+                      <div>
+                        <label className="mb-1 block text-[11px] font-bold text-slate-300">
+                          5. المكافأة (TSK)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.00001"
+                          value={adDraft.reward_yt}
+                          onChange={(e) => setAdDraft({ ...adDraft, reward_yt: e.target.value })}
+                          className="w-full rounded-xl border border-slate-700 bg-[#060910] px-3 py-2 font-mono text-xs font-bold text-emerald-400 outline-none focus:border-amber-400"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] text-slate-400">قوالب سريعة:</span>
+                      {[
+                        { label: '0.01 TSK · 10ث', r: '0.01000', d: '10' },
+                        { label: '0.01 TSK · 15ث', r: '0.01000', d: '15' },
+                        { label: '0.02 TSK · 30ث', r: '0.02000', d: '30' }
+                      ].map((p) => (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => setAdDraft({ ...adDraft, reward_yt: p.r, duration_seconds: p.d })}
+                          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold text-amber-200 hover:bg-amber-500/20"
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* معاينة حية لبطاقة الإعلان */}
+                    <div className="pt-1">
+                      <span className="mb-1.5 flex items-center gap-1 text-[10px] font-bold text-slate-400">
+                        <Eye size={12} className="text-amber-300" /> معاينة حية لبطاقة الإعلان قبل النشر:
+                      </span>
+                      <div className="flex items-center justify-between gap-2 rounded-2xl border border-amber-500/35 bg-[#060910] p-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex items-center gap-1.5">
+                            <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                              {adDraft.ad_type === 'video'
+                                ? '🎬 إعلان فيديو'
+                                : adDraft.ad_type === 'smart_link'
+                                ? '🔗 رابط ذكي'
+                                : '🖼️ إعلان بانر'}
+                            </span>
+                            <span className="font-mono text-[10px] text-slate-400">
+                              ⏱ {adDraft.duration_seconds || 15}ث
+                            </span>
+                          </div>
+                          <p className="truncate text-xs font-bold text-slate-100">
+                            {adDraft.title || 'عنوان المهمة الإعلانية سيظهر هنا...'}
+                          </p>
+                          <p className="mt-0.5 font-mono text-[11px] font-extrabold text-emerald-400">
+                            +{Number(adDraft.reward_yt || 0).toFixed(5)} TSK
+                          </p>
                         </div>
-                        <span className="shrink-0 rounded-lg bg-amber-400 px-3 py-1.5 text-[11px] font-black text-slate-950">
-                          +{Number(adDraft.reward_yt || 0).toFixed(5)} TSK
+                        <span className="shrink-0 rounded-xl border border-amber-400/40 bg-amber-500/20 px-3 py-2 text-[11px] font-extrabold text-amber-300">
+                          ابدأ التعدين
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-1">
-                      <label className="flex items-center gap-2 text-xs font-bold text-slate-200">
-                        <input
-                          type="checkbox"
-                          checked={adDraft.is_active}
-                          onChange={(e) => setAdDraft({ ...adDraft, is_active: e.target.checked })}
-                          className="h-4 w-4 accent-amber-400"
-                        />
-                        نشر وتفعيل الإعلان فوراً
-                      </label>
+                    <button
+                      disabled={busy || !adDraft.title || (!adDraft.ad_url && !adDraft.ad_code)}
+                      onClick={() =>
+                        run(
+                          () =>
+                            api
+                              .manageAd({
+                                action: 'create',
+                                title: adDraft.title,
+                                ad_type: adDraft.ad_type,
+                                ad_url: adDraft.ad_url,
+                                ad_code: adDraft.ad_code,
+                                reward_yt: Number(adDraft.reward_yt),
+                                required_seconds: Number(adDraft.duration_seconds),
+                                is_active: true
+                              })
+                              .then((x) => {
+                                setAdDraft({ ...adDraft, title: '', ad_url: '', ad_code: '' });
+                                return x;
+                              }),
+                          'تم اعتماد ونشر الإعلان في شاشة التعدين بنجاح!'
+                        )
+                      }
+                      className="tsk-gold-btn flex w-full items-center justify-center gap-1.5 rounded-2xl py-3 text-xs"
+                    >
+                      <Plus size={15} /> اعتماد ونشر الإعلان الآن
+                    </button>
+                  </div>
 
-                      <button
-                        disabled={busy || !adDraft.title || (!adDraft.ad_url && !adDraft.ad_code)}
-                        onClick={() =>
-                          run(
-                            () =>
-                              api
-                                .manageAd({
-                                  action: 'create',
-                                  title: adDraft.title,
-                                  ad_type: adDraft.ad_type,
-                                  ad_url: adDraft.ad_url,
-                                  ad_code: adDraft.ad_code,
-                                  reward_yt: Number(adDraft.reward_yt),
-                                  required_seconds: Number(adDraft.duration_seconds),
-                                  is_active: adDraft.is_active
-                                })
-                                .then((x) => {
-                                  setAdDraft({ ...adDraft, title: '', ad_url: '', ad_code: '' });
-                                  return x;
-                                }),
-                            'تمت إضافة الإعلان ونشره بنجاح.'
-                          )
-                        }
-                        className="rounded-xl bg-gradient-to-l from-amber-400 to-yellow-500 px-6 py-3 text-xs font-black text-slate-950 shadow-lg disabled:opacity-40"
-                      >
-                        <Plus className="ml-1.5 inline" size={15} /> حفظ ونشر الإعلان
-                      </button>
+                  {/* قائمة الإعلانات المنشورة */}
+                  <div className="tsk-card rounded-3xl p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-xs font-extrabold text-slate-100">📋 الإعلانات المنشورة ({ads.length})</h3>
+                    </div>
+                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {ads.map((a) => (
+                        <div
+                          key={a.id}
+                          className={`flex items-center justify-between gap-2 rounded-2xl border bg-[#060910] p-3 ${
+                            a.is_active ? 'border-amber-500/25' : 'border-slate-800 opacity-60'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="rounded bg-amber-500/15 px-1.5 font-mono text-[9px] text-amber-300">
+                                {a.ad_type}
+                              </span>
+                              <span className="font-mono text-[10px] text-emerald-400">
+                                +{ytc(a.reward_units)}
+                              </span>
+                              <span className="font-mono text-[10px] text-slate-500">
+                                ({a.duration_seconds}ث)
+                              </span>
+                            </div>
+                            <p className="mt-1 truncate text-xs font-bold text-slate-100">{a.title}</p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <button
+                              onClick={() =>
+                                run(
+                                  () =>
+                                    api.manageAd({
+                                      action: 'update',
+                                      id: a.id,
+                                      title: a.title,
+                                      ad_type: a.ad_type,
+                                      ad_url: a.ad_url || '',
+                                      reward_yt: Number(a.reward_units) / 100000,
+                                      required_seconds: a.duration_seconds,
+                                      is_active: !a.is_active,
+                                      ad_code: a.ad_code || ''
+                                    }),
+                                  a.is_active ? 'تم إيقاف الإعلان.' : 'تم تفعيل الإعلان.'
+                                )
+                              }
+                              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold ${
+                                a.is_active
+                                  ? 'border border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
+                                  : 'bg-slate-800 text-slate-400'
+                              }`}
+                            >
+                              {a.is_active ? 'نشط' : 'متوقف'}
+                            </button>
+                            <button
+                              onClick={() =>
+                                run(() => api.manageAd({ action: 'delete', id: a.id }), 'تم حذف الإعلان.')
+                              }
+                              className="rounded-lg bg-rose-500/15 p-1.5 text-rose-400 hover:bg-rose-500/25"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
+              )}
 
-                {/* Existing Ads List */}
-                <div className={`rounded-3xl p-4 sm:p-5 ${GOLD_CARD}`}>
-                  <h3 className="mb-3 text-sm font-black text-white">الإعلانات المسجلة ({ads.length})</h3>
-                  <div className="space-y-2.5">
-                    {ads.map((a) => (
-                      <div
-                        key={a.id}
-                        className="flex items-center justify-between gap-2 rounded-2xl border border-white/[0.07] bg-black/35 p-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`h-2 w-2 shrink-0 rounded-full ${
-                                a.is_active ? 'bg-emerald-400' : 'bg-rose-400'
-                              }`}
-                            />
-                            <b className="truncate text-xs text-white">{a.title}</b>
-                          </div>
-                          <p className="mt-1 text-[10px] text-slate-400">
-                            {a.ad_type} · {a.duration_seconds}ث ·{' '}
-                            <b className="text-amber-300">{ytc(a.reward_units)}</b>
-                          </p>
-                        </div>
+              {/* القسم الفرعي 2: توزيع أرباح المنصة (70% سيولة / 30% إدارة) */}
+              {adminSubTab === 'revenue' && (
+                <div className="tsk-card rounded-3xl p-4 space-y-3">
+                  <h3 className="text-xs font-extrabold text-emerald-400">
+                    💰 إدخال وتوزيع أرباح المنصة (70% سيولة / 30% إدارة)
+                  </h3>
+                  <p className="text-[11px] leading-relaxed text-slate-400">
+                    عند إدخال إجمالي أرباح المنصة بالدولار، يُضخ <strong className="text-emerald-400">70% في صندوق السيولة</strong> لرفع السعر اللحظي لكل عملة معدّنة، وتُسجّل <strong className="text-amber-300">30% كحصة إدارة</strong>.
+                  </p>
 
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <button
-                            onClick={() =>
-                              run(
-                                () =>
-                                  api.manageAd({
-                                    action: 'update',
-                                    id: a.id,
-                                    title: a.title,
-                                    ad_type: a.ad_type,
-                                    ad_url: a.ad_url || '',
-                                    reward_yt: Number(a.reward_units) / 100000,
-                                    required_seconds: a.duration_seconds,
-                                    is_active: !a.is_active,
-                                    ad_code: a.ad_code || ''
-                                  }),
-                                a.is_active ? 'تم إيقاف الإعلان.' : 'تم تفعيل الإعلان.'
-                              )
-                            }
-                            className={`rounded-xl px-3 py-1.5 text-[10px] font-bold ${
-                              a.is_active
-                                ? 'border border-amber-400/30 text-amber-200'
-                                : 'bg-emerald-500/20 text-emerald-300'
-                            }`}
-                          >
-                            {a.is_active ? 'إيقاف' : 'تفعيل'}
-                          </button>
-                          <button
-                            onClick={() =>
-                              run(() => api.manageAd({ action: 'delete', id: a.id }), 'تم حذف الإعلان.')
-                            }
-                            className="rounded-xl bg-rose-500/15 p-2 text-rose-300 hover:bg-rose-500/25"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                  <input
+                    value={deposit}
+                    onChange={(e) => setDeposit(e.target.value)}
+                    inputMode="decimal"
+                    placeholder="إجمالي أرباح المنصة بالدولار ($)"
+                    className="w-full rounded-xl border border-slate-700 bg-[#060910] px-3 py-2.5 font-mono text-xs font-bold text-emerald-300 outline-none focus:border-emerald-400"
+                  />
+
+                  <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-800 bg-[#060910]/90 p-3 text-[11px]">
+                    <div>
+                      <span className="text-slate-400">صندوق سيولة العملة (70%):</span>
+                      <b className="mt-0.5 block font-mono text-xs text-emerald-400" dir="ltr">
+                        ${(Number(deposit || 0) * 0.7).toFixed(4)}
+                      </b>
+                    </div>
+                    <div className="border-r border-slate-800 pr-2.5">
+                      <span className="text-slate-400">حصة الإدارة (30%):</span>
+                      <b className="mt-0.5 block font-mono text-xs text-amber-300" dir="ltr">
+                        ${(Number(deposit || 0) * 0.3).toFixed(4)}
+                      </b>
+                    </div>
                   </div>
+
+                  <button
+                    disabled={busy || Number(deposit) <= 0}
+                    onClick={() =>
+                      run(
+                        () =>
+                          api.depositRevenue(Number(deposit)).then((x) => {
+                            setDeposit('');
+                            return x;
+                          }),
+                        'تم توزيع الإيرادات وتحديث السعر اللحظي للعملة!'
+                      )
+                    }
+                    className="tsk-gold-btn w-full rounded-2xl py-3 text-xs"
+                  >
+                    اعتماد وتوزيع الإيرادات الآن
+                  </button>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* SUB-TAB B: REVENUE SPLIT 70% / 30% */}
-            {adminSubTab === 'revenue' && (
-              <div className={`rounded-3xl p-5 ${GOLD_CARD}`}>
-                <h3 className="text-sm font-black text-white">توزيع أرباح المنصة (70% سيولة / 30% إدارة)</h3>
-                <p className="mt-1 text-xs leading-5 text-slate-400">
-                  عند إدخال إجمالي أرباح الإعلانات بالدولار، يضخ النظام تلقائياً 70% في صندوق سيولة العملة لرفع
-                  سعرها اللحظي، ويسجل 30% كأرباح إدارة.
-                </p>
-
-                <input
-                  value={deposit}
-                  onChange={(e) => setDeposit(e.target.value)}
-                  inputMode="decimal"
-                  placeholder="أدخل إجمالي الإيرادات بالدولار (مثال: 100)"
-                  className="mt-4 w-full rounded-xl border border-white/10 bg-black/40 p-3.5 text-sm font-bold text-white"
-                  dir="ltr"
-                />
-
-                <div className="mt-3 grid grid-cols-2 gap-2.5 text-xs">
-                  <div className="rounded-2xl border border-emerald-400/25 bg-emerald-500/10 p-3.5">
-                    <span className="text-[11px] text-emerald-200">صندوق سيولة العملة (70%)</span>
-                    <b className="mt-1 block text-base font-black text-emerald-300" dir="ltr">
-                      {usd(Number(deposit || 0) * 0.7)}
-                    </b>
-                  </div>
-                  <div className="rounded-2xl border border-amber-400/25 bg-amber-400/10 p-3.5">
-                    <span className="text-[11px] text-amber-200">حصة الإدارة الخاصة بك (30%)</span>
-                    <b className="mt-1 block text-base font-black text-amber-300" dir="ltr">
-                      {usd(Number(deposit || 0) * 0.3)}
-                    </b>
-                  </div>
-                </div>
-
-                <button
-                  disabled={busy || Number(deposit) <= 0}
-                  onClick={() =>
-                    run(
-                      () =>
-                        api.depositRevenue(Number(deposit)).then((x) => {
-                          setDeposit('');
-                          return x;
-                        }),
-                      'تم تسجيل الإيراد وتقسيمه 70% للسيولة و30% للإدارة وتحديث سعر العملة.'
-                    )
-                  }
-                  className="mt-4 w-full rounded-xl bg-gradient-to-l from-amber-400 to-yellow-500 py-3.5 text-xs font-black text-slate-950 disabled:opacity-40"
-                >
-                  اعتماد وتوزيع الإيرادات الآن
-                </button>
-              </div>
-            )}
-
-            {/* SUB-TAB C: WITHDRAWALS MANAGEMENT */}
-            {adminSubTab === 'withdrawals' && (
-              <div className={`rounded-3xl p-5 ${GOLD_CARD}`}>
-                <h3 className="text-sm font-black text-white">مراجعة طلبات السحب المعلقة</h3>
-                <div className="mt-3 space-y-2">
+              {/* القسم الفرعي 3: مراجعة طلبات السحب */}
+              {adminSubTab === 'withdrawals' && (
+                <div className="tsk-card rounded-3xl p-4 space-y-3">
+                  <h3 className="text-xs font-extrabold text-amber-300">🏦 مراجعة طلبات السحب المعلقة</h3>
                   <input
                     value={receiptUrl}
                     onChange={(e) => setReceiptUrl(e.target.value)}
                     placeholder="رابط إيصال الصرف HTTPS"
-                    className="w-full rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
                     dir="ltr"
+                    className="w-full rounded-xl border border-slate-700 bg-[#060910] p-2.5 font-mono text-xs text-white"
                   />
                   <input
                     value={withdrawalNote}
                     onChange={(e) => setWithdrawalNote(e.target.value)}
                     placeholder="ملاحظة الإدارة (اختياري)"
-                    className="w-full rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
+                    className="w-full rounded-xl border border-slate-700 bg-[#060910] p-2.5 text-xs text-white"
                   />
-                </div>
-
-                <div className="mt-4 space-y-3">
                   {withdrawals
                     .filter((w: any) => w.status === 'pending')
                     .map((w: any) => (
-                      <div key={w.id} className="rounded-2xl border border-white/10 bg-black/35 p-3.5">
+                      <div key={w.id} className="rounded-2xl border border-slate-800 bg-[#060910] p-3">
                         <div className="flex items-center justify-between">
-                          <b className="text-sm text-amber-300">{ytc(w.amount_units)}</b>
+                          <b className="font-mono text-xs text-amber-300">{ytc(w.amount_units)}</b>
                           <span className="font-mono text-[10px] text-slate-400">
                             {String(w.user_id).slice(0, 8)}
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-white">{w.payout_method}</p>
-                        <p className="mt-0.5 break-all text-[11px] text-slate-400">{w.payout_destination}</p>
-                        <div className="mt-3 grid grid-cols-2 gap-2">
+                        <p className="mt-0.5 break-all text-[10px] text-slate-400">{w.payout_destination}</p>
+                        <div className="mt-2.5 grid grid-cols-2 gap-2">
                           <button
                             disabled={busy || tradingLocked || !receiptUrl.startsWith('https://')}
                             onClick={() =>
@@ -1762,139 +1861,135 @@ export const YtEcosystemApp: React.FC<Props> = ({
                       </div>
                     ))}
                   {withdrawals.filter((w: any) => w.status === 'pending').length === 0 && (
-                    <p className="py-6 text-center text-xs text-slate-500">لا توجد طلبات سحب معلقة حالياً.</p>
+                    <p className="py-4 text-center text-xs text-slate-500">لا توجد طلبات سحب معلقة حالياً.</p>
                   )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* SUB-TAB D: WALLETS DIRECTORY */}
-            {adminSubTab === 'wallets' && (
-              <div className={`rounded-3xl p-5 ${GOLD_CARD}`}>
-                <h3 className="mb-3 text-sm font-black text-white">
-                  دليل محافظ المستخدمين ({adminWallets.length})
-                </h3>
-                <div className="max-h-96 space-y-2.5 overflow-y-auto">
-                  {adminWallets.map((w: any) => (
-                    <div key={w.user_id} className="rounded-2xl border border-white/10 bg-black/35 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <b className="font-mono text-xs text-amber-200" dir="ltr">
-                          {shortWalletAddress(String(w.pay_id || ''))}
-                        </b>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                            w.is_frozen ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'
-                          }`}
-                        >
-                          {w.is_frozen ? 'مجمّدة' : 'نشطة'}
-                        </span>
-                      </div>
-                      <div className="mt-2 grid grid-cols-3 gap-1 text-[10px] text-slate-300">
-                        <span>تعدين: {ytc(w.mined_units)}</span>
-                        <span>سحب: {ytc(w.withdrawable_units)}</span>
-                        <span>إحالات: {ytc(w.referral_earned_units)}</span>
-                      </div>
+              {/* القسم الفرعي 4: إدارة المحافظ وقفل التداول */}
+              {adminSubTab === 'wallets' && (
+                <div className="space-y-4">
+                  <div className="tsk-card rounded-3xl p-4 space-y-3">
+                    <h3 className="text-xs font-extrabold text-amber-300">🔒 قفل التداول ومحفظة الإدارة</h3>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        run(
+                          () => api.setTradingLock(!phase?.admin_lock_enabled),
+                          'تم تحديث حالة قفل التداول.'
+                        )
+                      }
+                      className="tsk-gold-btn w-full rounded-xl py-2.5 text-xs"
+                    >
+                      {phase?.admin_lock_enabled ? 'فتح التداول (قرار إداري)' : 'إعادة قفل التداول'}
+                    </button>
+
+                    <div className="flex gap-2">
+                      <input
+                        value={managerPayId}
+                        onChange={(e) => setManagerPayId(e.target.value)}
+                        placeholder={`محفظة المدير: ${metrics?.admin_pay_id || 'غير محدد'}`}
+                        className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#060910] p-2.5 font-mono text-xs text-white"
+                      />
                       <button
-                        disabled={busy}
-                        onClick={() =>
-                          run(
-                            () => api.freezeWallet(w.pay_id, !w.is_frozen),
-                            w.is_frozen ? 'تم فك تجميد المحفظة.' : 'تم تجميد المحفظة.'
-                          )
-                        }
-                        className="mt-2 rounded-lg border border-amber-400/25 px-3 py-1 text-[10px] text-amber-200"
+                        disabled={busy || !managerPayId}
+                        onClick={() => run(() => api.setManager(managerPayId), 'تم تعيين محفظة المدير.')}
+                        className="tsk-gold-btn rounded-xl px-3.5 text-xs"
                       >
-                        {w.is_frozen ? 'فك التجميد' : 'تجميد المحفظة'}
+                        تعيين
                       </button>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
-            {/* SUB-TAB E: SYSTEM & LOCK CONTROLS */}
-            {adminSubTab === 'system' && (
-              <div className="space-y-4">
-                <div className={`rounded-3xl p-5 ${GOLD_CARD}`}>
-                  <h3 className="text-sm font-black text-white">قفل التداول · مرحلة 365 يوماً</h3>
-                  <p className="mt-1 text-xs text-slate-400">
-                    الحالة: {tradingLocked ? 'مقفل' : 'مفتوح'} · {countdown}
-                  </p>
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      run(() => api.setTradingLock(!phase?.admin_lock_enabled), 'تم تحديث حالة قفل التداول.')
-                    }
-                    className="mt-3 w-full rounded-xl bg-amber-400 py-3 text-xs font-black text-slate-950"
-                  >
-                    {phase?.admin_lock_enabled ? 'فتح التداول (قرار إداري)' : 'إعادة قفل التداول'}
-                  </button>
-                </div>
-
-                <div className={`rounded-3xl p-5 ${GOLD_CARD}`}>
-                  <h3 className="text-sm font-black text-white">محفظة الإدارة والتحكم السريع</h3>
-                  <div className="mt-3 flex gap-2">
-                    <input
-                      value={managerPayId}
-                      onChange={(e) => setManagerPayId(e.target.value)}
-                      placeholder={`الحالية: ${metrics?.admin_pay_id || 'غير محدد'}`}
-                      className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                    />
-                    <button
-                      disabled={busy || !managerPayId}
-                      onClick={() => run(() => api.setManager(managerPayId), 'تم تعيين محفظة المدير.')}
-                      className="rounded-xl bg-amber-400 px-4 text-xs font-black text-slate-950"
-                    >
-                      تعيين
-                    </button>
-                  </div>
-
-                  <div className="mt-3 flex gap-2">
-                    <input
-                      value={freezePayId}
-                      onChange={(e) => setFreezePayId(e.target.value)}
-                      placeholder="عنوان TSK Pay للتجميد/الفك"
-                      className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/40 p-3 text-xs text-white"
-                    />
-                    <button
-                      disabled={busy || !freezePayId}
-                      onClick={() => run(() => api.freezeWallet(freezePayId, true), 'تم تجميد المحفظة.')}
-                      className="rounded-xl bg-rose-900 px-3 text-xs font-bold text-white"
-                    >
-                      تجميد
-                    </button>
-                    <button
-                      disabled={busy || !freezePayId}
-                      onClick={() => run(() => api.freezeWallet(freezePayId, false), 'تم فك التجميد.')}
-                      className="rounded-xl bg-emerald-900 px-3 text-xs font-bold text-white"
-                    >
-                      فك
-                    </button>
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                    <div className="rounded-xl bg-black/30 p-3">
-                      رسوم التحويل
-                      <b className="mt-1 block text-amber-300">
-                        {(Number(systemSettings?.transfer_fee_bps || 0) / 100).toFixed(2)}%
-                      </b>
+                    <div className="flex gap-2">
+                      <input
+                        value={freezePayId}
+                        onChange={(e) => setFreezePayId(e.target.value)}
+                        placeholder="عنوان TSK Pay للتجميد/الفك"
+                        className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#060910] p-2.5 font-mono text-xs text-white"
+                      />
+                      <button
+                        disabled={busy || !freezePayId}
+                        onClick={() => run(() => api.freezeWallet(freezePayId, true), 'تم تجميد المحفظة.')}
+                        className="rounded-xl bg-rose-900 px-3 text-xs font-bold text-white"
+                      >
+                        تجميد
+                      </button>
+                      <button
+                        disabled={busy || !freezePayId}
+                        onClick={() => run(() => api.freezeWallet(freezePayId, false), 'تم فك التجميد.')}
+                        className="rounded-xl bg-emerald-900 px-3 text-xs font-bold text-white"
+                      >
+                        فك
+                      </button>
                     </div>
-                    <div className="rounded-xl bg-black/30 p-3">
-                      الحد الأقصى للمعروض
-                      <b className="mt-1 block text-amber-300">{ytc(systemSettings?.max_supply_units || 0)}</b>
+                  </div>
+
+                  <div className="tsk-card rounded-3xl p-4">
+                    <h3 className="mb-2.5 text-xs font-extrabold text-slate-100">
+                      دليل محافظ المستخدمين ({adminWallets.length})
+                    </h3>
+                    <div className="max-h-72 space-y-2 overflow-y-auto">
+                      {adminWallets.map((w: any) => (
+                        <div key={w.user_id} className="rounded-2xl border border-slate-800 bg-[#060910] p-3">
+                          <div className="flex items-center justify-between">
+                            <b className="font-mono text-xs text-amber-200" dir="ltr">
+                              {shortWalletAddress(String(w.pay_id || ''))}
+                            </b>
+                            <span
+                              className={`text-[10px] font-bold ${
+                                w.is_frozen ? 'text-rose-400' : 'text-emerald-400'
+                              }`}
+                            >
+                              {w.is_frozen ? 'مجمّدة' : 'نشطة'}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 grid grid-cols-3 gap-1 text-[10px] text-slate-400">
+                            <span>تعدين: {ytc(w.mined_units)}</span>
+                            <span>سحب: {ytc(w.withdrawable_units)}</span>
+                            <span>إحالات: {ytc(w.referral_earned_units)}</span>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>
-              </div>
-            )}
-          </section>
-        )}
-
-        <footer className="mt-6 flex items-center justify-center gap-1.5 text-[10px] text-slate-500">
-          <LockKeyhole size={11} className="text-amber-400/70" />
-          <span>نظام Taska Coin (TSK) · كافة العمليات محمية وموثّقة خادمياً</span>
-        </footer>
+              )}
+            </section>
+          )}
+        </div>
       </div>
+
+      {/* ==================== FIXED BOTTOM NAVIGATION BAR ==================== */}
+      <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-2xl -translate-x-1/2 border-t border-amber-500/25 bg-[#090E1A]/95 px-2 py-2 backdrop-blur-xl">
+        <div className={`grid gap-1 ${isAdmin ? 'grid-cols-6' : 'grid-cols-5'}`}>
+          {(
+            [
+              { id: 'mine', label: 'التعدين', icon: Play },
+              { id: 'wallet', label: 'المحفظة', icon: Wallet },
+              { id: 'market', label: 'السوق', icon: TrendingUp },
+              { id: 'referrals', label: 'الإحالات', icon: Users },
+              { id: 'settings', label: 'الأمان', icon: LockKeyhole },
+              { id: 'admin', label: 'المدير', icon: ShieldCheck }
+            ] as const
+          )
+            .filter((item) => item.id !== 'admin' || isAdmin)
+            .map((item) => {
+              const active = tab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setTab(item.id)}
+                  className={`flex flex-col items-center justify-center rounded-xl py-1.5 transition ${
+                    active ? 'bg-amber-500/15 text-amber-300' : 'text-slate-400 hover:text-amber-200'
+                  }`}
+                >
+                  <item.icon size={18} />
+                  <span className="mt-1 text-[10px] font-bold">{item.label}</span>
+                </button>
+              );
+            })}
+        </div>
+      </nav>
     </main>
   );
 };
