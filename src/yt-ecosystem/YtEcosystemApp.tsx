@@ -1105,7 +1105,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   ).map((f) => (
                     <button
                       key={f.id}
-                      onClick={() => { if (f.id === 'video') setAdTypeFilter(f.id); }}
+                      type="button"
+                      onClick={() => setAdTypeFilter(f.id)}
                       className={`shrink-0 rounded-xl px-3.5 py-1.5 text-[11px] font-bold transition ${
                         adTypeFilter === f.id
                           ? 'bg-amber-400 text-[#060910] shadow'
