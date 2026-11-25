@@ -4374,7 +4374,7 @@ app.get('/api/mining-ads/vast-proxy', async (req: Request, res: Response) => {
     }
 
     // Follow a short wrapper/redirect chain, validating every destination to prevent SSRF.
-    let upstream: Response | null = null;
+    let upstream: globalThis.Response | null = null;
     for (let hop = 0; hop <= 3; hop += 1) {
       upstream = await fetch(upstreamUrl.toString(), {
         method: 'GET',
@@ -4400,7 +4400,7 @@ app.get('/api/mining-ads/vast-proxy', async (req: Request, res: Response) => {
     if (!xml || Buffer.byteLength(xml, 'utf8') > 1024 * 1024) {
       return res.status(502).json({ error: 'استجابة VAST فارغة أو أكبر من الحد المسموح.' });
     }
-    if (!/<VAST[\\s>]/i.test(xml)) {
+    if (!/<VAST[\s>]/i.test(xml)) {
       return res.status(502).json({ error: 'استجابة المصدر ليست ملف VAST XML صالحاً.' });
     }
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
