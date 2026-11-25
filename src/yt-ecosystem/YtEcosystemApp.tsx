@@ -428,19 +428,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
     }
   };
 
-  // تشغيل سريع ومباشر للإعلان مع قفل ضد النقر المزدوج وفتح الرابط فوراً
-  useEffect(() => {
-    if (tab !== 'mine' || !bannerAdRef.current) return;
-    const container = bannerAdRef.current;
-    container.innerHTML = '';
-    (window as any).atOptions = { key: '6e18ad3e7bb40480e41d4d20431b5bb4', format: 'iframe', height: 250, width: 300, params: {} };
-    const script = document.createElement('script');
-    script.src = 'https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4';
-    script.async = true;
-    script.setAttribute('data-cfasync', 'false');
-    container.appendChild(script);
-    return () => { container.innerHTML = ''; };
-  }, [tab]);
+
 
 
   const startAd = async (ad: YtAd, purpose: 'reward' | 'liquidation' = 'reward', instructionsConfirmed = false) => {
@@ -618,6 +606,20 @@ export const YtEcosystemApp: React.FC<Props> = ({
     if (adTypeFilter === 'all') return ads;
     return ads.filter((a) => a.ad_type === adTypeFilter);
   }, [ads, adTypeFilter]);
+
+  // تحميل البنر داخل قائمة الإعلانات بعد ظهور مهمتين على الأقل
+  useEffect(() => {
+    if (tab !== 'mine' || filteredAds.length < 2 || !bannerAdRef.current) return;
+    const container = bannerAdRef.current;
+    container.innerHTML = '';
+    (window as any).atOptions = { key: '6e18ad3e7bb40480e41d4d20431b5bb4', format: 'iframe', height: 250, width: 300, params: {} };
+    const script = document.createElement('script');
+    script.src = 'https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4';
+    script.async = true;
+    script.setAttribute('data-cfasync', 'false');
+    container.appendChild(script);
+    return () => { container.innerHTML = ''; };
+  }, [tab, filteredAds.length >= 2]);
 
   if (compact) {
     return (
@@ -1097,14 +1099,10 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   ))}
                 </div>
 
-                <div className="my-4 flex w-full justify-center overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0A101C] p-2">
-                  <div ref={bannerAdRef} className="flex min-h-[250px] w-[300px] max-w-full items-center justify-center overflow-hidden" aria-label="إعلان بانر" />
-                </div>
-
                 {/* بطاقات الإعلانات */}
                 <div className="space-y-2.5">
                   {filteredAds.length ? (
-                    filteredAds.map((ad) => {
+                    filteredAds.map((ad, index) => {
                       const isClaimed = dailyClaimed.has(ad.id);
                       const isStarting = startingAdId === ad.id;
                       const typeBadge =
@@ -1115,8 +1113,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                           : '🖼️ إعلان سريع';
 
                       return (
+                        <React.Fragment key={ad.id}>
                         <div
-                          key={ad.id}
                           className="tsk-card flex items-center justify-between gap-3 rounded-2xl p-3.5 transition hover:border-amber-400/50"
                         >
                           <div className="min-w-0 flex-1">
@@ -1152,6 +1150,12 @@ export const YtEcosystemApp: React.FC<Props> = ({
                             )}
                           </button>
                         </div>
+                        {index === 1 && (
+                          <div className="my-4 flex w-full justify-center overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0A101C] p-2">
+                            <div ref={bannerAdRef} className="flex min-h-[250px] w-[300px] max-w-full items-center justify-center overflow-hidden" aria-label="إعلان بانر" />
+                          </div>
+                        )}
+                        </React.Fragment>
                       );
                     })
                   ) : (
