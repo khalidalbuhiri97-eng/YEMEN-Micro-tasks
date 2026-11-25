@@ -6,6 +6,7 @@ import { supabaseDb, generateWalletAddress, generateReferralCode } from './supab
 import { geoService } from './geoService.js';
 import { createClixWallHandlers } from './clixwallHandlers.js';
 import { createOfferwallGgHandlers } from './offerwallGgHandlers.js';
+import { createTaskaOfferwallHandlers } from './taskaOfferwallHandler.js';
 import {
   getPushPublicStatus,
   saveUserPushSubscription,
@@ -4269,6 +4270,20 @@ const offerwallGgHandlers = createOfferwallGgHandlers({
   },
 });
 
+const taskaOfferwallHandlers = createTaskaOfferwallHandlers({
+  getAdminClient: getSupabaseAdminClient,
+  onPostbackError: async (info) => {
+    await logSupabaseError({
+      err: new Error(info.reason),
+      operation: 'TASKA_OFFERWALL_GG_POSTBACK',
+      sourceTable: 'yt_offerwall_gg_postbacks',
+      sourceFunction: 'yt_process_offerwall_gg_postback',
+      apiRoute: '/api/taska/offerwall-gg/postback',
+      details: { transaction_id: info.transactionId || null, user_id: info.userId || null },
+    });
+  },
+});
+
 // YT Coin: independent schema (100,000,000 YT final cap, BIGINT 1 YT = 1,000 integer sub-units, 0.001 YT min),
 // isolated from YER wallets and financial ledgers.
 // Retire legacy YT Coin endpoints after the isolated yt_* v2 cutover.
@@ -4909,8 +4924,11 @@ app.all('/offerwall/callback', offerwallGgHandlers.handlePostback);
 app.all('/api/offerwall-gg/callback', offerwallGgHandlers.handlePostback);
 app.all('/offerwall-gg/callback', offerwallGgHandlers.handlePostback);
 app.all('/callback', offerwallGgHandlers.handlePostback);
-app.all('/offerwall', offerwallGgHandlers.handleDirectOfferwallGet);
-app.all('/api/offerwall', offerwallGgHandlers.handleDirectOfferwallGet);
+app.get('/api/taska/offerwall-gg/url', authMiddleware, taskaOfferwallHandlers.getOfferWallUrl);
+app.all('/api/taska/offerwall-gg/postback', taskaOfferwallHandlers.handlePostback);
+app.all('/api/yt-ecosystem/postbacks/offerwall-gg', taskaOfferwallHandlers.handlePostback);
+app.all('/offerwall', taskaOfferwallHandlers.handlePostback);
+app.all('/api/offerwall', taskaOfferwallHandlers.handlePostback);
 app.all('/api/postbacks/clixwall', clixwallHandlers.handlePostback);
 app.all('/api/clixwall/postback', clixwallHandlers.handlePostback);
 

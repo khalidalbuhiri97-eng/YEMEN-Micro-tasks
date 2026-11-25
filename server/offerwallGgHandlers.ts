@@ -120,15 +120,32 @@ export function createOfferwallGgHandlers(deps: {
         .update(`${userId}:${transactionId}:${amount}`, 'utf8').digest('hex');
       if (!safeEqualHex(expected, signature)) return res.status(403).send('FORBIDDEN');
 
-      const currencyName = readAliasedField(req, ['currencyName', 'currency_name']).toUpperCase();
-      if (currencyName !== 'YER') return res.status(400).send('UNSUPPORTED_CURRENCY');
+      const rawCurrencyName = readAliasedField(req, ['currencyName', 'currency_name']).replace(/\s+/g, ' ').trim();
+      const normalizedCurrency = rawCurrencyName.replace(/\s*[-–—]\s*/g, '-');
+      const upperCurrency = normalizedCurrency.toUpperCase();
+      const isYemeniRial =
+        upperCurrency === 'YER' ||
+        upperCurrency === 'YEMENI RIAL' ||
+        upperCurrency === 'REAL YEMENI' ||
+        upperCurrency === 'REAL YEMENI-ريال يمني' ||
+        upperCurrency === 'REAL YEMENI-الريال اليمني' ||
+        normalizedCurrency === 'ريال يمني' ||
+        normalizedCurrency === 'الريال اليمني' ||
+        normalizedCurrency === 'ريال' ||
+        normalizedCurrency === 'ر.ي' ||
+        normalizedCurrency === 'ر.ي.';
+      if (!isYemeniRial) {
+        console.warn(`[OFFERWALL_GG] Rejected UNSUPPORTED_CURRENCY for tx=${transactionId}: received currencyName="${rawCurrencyName || '(empty)'}"`);
+        return res.status(400).send('UNSUPPORTED_CURRENCY');
+      }
+      const currencyName = 'YER';
 
       const payoutUsdRaw = readAliasedField(req, ['payoutUsd', 'payout_usd', 'payout']);
       const payoutUsd = decimalAmount(payoutUsdRaw) ? Number(payoutUsdRaw) : null;
       const payload = cleanPayload({
         userId, transactionId, offerId: readAliasedField(req, ['offerId', 'offer_id', 'oid']),
         offerName: readAliasedField(req, ['offerName', 'offer_name', 'name']), goalId: readAliasedField(req, ['goalId', 'goal_id']),
-        currencyAmount: amount, currencyName, payoutUsd: payoutUsdRaw,
+        currencyAmount: amount, currencyName, rawCurrencyName, payoutUsd: payoutUsdRaw,
         status, test, timestamp: readAliasedField(req, ['timestamp', 'ts']),
       });
 
@@ -185,7 +202,10 @@ export function createOfferwallGgHandlers(deps: {
         return res.status(403).send('INVALID_SIGNATURE');
       }
 
-      const secret = process.env.OFFERWALL_SECRET || process.env.OFFERWALL_GG_SECRET || 'offerwall_production_secret_2026';
+      const secret = process.env.OFFERWALL_SECRET || process.env.OFFERWALL_GG_SECRET;
+      if (!secret) {
+        return res.status(503).send('CONFIGURATION_ERROR');
+      }
       const message = `${user}:${tx}:${amountStr}`;
       const expectedSig = crypto.createHmac('sha256', secret).update(message, 'utf8').digest('hex').toLowerCase();
 

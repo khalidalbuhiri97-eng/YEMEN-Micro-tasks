@@ -77,30 +77,77 @@ const assertPayAddress = (payId: string) => {
   return clean;
 };
 
+export type YtRefreshScope =
+  | 'mining'
+  | 'ads'
+  | 'revenue'
+  | 'wallet'
+  | 'withdrawals'
+  | 'admin_wallets'
+  | 'full';
+
 export type YtCoinService = ReturnType<typeof createYtCoinService>;
+
+const DASHBOARD_CACHE_PREFIX = 'yt_eco_dash_v1_';
 
 export function createYtCoinService(client: typeof supabase, syncAuth?: () => Promise<void>) {
   const ensureAuth = syncAuth || (client === supabase ? syncSupabaseSession : async () => undefined);
+  let cachedAllocations: any[] | null = null;
+  const inFlightLoads = new Map<string, Promise<any>>();
 
-  const loadDashboard = async (userId: string, isAdmin = false) => {
-    await ensureAuth();
-    const [
-      metricsRes,
-      walletRes,
-      adsRes,
-      allocationsRes,
-      historyRes,
-      claimsRes,
-      clickClaimsRes,
-      checkinRes,
-      ledgerRes,
-      withdrawalsRes,
-      phaseRes,
-      referralRes,
-      adminWalletsRes,
-      systemSettingsRes
-    ] = await Promise.all([
-      client.rpc('yt_get_live_metrics'),
+  const dedupeLoad = <T,>(key: string, loader: () => Promise<T>): Promise<T> => {
+    const existing = inFlightLoads.get(key);
+    if (existing) return existing as Promise<T>;
+    const promise = loader().finally(() => {
+      inFlightLoads.delete(key);
+    });
+    inFlightLoads.set(key, promise);
+    return promise;
+  };
+
+  const getCachedDashboard = (userId: string) => {
+    try {
+      if (typeof sessionStorage === 'undefined') return null;
+      const raw = sessionStorage.getItem(`${DASHBOARD_CACHE_PREFIX}${userId}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed?.wallet || !parsed?.metrics) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const saveCachedDashboard = (userId: string, snapshot: any) => {
+    try {
+      if (typeof sessionStorage === 'undefined' || !snapshot?.wallet) return;
+      sessionStorage.setItem(`${DASHBOARD_CACHE_PREFIX}${userId}`, JSON.stringify(snapshot));
+    } catch {
+      // ignore storage quota errors
+    }
+  };
+
+  const loadDashboard = async (userId: string, isAdmin = false, includeAdminWallets = false) =>
+    dedupeLoad(`dash:${userId}:${isAdmin ? 1 : 0}:${includeAdminWallets ? 1 : 0}`, async () => {
+      await ensureAuth();
+      const today = ytTodayAden();
+      const [
+        metricsRes,
+        walletRes,
+        adsRes,
+        allocationsRes,
+        historyRes,
+        claimsRes,
+        clickClaimsRes,
+        checkinRes,
+        ledgerRes,
+        withdrawalsRes,
+        phaseRes,
+        referralRes,
+        adminWalletsRes,
+        systemSettingsRes
+      ] = await Promise.all([
+        client.rpc('yt_get_live_metrics'),
       client
         .from('yt_wallets')
         .select(
@@ -112,10 +159,12 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
         .from('yt_mining_ads')
         .select('id,title,description,ad_url,placement,duration_seconds,sort_order,is_active,ad_type,reward_units,ad_code')
         .order('sort_order'),
-      client
-        .from('yt_token_allocations')
-        .select('allocation_key,allocation_code,name_ar,percentage,allocated_units')
-        .order('percentage', { ascending: false }),
+      cachedAllocations
+        ? Promise.resolve({ data: cachedAllocations, error: null })
+        : client
+            .from('yt_token_allocations')
+            .select('allocation_key,allocation_code,name_ar,percentage,allocated_units')
+            .order('percentage', { ascending: false }),
       client
         .from('yt_price_history')
         .select('id,price_usd_per_yt,ad_pool_usd,total_mined_units,event_type,created_at')
@@ -125,12 +174,12 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
         .from('yt_user_ad_claims')
         .select('ad_id,claimed_date,reward_units,referral_bonus_units')
         .eq('user_id', userId)
-        .eq('claimed_date', ytTodayAden()),
+        .eq('claimed_date', today),
       client
         .from('yt_daily_click_claims')
         .select('click_no,claim_date')
         .eq('user_id', userId)
-        .eq('claim_date', ytTodayAden()),
+        .eq('claim_date', today),
       client
         .from('yt_daily_checkins')
         .select('created_at')
@@ -164,7 +213,7 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
             .limit(30),
       client.rpc('yt_get_trading_phase'),
       client.rpc('yt_get_referral_stats'),
-      isAdmin
+      isAdmin && includeAdminWallets
         ? client
             .from('yt_wallets')
             .select(
@@ -200,8 +249,12 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
     if (error) throw error;
     if (!walletRes.data) throw new Error('لم يتم إنشاء محفظة Taska Coin لهذا الحساب بعد.');
 
+    if (allocationsRes.data?.length) {
+      cachedAllocations = allocationsRes.data;
+    }
+
     const metrics = (Array.isArray(metricsRes.data) ? metricsRes.data[0] : metricsRes.data) as YtMetrics;
-    return {
+    const dashboard = {
       metrics,
       wallet: walletRes.data as YtWallet,
       ads: (adsRes.data || []) as YtAd[],
@@ -217,7 +270,194 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
       adminWallets: adminWalletsRes.data || [],
       systemSettings: systemSettingsRes.data || null
     };
-  };
+    saveCachedDashboard(userId, dashboard);
+    return dashboard;
+  });
+
+  // تحديث خفيف وسريع للجزء المتأثر بالمعاملة فقط بدلاً من إعادة تحميل 14 جدولاً في كل نقرة
+  const loadQuickState = async (
+    userId: string,
+    scope: YtRefreshScope,
+    isAdmin = false
+  ): Promise<Partial<Awaited<ReturnType<typeof loadDashboard>>>> =>
+    dedupeLoad(`quick:${userId}:${scope}:${isAdmin ? 1 : 0}`, async () => {
+    if (scope === 'full') {
+      return loadDashboard(userId, isAdmin, isAdmin);
+    }
+    await ensureAuth();
+    const today = ytTodayAden();
+
+    if (scope === 'ads') {
+      const adsRes = await client
+        .from('yt_mining_ads')
+        .select('id,title,description,ad_url,placement,duration_seconds,sort_order,is_active,ad_type,reward_units,ad_code')
+        .order('sort_order');
+      if (adsRes.error) throw adsRes.error;
+      return { ads: (adsRes.data || []) as YtAd[] };
+    }
+
+    if (scope === 'revenue') {
+      const [metricsRes, historyRes] = await Promise.all([
+        client.rpc('yt_get_live_metrics'),
+        client
+          .from('yt_price_history')
+          .select('id,price_usd_per_yt,ad_pool_usd,total_mined_units,event_type,created_at')
+          .order('created_at', { ascending: false })
+          .limit(24)
+      ]);
+      const err = metricsRes.error || historyRes.error;
+      if (err) throw err;
+      const metrics = (Array.isArray(metricsRes.data) ? metricsRes.data[0] : metricsRes.data) as YtMetrics;
+      return {
+        metrics,
+        history: (historyRes.data || []).reverse()
+      };
+    }
+
+    if (scope === 'mining') {
+      const [metricsRes, walletRes, claimsRes, clickClaimsRes, checkinRes] = await Promise.all([
+        client.rpc('yt_get_live_metrics'),
+        client
+          .from('yt_wallets')
+          .select(
+            'user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen'
+          )
+          .eq('user_id', userId)
+          .maybeSingle(),
+        client
+          .from('yt_user_ad_claims')
+          .select('ad_id,claimed_date,reward_units,referral_bonus_units')
+          .eq('user_id', userId)
+          .eq('claimed_date', today),
+        client
+          .from('yt_daily_click_claims')
+          .select('click_no,claim_date')
+          .eq('user_id', userId)
+          .eq('claim_date', today),
+        client
+          .from('yt_daily_checkins')
+          .select('created_at')
+          .eq('user_id', userId)
+          .gt('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+          .order('created_at', { ascending: false })
+          .limit(1)
+      ]);
+      const err =
+        metricsRes.error || walletRes.error || claimsRes.error || clickClaimsRes.error || checkinRes.error;
+      if (err) throw err;
+      const metrics = (Array.isArray(metricsRes.data) ? metricsRes.data[0] : metricsRes.data) as YtMetrics;
+      return {
+        metrics,
+        ...(walletRes.data ? { wallet: walletRes.data as YtWallet } : {}),
+        claims: claimsRes.data || [],
+        dailyClickClaims: clickClaimsRes.data || [],
+        dailyCheckinClaimed: (checkinRes.data || []).length > 0
+      };
+    }
+
+    if (scope === 'wallet') {
+      const [metricsRes, walletRes, ledgerRes, withdrawalsRes] = await Promise.all([
+        client.rpc('yt_get_live_metrics'),
+        client
+          .from('yt_wallets')
+          .select(
+            'user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen'
+          )
+          .eq('user_id', userId)
+          .maybeSingle(),
+        client
+          .from('yt_ledger_transactions')
+          .select(
+            'id,transaction_type,balance_bucket,amount_units,balance_before_units,balance_after_units,description,created_at'
+          )
+          .eq('wallet_user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(30),
+        isAdmin
+          ? client
+              .from('yt_withdrawal_requests')
+              .select(
+                'id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at'
+              )
+              .order('created_at', { ascending: false })
+              .limit(50)
+          : client
+              .from('yt_withdrawal_requests')
+              .select(
+                'id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at'
+              )
+              .eq('user_id', userId)
+              .order('created_at', { ascending: false })
+              .limit(30)
+      ]);
+      const err = metricsRes.error || walletRes.error || ledgerRes.error || withdrawalsRes.error;
+      if (err) throw err;
+      const metrics = (Array.isArray(metricsRes.data) ? metricsRes.data[0] : metricsRes.data) as YtMetrics;
+      return {
+        metrics,
+        ...(walletRes.data ? { wallet: walletRes.data as YtWallet } : {}),
+        ledger: ledgerRes.data || [],
+        withdrawals: withdrawalsRes.data || []
+      };
+    }
+
+    if (scope === 'withdrawals') {
+      const [withdrawalsRes, walletRes] = await Promise.all([
+        isAdmin
+          ? client
+              .from('yt_withdrawal_requests')
+              .select(
+                'id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at'
+              )
+              .order('created_at', { ascending: false })
+              .limit(50)
+          : client
+              .from('yt_withdrawal_requests')
+              .select(
+                'id,user_id,amount_units,payout_method,payout_destination,status,receipt_url,admin_note,created_at,reviewed_at'
+              )
+              .eq('user_id', userId)
+              .order('created_at', { ascending: false })
+              .limit(30),
+        client
+          .from('yt_wallets')
+          .select(
+            'user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen'
+          )
+          .eq('user_id', userId)
+          .maybeSingle()
+      ]);
+      const err = withdrawalsRes.error || walletRes.error;
+      if (err) throw err;
+      return {
+        withdrawals: withdrawalsRes.data || [],
+        ...(walletRes.data ? { wallet: walletRes.data as YtWallet } : {})
+      };
+    }
+
+    // admin_wallets
+    const [phaseRes, metricsRes, adminWalletsRes] = await Promise.all([
+      client.rpc('yt_get_trading_phase'),
+      client.rpc('yt_get_live_metrics'),
+      isAdmin
+        ? client
+            .from('yt_wallets')
+            .select(
+              'user_id,pay_id,mined_units,withdrawable_units,withdrawal_pending_units,referral_earned_units,last_daily_mine_date,wallet_status,is_frozen,created_at,updated_at'
+            )
+            .order('updated_at', { ascending: false })
+            .limit(500)
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    const err = phaseRes.error || metricsRes.error || adminWalletsRes.error;
+    if (err) throw err;
+    const metrics = (Array.isArray(metricsRes.data) ? metricsRes.data[0] : metricsRes.data) as YtMetrics;
+    return {
+      phase: phaseRes.data,
+      metrics,
+      adminWallets: adminWalletsRes.data || []
+    };
+  });
 
   const startAd = async (adId: string, purpose: 'reward' | 'liquidation' = 'reward') => {
     await ensureAuth();
@@ -297,6 +537,63 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
     return data;
   };
 
+  const deleteAd = async (id: string) => {
+    const cleanId = String(id || '').trim();
+    if (!cleanId) throw new Error('معرف الإعلان غير صالح.');
+    await ensureAuth();
+
+    // 1) Try dedicated permanent delete RPC (preserves historical claims & wallets via ON DELETE SET NULL)
+    const dedicatedRes = await client.rpc('yt_admin_delete_mining_ad', { p_ad_id: cleanId });
+    if (!dedicatedRes.error) {
+      return dedicatedRes.data || { success: true, deleted_id: cleanId, message_ar: 'تم حذف الإعلان نهائياً بنجاح.' };
+    }
+
+    const dedicatedErrMsg = String(dedicatedRes.error?.message || '');
+    const isMissingDedicatedRpc =
+      dedicatedErrMsg.includes('Could not find the function') ||
+      dedicatedErrMsg.includes('does not exist') ||
+      dedicatedRes.error?.code === 'PGRST202' ||
+      dedicatedRes.error?.code === '42883';
+
+    if (!isMissingDedicatedRpc) {
+      throw dedicatedRes.error;
+    }
+
+    // 2) Fallback: direct DELETE from yt_mining_ads if RLS permits admin deletion
+    const directRes = await client.from('yt_mining_ads').delete().eq('id', cleanId).select('id');
+    if (!directRes.error && Array.isArray(directRes.data) && directRes.data.length > 0) {
+      return { success: true, deleted_id: cleanId, message_ar: 'تم حذف الإعلان نهائياً من قاعدة البيانات.' };
+    }
+
+    // 3) Fallback: yt_admin_manage_mining_ad(delete) + strict verification that the row is actually gone
+    const rpcRes = await client.rpc('yt_admin_manage_mining_ad', {
+      p_action: 'delete',
+      p_id: cleanId,
+      p_title: '',
+      p_ad_type: 'video',
+      p_ad_url: '',
+      p_reward_yt: 0,
+      p_required_seconds: 10,
+      p_is_active: false,
+      p_ad_code: null
+    });
+    if (rpcRes.error) {
+      throw rpcRes.error;
+    }
+
+    // Confirm the row was truly removed from yt_mining_ads (never falsely report deletion if only deactivated)
+    const verifyRes = await client.from('yt_mining_ads').select('id').eq('id', cleanId).maybeSingle();
+    if (!verifyRes.error && verifyRes.data) {
+      return {
+        success: false,
+        code: 'AD_DELETE_REQUIRES_MIGRATION',
+        message_ar: 'تم تعطيل الإعلان فقط لأن دالة الحذف النهائي لم تُطبّق بعد على قاعدة البيانات. يرجى تنفيذ ملف الترحيل 20261202000000 على Supabase.'
+      };
+    }
+
+    return rpcRes.data || { success: true, deleted_id: cleanId, message_ar: 'تم حذف الإعلان نهائياً بنجاح.' };
+  };
+
   const manageAd = async (payload: {
     action: 'create' | 'update' | 'delete';
     id?: string;
@@ -308,6 +605,9 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
     is_active?: boolean;
     ad_code?: string;
   }) => {
+    if (payload.action === 'delete' && payload.id) {
+      return deleteAd(payload.id);
+    }
     if (payload.action !== 'delete' && payload.reward_yt !== undefined) {
       ytToRaw(payload.reward_yt);
     }
@@ -402,13 +702,17 @@ export function createYtCoinService(client: typeof supabase, syncAuth?: () => Pr
   };
 
   return {
+    getCachedDashboard,
+    saveCachedDashboard,
     loadDashboard,
+    loadQuickState,
     startAd,
     verifyAd,
     setPin,
     liquidate,
     sendPay,
     depositRevenue,
+    deleteAd,
     manageAd,
     setManager,
     freezeWallet,

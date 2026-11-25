@@ -37,6 +37,22 @@ import {
   Pencil,
   Crown,
   Send,
+  TrendingUp,
+  Landmark,
+  WalletCards,
+  BookOpenCheck,
+  PieChart,
+  ReceiptText,
+  Coins,
+  ClipboardCheck,
+  BanknoteArrowUp,
+  ListTodo,
+  LayoutGrid,
+  Rocket,
+  Users,
+  AlertTriangle,
+  Settings,
+  ChevronLeft,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { SecureImageView } from '../common/SecureImageView.tsx';
@@ -592,7 +608,7 @@ export const AdminDashboard: React.FC = () => {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       {/* Admin Header */}
       <div className="relative p-6 rounded-2xl bg-slate-900 text-white shadow-xl overflow-hidden border border-slate-800">
         <div className="absolute inset-0 opacity-20 pointer-events-none">
@@ -634,51 +650,95 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Admin Navigation Tabs */}
-      <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-slate-200 dark:border-slate-800 text-xs">
-        {[
-          { id: 'overview', label: 'المؤشرات المالية', count: null },
-          { id: 'treasury', label: 'الخزينة والعمليات المالية', count: null },
-          { id: 'external_accounts', label: 'الحسابات الخارجية وإيداعات المعلنين', count: null },
-          { id: 'ledger', label: 'دفتر الأستاذ والتدقيق', count: null },
-          { id: 'reports', label: 'التقارير والإيرادات', count: null },
-          { id: 'taxes', label: 'إدارة الضرائب', count: null },
-          { id: 'ad_center', label: 'مركز الإعلانات والقوالب', count: null },
-          { id: 'taska_coin', label: 'TASKA · نظام التعدين المستقل', count: null },
-          { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount },
-          { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount },
-          { id: 'tasks', label: 'إدارة المهام', count: tasks.length },
-          { id: 'surveys_assets', label: 'الاستبيانات والصور والتصنيفات', count: null },
-          { id: 'campaigns', label: 'حملات المعلنين', count: campaigns.filter((c) => c.status === 'pending_start' || c.status === 'active').length },
-          { id: 'users', label: 'المستخدمين والمعلنين', count: usersList.filter((u) => u.status === 'pending').length || usersList.length },
-          { id: 'db_errors', label: 'أخطاء قاعدة البيانات', count: null },
-          { id: 'settings', label: 'إعدادات المنصة', count: null },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
-            className={`px-3.5 py-2 font-bold rounded-lg transition-colors whitespace-nowrap flex items-center gap-1.5 ${
-              activeTab === tab.id
-                ? 'bg-slate-900 text-white dark:bg-emerald-600'
-                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            <span>{tab.label}</span>
-            {tab.count !== null && tab.count > 0 && (
-              <span
-                className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
-                  tab.id === 'submissions' || tab.id === 'withdrawals'
-                    ? 'bg-amber-500 text-slate-950 font-black'
-                    : 'bg-slate-700 text-white'
+      {/* Admin Navigation Tabs — Compact 2-Row Horizontally Scrollable RTL Menu */}
+      <div className="relative rounded-2xl bg-slate-50/80 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 pt-2.5 overflow-hidden">
+        <nav
+          aria-label="أقسام لوحة الإدارة"
+          dir="rtl"
+          className="grid grid-rows-2 grid-flow-col auto-cols-[155px] gap-2.5 overflow-x-auto pb-2 px-4 snap-x snap-mandatory [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+        >
+          {[
+            { id: 'overview', label: 'المؤشرات المالية', count: null, icon: TrendingUp },
+            { id: 'treasury', label: 'الخزينة والعمليات المالية', count: null, icon: Landmark },
+            { id: 'external_accounts', label: 'الحسابات الخارجية وإيداعات المعلنين', count: null, icon: WalletCards },
+            { id: 'ledger', label: 'دفتر الأستاذ والتدقيق', count: null, icon: BookOpenCheck },
+            { id: 'reports', label: 'التقارير والإيرادات', count: null, icon: PieChart },
+            { id: 'taxes', label: 'إدارة الضرائب', count: null, icon: ReceiptText },
+            { id: 'ad_center', label: 'مركز الإعلانات والقوالب', count: null, icon: Megaphone },
+            { id: 'taska_coin', label: 'TASKA · نظام التعدين المستقل', count: null, icon: Coins },
+            { id: 'submissions', label: 'مراجعة الإثباتات', count: pendingSubmissionsCount, icon: ClipboardCheck },
+            { id: 'withdrawals', label: 'طلبات السحب', count: pendingWithdrawalsCount, icon: BanknoteArrowUp },
+            { id: 'tasks', label: 'إدارة المهام', count: tasks.length, icon: ListTodo },
+            { id: 'surveys_assets', label: 'الاستبيانات والصور والتصنيفات', count: null, icon: LayoutGrid },
+            { id: 'campaigns', label: 'حملات المعلنين', count: campaigns.filter((c) => c.status === 'pending_start' || c.status === 'active').length, icon: Rocket },
+            { id: 'users', label: 'المستخدمين والمعلنين', count: usersList.filter((u) => u.status === 'pending').length || usersList.length, icon: Users },
+            { id: 'db_errors', label: 'أخطاء قاعدة البيانات', count: null, icon: AlertTriangle },
+            { id: 'settings', label: 'إعدادات المنصة', count: null, icon: Settings },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            const isUrgent = tab.id === 'submissions' || tab.id === 'withdrawals';
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as any)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`group relative h-[54px] px-2.5 py-1.5 flex items-center gap-2 snap-start shrink-0 rounded-xl border transition-all duration-200 text-right ${
+                  isActive
+                    ? 'bg-gradient-to-l from-slate-900 via-slate-800 to-emerald-900 text-white border-amber-400/80 dark:border-emerald-400/70 shadow-md shadow-emerald-950/20'
+                    : 'bg-white dark:bg-slate-900/90 text-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-800 shadow-xs hover:border-emerald-300 dark:hover:border-emerald-700 hover:bg-slate-50/90 dark:hover:bg-slate-800/80'
                 }`}
               >
-                {tab.count}
-              </span>
-            )}
-          </button>
-        ))}
+                {isActive && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute right-0 top-2 bottom-2 w-1 rounded-l-full bg-amber-400"
+                  />
+                )}
+                <span
+                  className={`shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+                    isActive
+                      ? 'bg-white/15 text-amber-300 ring-1 ring-amber-300/30'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 group-hover:bg-emerald-50 dark:group-hover:bg-emerald-950/50 group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                </span>
+                <span className="flex-1 min-w-0 text-[11px] font-semibold leading-tight line-clamp-2 text-right">
+                  {tab.label}
+                </span>
+                {tab.count !== null && tab.count > 0 && (
+                  <span
+                    className={`shrink-0 px-1.5 py-0.5 rounded-md font-mono text-[10px] font-bold ${
+                      isUrgent
+                        ? 'bg-amber-400 text-slate-950 font-black'
+                        : isActive
+                          ? 'bg-white/20 text-white'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Subtle left-edge fade & swipe hint for RTL horizontal scroll */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-slate-50 via-slate-50/75 to-transparent dark:from-slate-900 dark:via-slate-900/75 flex items-center justify-start pl-1"
+        >
+          <span className="w-5 h-5 rounded-full bg-white/90 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700 shadow-xs flex items-center justify-center text-slate-500 dark:text-slate-300">
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </span>
+        </div>
       </div>
 
+      {/* Active Tab Content Panel Directly Below Navigation */}
+      <div className="mt-2 px-4">
       {/* Platform YER financial dashboard — independent from TASKA */}
       {activeTab === 'overview' && (
         <OwnerOverviewMetrics
@@ -1988,6 +2048,7 @@ export const AdminDashboard: React.FC = () => {
           </form>
         </div>
       )}
+      </div>
 
       {/* Image Preview Lightbox */}
       {previewImage && (

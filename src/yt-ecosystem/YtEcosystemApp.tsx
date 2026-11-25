@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine,
   BarChart3,
@@ -33,6 +33,7 @@ import {
   type YtAd,
   type YtCoinService,
   type YtMetrics,
+  type YtRefreshScope,
   type YtWallet
 } from './ytCoinService.ts';
 
@@ -76,7 +77,13 @@ const msg = (e: any) => {
     ['INVALID_WALLET_ADDRESS', 'عنوان محفظة TSK Pay غير صحيح.'],
     ['DAILY_CLICK_ALREADY_CLAIMED', 'سبق تسجيل هذه النقرة اليوم، ولم تتم إضافة مكافأة مكررة.'],
     ['yt_daily_click_claims_pkey', 'سبق تسجيل هذه النقرة اليوم، ولم تتم إضافة مكافأة مكررة.'],
-    ['duplicate key value violates unique constraint', 'هذه العملية مسجلة مسبقاً، ولم تتم إضافة مكافأة مكررة.']
+    ['duplicate key value violates unique constraint', 'هذه العملية مسجلة مسبقاً، ولم تتم إضافة مكافأة مكررة.'],
+    ['LIQUIDITY_POOL_NOT_FOUND', 'سجل صندوق السيولة غير موجود في قاعدة البيانات.'],
+    ['INVALID_REVENUE_AMOUNT', 'أدخل مبلغ إيرادات صحيح أكبر من الصفر.'],
+    ['AD_NOT_FOUND', 'الإعلان غير موجود أو تم حذفه مسبقاً من قاعدة البيانات.'],
+    ['WALLET_NOT_FOUND', 'لم يتم العثور على محفظة Taska Coin لهذا الحساب.'],
+    ['PRICE_NOT_AVAILABLE', 'تعذر تحديد السعر اللحظي لعملة Taska Coin حالياً.'],
+    ['AD_DELETE_REQUIRES_MIGRATION', 'دالة الحذف النهائي لم تُطبّق بعد على قاعدة البيانات. يرجى تنفيذ ملف الترحيل 20261202000000 على Supabase.']
   ];
   return map.find(([k]) => s.includes(k))?.[1] || s;
 };
@@ -106,7 +113,12 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [ledger, setLedger] = useState<any[]>([]);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [startingAdId, setStartingAdId] = useState<string | null>(null);
+  const [pendingClickNo, setPendingClickNo] = useState<number | null>(null);
+  const [confirmDeleteAdId, setConfirmDeleteAdId] = useState<string | null>(null);
+  const [deletingAdId, setDeletingAdId] = useState<string | null>(null);
+  const [togglingAdId, setTogglingAdId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; type: 'info' | 'success' | 'error' } | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
@@ -181,33 +193,104 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [referralStats, setReferralStats] = useState<any>(null);
   const [clockNow, setClockNow] = useState(Date.now());
 
-  const refresh = useCallback(async () => {
-    if (!user?.id) return;
-    const d = await api.loadDashboard(user.id, isAdmin);
-    setMetrics(d.metrics);
-    setWallet(d.wallet);
-    setAdminWallets(d.adminWallets || []);
-    setSystemSettings(d.systemSettings || null);
-    setAds(d.ads);
-    setAllocations(d.allocations);
-    setHistory(d.history);
-    setClaims(d.claims);
-    setDailyClickClaims((d.dailyClickClaims || []).map((c: any) => Number(c.click_no)));
-    setDailyCheckinClaimed(Boolean(d.dailyCheckinClaimed));
-    setLedger(d.ledger);
-    setWithdrawals(d.withdrawals);
-    setPhase(d.phase);
-    setReferralStats(d.referrals);
-  }, [user?.id, isAdmin, api]);
+  const bgRefreshTimerRef = useRef<number | null>(null);
+  const pendingScopeRef = useRef<YtRefreshScope | null>(null);
+  const actionLocksRef = useRef<Set<string>>(new Set());
+  const adminWalletsLoadedRef = useRef(false);
 
-  useEffect(() => {
-    refresh().catch((e) => notify(msg(e), 'error'));
-  }, [refresh, notify]);
-
-  useEffect(() => {
-    const id = window.setInterval(() => setClockNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
+  const applyDashboardPatch = useCallback((d: any) => {
+    if (!d) return;
+    if (d.metrics !== undefined) setMetrics(d.metrics);
+    if (d.wallet !== undefined) setWallet(d.wallet);
+    if (d.adminWallets !== undefined) setAdminWallets(d.adminWallets || []);
+    if (d.systemSettings !== undefined) setSystemSettings(d.systemSettings || null);
+    if (d.ads !== undefined) setAds(d.ads);
+    if (d.allocations !== undefined) setAllocations(d.allocations);
+    if (d.history !== undefined) setHistory(d.history);
+    if (d.claims !== undefined) setClaims(d.claims);
+    if (d.dailyClickClaims !== undefined) {
+      setDailyClickClaims((d.dailyClickClaims || []).map((c: any) => Number(c.click_no ?? c)));
+    }
+    if (d.dailyCheckinClaimed !== undefined) setDailyCheckinClaimed(Boolean(d.dailyCheckinClaimed));
+    if (d.ledger !== undefined) setLedger(d.ledger);
+    if (d.withdrawals !== undefined) setWithdrawals(d.withdrawals);
+    if (d.phase !== undefined) setPhase(d.phase);
+    if (d.referrals !== undefined) setReferralStats(d.referrals);
   }, []);
+
+  const refresh = useCallback(
+    async (scope: YtRefreshScope = 'full') => {
+      if (!user?.id) return;
+      setIsRefreshing(true);
+      try {
+        const d =
+          scope === 'full' || !api.loadQuickState
+            ? await api.loadDashboard(user.id, isAdmin)
+            : await api.loadQuickState(user.id, scope, isAdmin);
+        applyDashboardPatch(d);
+      } finally {
+        setIsRefreshing(false);
+      }
+    },
+    [user?.id, isAdmin, api, applyDashboardPatch]
+  );
+
+  // تحديث خلفي غير حاجب للواجهة مع دمج الطلبات المتتالية السريعة
+  const scheduleBackgroundRefresh = useCallback(
+    (scope: YtRefreshScope = 'mining') => {
+      if (!user?.id) return;
+      if (pendingScopeRef.current && pendingScopeRef.current !== scope) {
+        pendingScopeRef.current = 'full';
+      } else {
+        pendingScopeRef.current = scope;
+      }
+      if (bgRefreshTimerRef.current) {
+        window.clearTimeout(bgRefreshTimerRef.current);
+      }
+      bgRefreshTimerRef.current = window.setTimeout(() => {
+        const targetScope = pendingScopeRef.current || scope;
+        pendingScopeRef.current = null;
+        bgRefreshTimerRef.current = null;
+        void refresh(targetScope).catch(() => undefined);
+      }, 180);
+    },
+    [user?.id, refresh]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (bgRefreshTimerRef.current) {
+        window.clearTimeout(bgRefreshTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    adminWalletsLoadedRef.current = false;
+    // عرض فوري من الكاش المحلي أثناء جلب التحديث الحي في الخلفية
+    const cached = api.getCachedDashboard?.(user.id);
+    if (cached) {
+      applyDashboardPatch(cached);
+    }
+    refresh('full').catch((e) => notify(msg(e), 'error'));
+  }, [user?.id, api, applyDashboardPatch, refresh, notify]);
+
+  // تحميل قائمة محافظ الإدارة عند فتح تبويب الإدارة فقط لتقليل استعلامات التحميل الأولي
+  useEffect(() => {
+    if (!user?.id || !isAdmin || tab !== 'admin' || adminWalletsLoadedRef.current) return;
+    adminWalletsLoadedRef.current = true;
+    void refresh('admin_wallets').catch(() => {
+      adminWalletsLoadedRef.current = false;
+    });
+  }, [user?.id, isAdmin, tab, refresh]);
+
+  // تشغيل المؤقت كل ثانية فقط أثناء وجود جلسة إعلان نشطة لتفادي إعادة التصيير المتكررة
+  useEffect(() => {
+    const intervalMs = session ? 1000 : 30000;
+    const id = window.setInterval(() => setClockNow(Date.now()), intervalMs);
+    return () => window.clearInterval(id);
+  }, [session]);
 
   // حساب السعر اللحظي للعملة الواحدة استناداً إلى صندوق السيولة وعدد العملات المعدّنة
   const computedLivePriceUsd = useMemo(() => {
@@ -242,31 +325,115 @@ export const YtEcosystemApp: React.FC<Props> = ({
     ? Math.min(100, Math.round((sessionElapsedSec / Math.max(1, session.requiredSeconds)) * 100))
     : 0;
 
-  const run = async (fn: () => Promise<any>, success: string) => {
+  const run = async (
+    fn: () => Promise<any>,
+    success: string,
+    options?: {
+      scope?: YtRefreshScope;
+      lockKey?: string;
+      onSuccess?: (result: any) => void;
+    }
+  ) => {
+    const lockKey = options?.lockKey || 'global_run';
+    if (actionLocksRef.current.has(lockKey)) return null;
+    actionLocksRef.current.add(lockKey);
     setBusy(true);
     try {
       const result = await fn();
-      await refresh().catch(() => undefined);
       if (result?.success === false) {
         notify(result?.message_ar || msg({ message: result?.code || 'تعذر إتمام العملية.' }), 'error');
         return result;
       }
+      options?.onSuccess?.(result);
       notify(
         typeof result?.message_ar === 'string' && result.message_ar.trim() ? result.message_ar : success,
         'success'
       );
+      scheduleBackgroundRefresh(options?.scope || 'mining');
       return result;
     } catch (e) {
       notify(msg(e), 'error');
       return null;
     } finally {
+      actionLocksRef.current.delete(lockKey);
       setBusy(false);
     }
   };
 
-  // تشغيل سريع ومباشر للإعلان مع فتح الرابط فوراً
+  // تنفيذ سريع مع قفل فوري ضد النقر المزدوج وتحديث لحظي للدخول اليومي (+0.20000 TSK)
+  const handleDailyCheckin = async () => {
+    if (busy || dailyCheckinClaimed || actionLocksRef.current.has('daily_checkin')) return;
+    const prevClaimed = dailyCheckinClaimed;
+    const prevWallet = wallet;
+    setDailyCheckinClaimed(true);
+    if (wallet) {
+      setWallet({ ...wallet, mined_units: Number(wallet.mined_units || 0) + 20000 });
+    }
+    const res = await run(
+      () => api.claimDailyCheckin(),
+      'تم استلام مكافأة الدخول اليومي (+0.20000 TSK) بنجاح!',
+      { scope: 'mining', lockKey: 'daily_checkin' }
+    );
+    if (!res || res.success === false) {
+      setDailyCheckinClaimed(prevClaimed);
+      if (prevWallet) setWallet(prevWallet);
+    }
+  };
+
+  // تنفيذ فائق السرعة للنقرات اليومية مع منع التكرار المتزامن (Synchronous Lock)
+  const handleDailyClick = async (clickNo: number) => {
+    const lockKey = `daily_click_${clickNo}`;
+    if (
+      pendingClickNo !== null ||
+      dailyClickClaims.includes(clickNo) ||
+      actionLocksRef.current.has('daily_click_any') ||
+      actionLocksRef.current.has(lockKey)
+    ) {
+      return;
+    }
+    actionLocksRef.current.add('daily_click_any');
+    actionLocksRef.current.add(lockKey);
+    const prevClicks = dailyClickClaims;
+    const prevWallet = wallet;
+    setPendingClickNo(clickNo);
+    setDailyClickClaims((prev) => (prev.includes(clickNo) ? prev : [...prev, clickNo]));
+    if (wallet) {
+      setWallet({ ...wallet, mined_units: Number(wallet.mined_units || 0) + 1000 });
+    }
+    try {
+      const result = await api.claimDailyClick(clickNo);
+      if (result?.success === false) {
+        setDailyClickClaims(prevClicks);
+        if (prevWallet) setWallet(prevWallet);
+        notify(result?.message_ar || msg({ message: result?.code || 'تعذر تسجيل النقرة.' }), 'error');
+        return;
+      }
+      notify(
+        typeof result?.message_ar === 'string' && result.message_ar.trim()
+          ? result.message_ar
+          : `تم تسجيل النقرة ${clickNo} وإضافة +0.01000 TSK!`,
+        'success'
+      );
+      scheduleBackgroundRefresh('mining');
+    } catch (e) {
+      setDailyClickClaims(prevClicks);
+      if (prevWallet) setWallet(prevWallet);
+      notify(msg(e), 'error');
+    } finally {
+      actionLocksRef.current.delete('daily_click_any');
+      actionLocksRef.current.delete(lockKey);
+      setPendingClickNo(null);
+    }
+  };
+
+  // تشغيل سريع ومباشر للإعلان مع قفل ضد النقر المزدوج وفتح الرابط فوراً
   const startAd = async (ad: YtAd, purpose: 'reward' | 'liquidation' = 'reward') => {
-    if (startingAdId || busy) return;
+    const lockKey = `start_ad_${ad.id}`;
+    if (startingAdId || busy || actionLocksRef.current.has('start_ad_any') || actionLocksRef.current.has(lockKey)) {
+      return;
+    }
+    actionLocksRef.current.add('start_ad_any');
+    actionLocksRef.current.add(lockKey);
     setStartingAdId(ad.id);
 
     // فتح الرابط فوراً في نافذة جديدة لتجنب حظر النوافذ المنبثقة في المتصفح
@@ -285,12 +452,14 @@ export const YtEcosystemApp: React.FC<Props> = ({
       if (!openedWindow && result.ad_url) {
         window.open(result.ad_url, '_blank', 'noopener,noreferrer');
       }
+      const now = Date.now();
+      setClockNow(now);
       setSession({
         token: result.session_token,
         purpose,
         adId: ad.id,
         adTitle: ad.title,
-        startedAt: Date.now(),
+        startedAt: now,
         requiredSeconds: Number(result.required_seconds || ad.duration_seconds || 10),
         adUrl: result.ad_url,
         adCode: result.ad_code
@@ -301,22 +470,113 @@ export const YtEcosystemApp: React.FC<Props> = ({
       if (openedWindow) openedWindow.close();
       notify(msg(e), 'error');
     } finally {
+      actionLocksRef.current.delete('start_ad_any');
+      actionLocksRef.current.delete(lockKey);
       setStartingAdId(null);
     }
   };
 
   const verifyAd = async () => {
-    if (!session) return;
+    if (!session || actionLocksRef.current.has('verify_ad')) return;
     const currentSession = session;
+    const matchedAd = ads.find((a) => a.id === currentSession.adId);
     const result = await run(
       () => api.verifyAd(currentSession.token),
-      'تم التحقق من الإعلان وإضافة المكافأة إلى رصيدك!'
-    );
-    if (result?.success) {
-      if (currentSession.purpose === 'liquidation') {
-        setLiquidationToken(result.session_token || currentSession.token);
+      'تم التحقق من الإعلان وإضافة المكافأة إلى رصيدك!',
+      {
+        scope: 'mining',
+        lockKey: 'verify_ad',
+        onSuccess: (res) => {
+          if (currentSession.purpose === 'liquidation') {
+            setLiquidationToken(res?.session_token || currentSession.token);
+          } else {
+            setClaims((prev) =>
+              prev.some((c) => c.ad_id === currentSession.adId)
+                ? prev
+                : [...prev, { ad_id: currentSession.adId, reward_units: matchedAd?.reward_units || 0 }]
+            );
+            if (matchedAd?.reward_units) {
+              setWallet((prev) =>
+                prev ? { ...prev, mined_units: Number(prev.mined_units || 0) + Number(matchedAd.reward_units || 0) } : prev
+              );
+            }
+          }
+          setSession(null);
+        }
       }
-      setSession(null);
+    );
+    if (result?.success === false) {
+      // keep session open if server rejected verification
+    }
+  };
+
+  // حذف نهائي فعلي من قاعدة البيانات (لا يتم إخفاء الإعلان من القائمة إلا بعد تأكيد نجاح الحذف الحقيقي)
+  const handleDeleteAd = async (ad: YtAd) => {
+    const lockKey = `delete_ad_${ad.id}`;
+    if (deletingAdId || actionLocksRef.current.has(lockKey)) return;
+    actionLocksRef.current.add(lockKey);
+    setDeletingAdId(ad.id);
+    try {
+      const result = await (api.deleteAd ? api.deleteAd(ad.id) : api.manageAd({ action: 'delete', id: ad.id }));
+      if (!result || result?.success === false) {
+        notify(
+          result?.message_ar || msg({ message: result?.code || 'تعذر حذف الإعلان من قاعدة البيانات.' }),
+          'error'
+        );
+        scheduleBackgroundRefresh('ads');
+        return;
+      }
+      setAds((prev) => prev.filter((item) => item.id !== ad.id));
+      setConfirmDeleteAdId(null);
+      notify(
+        typeof result?.message_ar === 'string' && result.message_ar.trim()
+          ? result.message_ar
+          : `تم حذف الإعلان "${ad.title}" نهائياً من قاعدة البيانات.`,
+        'success'
+      );
+      scheduleBackgroundRefresh('ads');
+    } catch (e) {
+      notify(msg(e), 'error');
+    } finally {
+      actionLocksRef.current.delete(lockKey);
+      setDeletingAdId(null);
+    }
+  };
+
+  // تبديل تفعيل/إيقاف الإعلان بسرعة مع قفل ضد النقر المزدوج
+  const handleToggleAdActive = async (ad: YtAd) => {
+    const lockKey = `toggle_ad_${ad.id}`;
+    if (togglingAdId || actionLocksRef.current.has(lockKey)) return;
+    actionLocksRef.current.add(lockKey);
+    const prevAds = ads;
+    const nextActive = !ad.is_active;
+    setTogglingAdId(ad.id);
+    setAds((prev) => prev.map((item) => (item.id === ad.id ? { ...item, is_active: nextActive } : item)));
+    try {
+      const result = await api.manageAd({
+        action: 'update',
+        id: ad.id,
+        title: ad.title,
+        ad_type: ad.ad_type,
+        ad_url: ad.ad_url || '',
+        reward_yt: Number(ad.reward_units) / 100000,
+        required_seconds: ad.duration_seconds,
+        is_active: nextActive,
+        ad_code: ad.ad_code || ''
+      });
+      if (result?.success === false) {
+        setAds(prevAds);
+        notify(result?.message_ar || 'تعذر تحديث حالة الإعلان.', 'error');
+        return;
+      }
+      notify(nextActive ? 'تم تفعيل الإعلان.' : 'تم إيقاف الإعلان.', 'success');
+      scheduleBackgroundRefresh('ads');
+    } catch (e) {
+      setAds(prevAds);
+      notify(msg(e), 'error');
+    } finally {
+      actionLocksRef.current.delete(lockKey);
+      setTogglingAdId(null);
     }
   };
 
@@ -506,11 +766,11 @@ export const YtEcosystemApp: React.FC<Props> = ({
                 </button>
               )}
               <button
-                onClick={() => refresh().catch((e) => notify(msg(e), 'error'))}
+                onClick={() => refresh('full').catch((e) => notify(msg(e), 'error'))}
                 title="تحديث البيانات"
                 className="grid h-9 w-9 place-items-center rounded-xl border border-amber-500/25 bg-[#0E1422] text-amber-300 transition hover:bg-amber-500/10"
               >
-                <RefreshCw size={15} className={busy ? 'animate-spin' : ''} />
+                <RefreshCw size={15} className={busy || isRefreshing ? 'animate-spin' : ''} />
               </button>
               {onExit && (
                 <button
@@ -635,12 +895,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   <button
                     type="button"
                     disabled={busy || dailyCheckinClaimed}
-                    onClick={() =>
-                      run(
-                        () => api.claimDailyCheckin(),
-                        'تم استلام مكافأة الدخول اليومي (+0.20000 TSK) بنجاح!'
-                      )
-                    }
+                    onClick={handleDailyCheckin}
                     className="relative h-24 w-24 overflow-hidden rounded-full bg-gradient-to-tr from-amber-600 via-yellow-200 to-amber-500 p-0.5 shadow-[0_0_28px_rgba(245,158,11,0.45)] transition-transform hover:scale-105 active:scale-95 disabled:cursor-default"
                     style={{ animation: 'tskFloat 4s ease-in-out infinite' }}
                   >
@@ -659,12 +914,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
 
                 <button
                   disabled={busy || dailyCheckinClaimed}
-                  onClick={() =>
-                    run(
-                      () => api.claimDailyCheckin(),
-                      'تم استلام مكافأة الدخول اليومي (+0.20000 TSK) بنجاح!'
-                    )
-                  }
+                  onClick={handleDailyCheckin}
                   className="tsk-gold-btn mt-4 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-xs"
                 >
                   {dailyCheckinClaimed ? (
@@ -693,18 +943,14 @@ export const YtEcosystemApp: React.FC<Props> = ({
                       {[1, 2, 3, 4, 5].map((n) => {
                         const claimed = dailyClickClaims.includes(n);
                         const isNext = n === nextDailyClick;
+                        const isPending = pendingClickNo === n;
                         return (
                           <button
                             key={n}
                             type="button"
-                            disabled={busy || claimed || !isNext}
-                            onClick={() =>
-                              run(
-                                () => api.claimDailyClick(n),
-                                `تم تسجيل النقرة ${n} وإضافة +0.01000 TSK!`
-                              )
-                            }
-                            className={`flex flex-col items-center gap-1 rounded-xl border py-2 transition-all ${
+                            disabled={pendingClickNo !== null || claimed || !isNext}
+                            onClick={() => handleDailyClick(n)}
+                            className={`flex flex-col items-center gap-1 rounded-xl border py-2 transition-all active:scale-95 ${
                               claimed
                                 ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
                                 : isNext
@@ -712,11 +958,15 @@ export const YtEcosystemApp: React.FC<Props> = ({
                                 : 'border-slate-800 bg-[#0A0F1C] text-slate-500 opacity-60'
                             }`}
                           >
-                            <img
-                              src="/images/taska-coin.png"
-                              alt="TSK"
-                              className={`h-6 w-6 rounded-full object-cover ${!claimed && !isNext ? 'grayscale' : ''}`}
-                            />
+                            {isPending ? (
+                              <Loader2 size={18} className="my-0.5 animate-spin text-amber-300" />
+                            ) : (
+                              <img
+                                src="/images/taska-coin.png"
+                                alt="TSK"
+                                className={`h-6 w-6 rounded-full object-cover ${!claimed && !isNext ? 'grayscale' : ''}`}
+                              />
+                            )}
                             <span className="text-[9px] font-bold">{claimed ? 'مكتمل ✓' : `نقرة ${n}`}</span>
                             <span className="font-mono text-[8px] font-bold" dir="ltr">
                               +0.01
@@ -1028,7 +1278,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                           setLiquidationToken('');
                           return x;
                         }),
-                      'تم تسييل الرصيد بنجاح.'
+                      'تم تسييل الرصيد بنجاح.',
+                      { scope: 'wallet' }
                     )
                   }
                   className="tsk-gold-btn w-full rounded-xl py-2.5 text-xs"
@@ -1100,7 +1351,14 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   onClick={() =>
                     run(
                       () => api.sendPay(payId, Number(payAmount), pin, payNote),
-                      'تم تحويل TSK Pay وتسجيل العمولة بنجاح.'
+                      'تم تحويل TSK Pay وتسجيل العمولة بنجاح.',
+                      {
+                        scope: 'wallet',
+                        onSuccess: () => {
+                          setPayAmount('');
+                          setPayNote('');
+                        }
+                      }
                     )
                   }
                   className="tsk-gold-btn flex w-full items-center justify-center gap-1.5 rounded-xl py-3 text-xs"
@@ -1150,7 +1408,13 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   onClick={() =>
                     run(
                       () => api.requestWithdrawal(Number(withdrawAmount), payoutMethod, payoutDestination, pin),
-                      'تم حجز المبلغ وإرسال طلب السحب للمراجعة.'
+                      'تم حجز المبلغ وإرسال طلب السحب للمراجعة.',
+                      {
+                        scope: 'wallet',
+                        onSuccess: () => {
+                          setWithdrawAmount('');
+                        }
+                      }
                     )
                   }
                   className="tsk-gold-btn w-full rounded-xl py-2.5 text-xs"
@@ -1672,7 +1936,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                                 setAdDraft({ ...adDraft, title: '', ad_url: '', ad_code: '' });
                                 return x;
                               }),
-                          'تم اعتماد ونشر الإعلان في شاشة التعدين بنجاح!'
+                          'تم اعتماد ونشر الإعلان في شاشة التعدين بنجاح!',
+                          { scope: 'ads' }
                         )
                       }
                       className="tsk-gold-btn flex w-full items-center justify-center gap-1.5 rounded-2xl py-3 text-xs"
@@ -1686,79 +1951,100 @@ export const YtEcosystemApp: React.FC<Props> = ({
                     <div className="mb-3 flex items-center justify-between">
                       <h3 className="text-xs font-extrabold text-slate-100">📋 الإعلانات المنشورة ({ads.length})</h3>
                     </div>
-                    <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                      {ads.map((a) => (
-                        <div
-                          key={a.id}
-                          className={`flex items-center justify-between gap-2 rounded-2xl border bg-[#060910] p-3 ${
-                            a.is_active ? 'border-amber-500/25' : 'border-slate-800 opacity-60'
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="rounded bg-amber-500/15 px-1.5 font-mono text-[9px] text-amber-300">
-                                {a.ad_type}
-                              </span>
-                              <span className="font-mono text-[10px] text-emerald-400">
-                                +{ytc(a.reward_units)}
-                              </span>
-                              <span className="font-mono text-[10px] text-slate-500">
-                                ({a.duration_seconds}ث)
-                              </span>
-                            </div>
-                            <p className="mt-1 truncate text-xs font-bold text-slate-100">{a.title}</p>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-1.5">
-                            <button
-                              onClick={() =>
-                                run(
-                                  () =>
-                                    api.manageAd({
-                                      action: 'update',
-                                      id: a.id,
-                                      title: a.title,
-                                      ad_type: a.ad_type,
-                                      ad_url: a.ad_url || '',
-                                      reward_yt: Number(a.reward_units) / 100000,
-                                      required_seconds: a.duration_seconds,
-                                      is_active: !a.is_active,
-                                      ad_code: a.ad_code || ''
-                                    }),
-                                  a.is_active ? 'تم إيقاف الإعلان.' : 'تم تفعيل الإعلان.'
-                                )
-                              }
-                              className={`rounded-lg px-2.5 py-1 text-[10px] font-bold ${
-                                a.is_active
-                                  ? 'border border-emerald-500/30 bg-emerald-500/15 text-emerald-300'
-                                  : 'bg-slate-800 text-slate-400'
+                    <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                      {ads.length ? (
+                        ads.map((a) => {
+                          const isConfirmingDelete = confirmDeleteAdId === a.id;
+                          const isDeleting = deletingAdId === a.id;
+                          const isToggling = togglingAdId === a.id;
+                          return (
+                            <div
+                              key={a.id}
+                              className={`flex items-center justify-between gap-2 rounded-2xl border bg-[#060910] p-3 transition ${
+                                a.is_active ? 'border-amber-500/25' : 'border-slate-800 opacity-60'
                               }`}
                             >
-                              {a.is_active ? 'نشط' : 'متوقف'}
-                            </button>
-                            <button
-                              onClick={() =>
-                                run(() => api.manageAd({ action: 'delete', id: a.id }), 'تم حذف الإعلان.')
-                              }
-                              className="rounded-lg bg-rose-500/15 p-1.5 text-rose-400 hover:bg-rose-500/25"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="rounded bg-amber-500/15 px-1.5 font-mono text-[9px] text-amber-300">
+                                    {a.ad_type}
+                                  </span>
+                                  <span className="font-mono text-[10px] text-emerald-400">
+                                    +{ytc(a.reward_units)}
+                                  </span>
+                                  <span className="font-mono text-[10px] text-slate-500">
+                                    ({a.duration_seconds}ث)
+                                  </span>
+                                </div>
+                                <p className="mt-1 truncate text-xs font-bold text-slate-100">{a.title}</p>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                {isConfirmingDelete ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={isDeleting}
+                                      onClick={() => handleDeleteAd(a)}
+                                      className="flex items-center gap-1 rounded-lg bg-rose-600 px-2.5 py-1.5 text-[10px] font-extrabold text-white transition hover:bg-rose-500 disabled:opacity-50"
+                                    >
+                                      {isDeleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                      <span>تأكيد الحذف</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isDeleting}
+                                      onClick={() => setConfirmDeleteAdId(null)}
+                                      className="rounded-lg border border-slate-700 bg-slate-800 px-2 py-1.5 text-[10px] font-bold text-slate-300 hover:bg-slate-700"
+                                    >
+                                      إلغاء
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={isToggling || isDeleting}
+                                      onClick={() => handleToggleAdActive(a)}
+                                      className={`rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition ${
+                                        a.is_active
+                                          ? 'border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25'
+                                          : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                      }`}
+                                    >
+                                      {isToggling ? '...' : a.is_active ? 'نشط' : 'متوقف'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isDeleting}
+                                      onClick={() => setConfirmDeleteAdId(a.id)}
+                                      title="حذف الإعلان"
+                                      className="flex items-center gap-1 rounded-lg border border-rose-500/30 bg-rose-500/15 px-2.5 py-1.5 text-[10px] font-bold text-rose-300 transition hover:bg-rose-500/25"
+                                    >
+                                      <Trash2 size={13} />
+                                      <span>حذف</span>
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p className="py-6 text-center text-xs text-slate-500">لا توجد إعلانات منشورة حالياً.</p>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* القسم الفرعي 2: توزيع أرباح المنصة (70% سيولة / 30% إدارة) */}
+              {/* القسم الفرعي 2: توزيع أرباح المنصة (70% سيولة / 30% إدارة - استبدال مباشر غير تراكمي) */}
               {adminSubTab === 'revenue' && (
                 <div className="tsk-card rounded-3xl p-4 space-y-3">
                   <h3 className="text-xs font-extrabold text-emerald-400">
-                    💰 إدخال وتوزيع أرباح المنصة (70% سيولة / 30% إدارة)
+                    💰 تعيين وتوزيع أرباح المنصة (70% سيولة / 30% إدارة)
                   </h3>
                   <p className="text-[11px] leading-relaxed text-slate-400">
-                    عند إدخال إجمالي أرباح المنصة بالدولار، يُضخ <strong className="text-emerald-400">70% في صندوق السيولة</strong> لرفع السعر اللحظي لكل عملة معدّنة، وتُسجّل <strong className="text-amber-300">30% كحصة إدارة</strong>.
+                    عند إدخال إجمالي أرباح المنصة بالدولار، يتم <strong className="text-white">استبدال الرصيد مباشرة (غير تراكمي)</strong> بتخصيص <strong className="text-emerald-400">70% لصندوق السيولة</strong> وتحديث السعر اللحظي، و<strong className="text-amber-300">30% كحصة إدارة</strong>.
                   </p>
 
                   <input
@@ -1773,13 +2059,13 @@ export const YtEcosystemApp: React.FC<Props> = ({
                     <div>
                       <span className="text-slate-400">صندوق سيولة العملة (70%):</span>
                       <b className="mt-0.5 block font-mono text-xs text-emerald-400" dir="ltr">
-                        ${(Number(deposit || 0) * 0.7).toFixed(4)}
+                        ${(Number(deposit || 0) * 0.7).toFixed(6)}
                       </b>
                     </div>
                     <div className="border-r border-slate-800 pr-2.5">
                       <span className="text-slate-400">حصة الإدارة (30%):</span>
                       <b className="mt-0.5 block font-mono text-xs text-amber-300" dir="ltr">
-                        ${(Number(deposit || 0) * 0.3).toFixed(4)}
+                        ${(Number(deposit || 0) * 0.3).toFixed(6)}
                       </b>
                     </div>
                   </div>
@@ -1793,7 +2079,28 @@ export const YtEcosystemApp: React.FC<Props> = ({
                             setDeposit('');
                             return x;
                           }),
-                        'تم توزيع الإيرادات وتحديث السعر اللحظي للعملة!'
+                        'تم تعيين رصيد صندوق السيولة وتحديث السعر اللحظي للعملة!',
+                        {
+                          scope: 'revenue',
+                          onSuccess: (res) => {
+                            if (res && typeof res.pool_70 === 'number') {
+                              const nextPool = Number(res.pool_70);
+                              const nextAdmin = Number(res.admin_30 ?? nextPool * (30 / 70));
+                              const nextPriceUsd = Number(res.price_usd_per_yt ?? 0);
+                              setMetrics((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      ad_pool_usd: nextPool,
+                                      admin_revenue_usd: nextAdmin,
+                                      price_usd_per_yt: nextPriceUsd,
+                                      price_yer_per_yt: nextPriceUsd * Number(prev.yer_per_usd || 530)
+                                    }
+                                  : prev
+                              );
+                            }
+                          }
+                        }
                       )
                     }
                     className="tsk-gold-btn w-full rounded-2xl py-3 text-xs"
@@ -1838,7 +2145,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                             onClick={() =>
                               run(
                                 () => api.reviewWithdrawal(w.id, 'paid', receiptUrl, withdrawalNote),
-                                'تم تسجيل الصرف وإرفاق الإيصال.'
+                                'تم تسجيل الصرف وإرفاق الإيصال.',
+                                { scope: 'withdrawals' }
                               )
                             }
                             className="rounded-xl bg-emerald-600 py-2 text-xs font-bold text-white disabled:opacity-40"
@@ -1850,7 +2158,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                             onClick={() =>
                               run(
                                 () => api.reviewWithdrawal(w.id, 'reject', '', withdrawalNote),
-                                'تم رفض الطلب وإرجاع الرصيد للمستخدم.'
+                                'تم رفض الطلب وإرجاع الرصيد للمستخدم.',
+                                { scope: 'withdrawals' }
                               )
                             }
                             className="rounded-xl bg-rose-900 py-2 text-xs font-bold text-rose-100"
@@ -1876,7 +2185,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                       onClick={() =>
                         run(
                           () => api.setTradingLock(!phase?.admin_lock_enabled),
-                          'تم تحديث حالة قفل التداول.'
+                          'تم تحديث حالة قفل التداول.',
+                          { scope: 'admin_wallets' }
                         )
                       }
                       className="tsk-gold-btn w-full rounded-xl py-2.5 text-xs"
@@ -1893,7 +2203,11 @@ export const YtEcosystemApp: React.FC<Props> = ({
                       />
                       <button
                         disabled={busy || !managerPayId}
-                        onClick={() => run(() => api.setManager(managerPayId), 'تم تعيين محفظة المدير.')}
+                        onClick={() =>
+                          run(() => api.setManager(managerPayId), 'تم تعيين محفظة المدير.', {
+                            scope: 'admin_wallets'
+                          })
+                        }
                         className="tsk-gold-btn rounded-xl px-3.5 text-xs"
                       >
                         تعيين
@@ -1909,14 +2223,22 @@ export const YtEcosystemApp: React.FC<Props> = ({
                       />
                       <button
                         disabled={busy || !freezePayId}
-                        onClick={() => run(() => api.freezeWallet(freezePayId, true), 'تم تجميد المحفظة.')}
+                        onClick={() =>
+                          run(() => api.freezeWallet(freezePayId, true), 'تم تجميد المحفظة.', {
+                            scope: 'admin_wallets'
+                          })
+                        }
                         className="rounded-xl bg-rose-900 px-3 text-xs font-bold text-white"
                       >
                         تجميد
                       </button>
                       <button
                         disabled={busy || !freezePayId}
-                        onClick={() => run(() => api.freezeWallet(freezePayId, false), 'تم فك التجميد.')}
+                        onClick={() =>
+                          run(() => api.freezeWallet(freezePayId, false), 'تم فك التجميد.', {
+                            scope: 'admin_wallets'
+                          })
+                        }
                         className="rounded-xl bg-emerald-900 px-3 text-xs font-bold text-white"
                       >
                         فك

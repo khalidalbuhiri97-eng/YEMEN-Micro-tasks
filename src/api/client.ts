@@ -73,19 +73,59 @@ export function getRefreshToken(): string | null {
   return token;
 }
 
+let lastSyncedAccessToken: string | null = null;
+let lastSyncedAt = 0;
+let activeSupabaseSyncPromise: Promise<void> | null = null;
+
 export async function syncSupabaseSession(): Promise<void> {
   const accessToken = getAuthToken();
   const refreshToken = getRefreshToken();
   if (!accessToken || !refreshToken) return;
-  const { data, error } = await supabase.auth.setSession({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-  });
-  if (error) throw error;
-  if (data.session) {
-    localStorage.setItem('kasb_auth_token', data.session.access_token);
-    localStorage.setItem('kasb_refresh_token', data.session.refresh_token);
+
+  const now = Date.now();
+  // Fast path: already synced this exact token recently
+  if (lastSyncedAccessToken === accessToken && now - lastSyncedAt < 55_000) {
+    return;
   }
+
+  // Deduplicate concurrent sync calls
+  if (activeSupabaseSyncPromise) {
+    return activeSupabaseSyncPromise;
+  }
+
+  activeSupabaseSyncPromise = (async () => {
+    try {
+      // Zero-network local session check before hitting Supabase Auth
+      const { data: current } = await supabase.auth.getSession();
+      const existing = current?.session;
+      const expiresAtMs = existing?.expires_at ? existing.expires_at * 1000 : 0;
+      if (
+        existing &&
+        existing.access_token === accessToken &&
+        (!expiresAtMs || expiresAtMs - Date.now() > 60_000)
+      ) {
+        lastSyncedAccessToken = accessToken;
+        lastSyncedAt = Date.now();
+        return;
+      }
+
+      const { data, error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) throw error;
+      if (data.session) {
+        localStorage.setItem('kasb_auth_token', data.session.access_token);
+        localStorage.setItem('kasb_refresh_token', data.session.refresh_token);
+        lastSyncedAccessToken = data.session.access_token;
+        lastSyncedAt = Date.now();
+      }
+    } finally {
+      activeSupabaseSyncPromise = null;
+    }
+  })();
+
+  return activeSupabaseSyncPromise;
 }
 
 export function setAuthTokens(token?: string | null, refreshToken?: string | null): void {
@@ -103,6 +143,8 @@ export function setAuthToken(token: string): void {
 }
 
 export function clearAuthToken(): void {
+  lastSyncedAccessToken = null;
+  lastSyncedAt = 0;
   localStorage.removeItem('kasb_auth_token');
   localStorage.removeItem('kasb_refresh_token');
   void supabase.auth.signOut().catch(() => undefined);
