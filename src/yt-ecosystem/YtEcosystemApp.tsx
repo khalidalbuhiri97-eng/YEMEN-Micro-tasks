@@ -124,6 +124,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [showQrModal, setShowQrModal] = useState(false);
   const [pendingAdAction, setPendingAdAction] = useState<{ ad: YtAd; purpose: 'reward' | 'liquidation' } | null>(null);
   const bannerAdRef = useRef<HTMLDivElement | null>(null);
+  const socialBarAdRef = useRef<HTMLDivElement | null>(null);
 
   const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     setNotice({ text, type });
@@ -436,6 +437,19 @@ export const YtEcosystemApp: React.FC<Props> = ({
     (window as any).atOptions = { key: '6e18ad3e7bb40480e41d4d20431b5bb4', format: 'iframe', height: 250, width: 300, params: {} };
     const script = document.createElement('script');
     script.src = 'https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4';
+    script.async = true;
+    script.setAttribute('data-cfasync', 'false');
+    container.appendChild(script);
+    return () => { container.innerHTML = ''; };
+  }, [tab]);
+
+  // تحميل Social Bar في صفحة التعدين فقط، مستقلاً عن بانر 300×250.
+  useEffect(() => {
+    if (tab !== 'mine' || !socialBarAdRef.current) return;
+    const container = socialBarAdRef.current;
+    container.innerHTML = '';
+    const script = document.createElement('script');
+    script.src = 'https://bauval.org/14/df85fec7cf4e0f5cf87b135ab4f1bcd3';
     script.async = true;
     script.setAttribute('data-cfasync', 'false');
     container.appendChild(script);
@@ -1099,6 +1113,9 @@ export const YtEcosystemApp: React.FC<Props> = ({
                 <div className="my-4 flex w-full justify-center overflow-hidden rounded-2xl border border-slate-800/80 bg-[#0A101C] p-2">
                   <div ref={bannerAdRef} className="flex min-h-[250px] w-[300px] max-w-full items-center justify-center overflow-hidden" aria-label="إعلان بانر" />
                 </div>
+
+                {/* مساحة تحميل Social Bar؛ لا تمنح أي مكافأة */}
+                <div ref={socialBarAdRef} aria-label="Adsterra Social Bar" />
 
                 {/* بطاقات الإعلانات */}
                 <div className="space-y-2.5">
