@@ -122,6 +122,7 @@ export const YtEcosystemApp: React.FC<Props> = ({
   const [notice, setNotice] = useState<{ text: string; type: 'info' | 'success' | 'error' } | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+  const [pendingAdAction, setPendingAdAction] = useState<{ ad: YtAd; purpose: 'reward' | 'liquidation' } | null>(null);
 
   const notify = useCallback((text: string, type: 'info' | 'success' | 'error' = 'info') => {
     setNotice({ text, type });
@@ -428,6 +429,10 @@ export const YtEcosystemApp: React.FC<Props> = ({
 
   // تشغيل سريع ومباشر للإعلان مع قفل ضد النقر المزدوج وفتح الرابط فوراً
   const startAd = async (ad: YtAd, purpose: 'reward' | 'liquidation' = 'reward') => {
+    if (ad.ad_type === 'smart_link') {
+      setPendingAdAction({ ad, purpose });
+      return;
+    }
     const lockKey = `start_ad_${ad.id}`;
     if (startingAdId || busy || actionLocksRef.current.has('start_ad_any') || actionLocksRef.current.has(lockKey)) {
       return;
@@ -474,6 +479,13 @@ export const YtEcosystemApp: React.FC<Props> = ({
       actionLocksRef.current.delete(lockKey);
       setStartingAdId(null);
     }
+  };
+
+  const confirmPendingAd = () => {
+    if (!pendingAdAction) return;
+    const next = pendingAdAction;
+    setPendingAdAction(null);
+    void startAd(next.ad, next.purpose);
   };
 
   const verifyAd = async () => {
@@ -2280,6 +2292,45 @@ export const YtEcosystemApp: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {pendingAdAction && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 px-4 py-6 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="smart-link-instructions-title"
+        >
+          <div className="w-full max-w-sm rounded-3xl border border-amber-400/30 bg-[#0B1220] p-5 shadow-2xl shadow-black/50">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-300">
+                <Link2 size={20} />
+              </span>
+              <h2 id="smart-link-instructions-title" className="text-base font-extrabold text-white">
+                تعليمات قبل فتح الإعلان
+              </h2>
+            </div>
+            <p className="mb-3 text-sm leading-7 text-slate-200">
+              عند فتح صفحة الإعلان التالية، يرجى الالتزام بالتعليمات:
+            </p>
+            <ol className="mb-4 list-decimal space-y-2 pr-5 text-sm leading-7 text-slate-300">
+              <li>انتظر حتى تنتهي مدة البقاء المطلوبة.</li>
+              <li>انقر على أي رابط داخل صفحة الإعلان.</li>
+              <li>بعد ذلك ارجع إلى صفحة التعدين.</li>
+            </ol>
+            <p className="mb-4 rounded-xl border border-slate-700 bg-slate-900/70 p-3 text-xs leading-6 text-slate-400">
+              هذه تعليمات إرشادية فقط، ولا تعني أن النقرة قد تم التحقق منها أو أن المكافأة صُرفت.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setPendingAdAction(null)} className="rounded-xl border border-slate-700 bg-slate-800 px-3 py-3 text-xs font-bold text-slate-200 transition hover:bg-slate-700">
+                إلغاء
+              </button>
+              <button type="button" onClick={confirmPendingAd} className="rounded-xl bg-amber-500 px-3 py-3 text-xs font-extrabold text-slate-950 transition hover:bg-amber-400">
+                متابعة إلى الإعلان
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ==================== FIXED BOTTOM NAVIGATION BAR ==================== */}
       <nav className="fixed bottom-0 left-1/2 z-30 w-full max-w-2xl -translate-x-1/2 border-t border-amber-500/25 bg-[#090E1A]/95 px-2 py-2 backdrop-blur-xl">
