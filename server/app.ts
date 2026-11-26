@@ -744,7 +744,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     return res.json({
       success: true,
       requiresEmailConfirmation: true,
-      message: 'تم إنشاء الحساب بنجاح. يرجى مراجعة بريدك الإلكتروني لتأكيد الحساب قبل تسجيل الدخول.',
+      message: 'تم إنشاء الحساب بنجاح. أدخل رمز التحقق المرسل إلى بريدك الإلكتروني لتفعيل الحساب.',
       token: null,
       refreshToken: null,
       user: userPayload,
