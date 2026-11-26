@@ -48,6 +48,7 @@ import { useAuth } from '../../context/AuthContext.tsx';
 import type { AdCenterComfortSettings, MiningAdPlacement, MiningAdTemplate } from '../../types/index.ts';
 import { getCacheItem, saveCacheItem } from '../../services/offlineCache.ts';
 import { MiningAdSlot, detectCurrentDeviceType } from '../mining/MiningAdSandboxRenderer.tsx';
+import { AdsterraMiningSocialBar } from '../ads/AdsterraMiningSocialBar.tsx';
 import {
   MiningAdsCenterSubPages,
   MINING_CENTER_SUBPAGES,
@@ -1789,6 +1790,7 @@ export const YtCoinMiningCard: React.FC<{
             {/* ========================================== */}
             {activeTab === 'home' && (
               <section className="space-y-5">
+                <AdsterraMiningSocialBar />
                 {/* Top Mining Banner Slot (Automatically hidden if no active templates) */}
                 <MiningAdSlot
                   placementKey="mining_top_banner"
