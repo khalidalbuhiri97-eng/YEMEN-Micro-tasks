@@ -119,7 +119,7 @@ export const EmailVerificationPage: React.FC<{ onGoHome: () => void }> = ({ onGo
       let request = attempts.get(key);
       if (!request) {
         request = (async () => {
-          const { data, error } = await supabase.auth.verifyOtp({ email: cleanEmail, token: cleanToken, type: 'email' });
+          const { data, error } = await supabase.auth.verifyOtp({ email: cleanEmail, token: cleanToken, type: 'signup' });
           if (error || !data?.session) return { ok: false, message: errorText(error?.message || 'لم يُرجع خادم المصادقة جلسة دخول.') };
           setAuthTokens(data.session.access_token, data.session.refresh_token);
           return { ok: true, email: data.session.user?.email || cleanEmail };
