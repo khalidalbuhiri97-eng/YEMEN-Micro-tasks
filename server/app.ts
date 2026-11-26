@@ -39,7 +39,7 @@ import { adTrackingService, checkTrackingRateLimit } from './adTrackingService.j
 import { universalTaskTrackingService } from './universalTaskTrackingService.js';
 
 const SUPABASE_URL = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\.supabase\.com$/i, '.supabase.co');
-const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.vip').trim().replace(/\/$/, '');
+const AUTH_REDIRECT_URL = (process.env.APP_URL || process.env.FRONTEND_URL || 'https://yemen-microtasks.com').trim().replace(/\/$/, '');
 const PASSWORD_RESET_REDIRECT_URL = 'https://yemen-microtasks.com/reset-password';
 const SUPABASE_KEY = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
