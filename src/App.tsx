@@ -27,7 +27,7 @@ import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react
 
 function isEmailVerificationLocation(): boolean {
   if (typeof window === 'undefined') return false;
-  return window.location.pathname.replace(/\\/+$/, '') === '/verify-email';
+  return window.location.pathname === '/verify-email' || window.location.pathname === '/verify-email/';
 }
 
 function isResetPasswordLocation(): boolean {
