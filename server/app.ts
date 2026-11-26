@@ -535,7 +535,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       email: cleanEmail,
       password: password,
       options: {
-        emailRedirectTo: `${AUTH_REDIRECT_URL}/`,
+        emailRedirectTo: `${AUTH_REDIRECT_URL}/verify-email`,
         data: {
           full_name: fullName.trim(),
           phone: cleanPhone,
