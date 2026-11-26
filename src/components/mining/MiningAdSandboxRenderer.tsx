@@ -400,7 +400,17 @@ const TrackedVastVideoBox: React.FC<{
     ): Promise<ParsedVastResult> => {
       const proxyUrl = `/api/mining-ads/vast-proxy?url=${encodeURIComponent(targetVastUrl)}`;
       const resp = await fetch(proxyUrl, { method: 'GET', credentials: 'same-origin' });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      if (!resp.ok) {
+        const errorBody = await resp.text().catch(() => '');
+        let detail = '';
+        try {
+          const parsedError = JSON.parse(errorBody);
+          detail = typeof parsedError?.error === 'string' ? parsedError.error : '';
+        } catch {
+          detail = errorBody.slice(0, 240);
+        }
+        throw new Error(detail ? `HTTP ${resp.status}: ${detail}` : `HTTP ${resp.status}`);
+      }
       const xml = await resp.text();
       const parsed = parseVastXmlSafe(xml);
       const mergedImp = [...accImpressions, ...parsed.impressionUrls];
@@ -441,7 +451,7 @@ const TrackedVastVideoBox: React.FC<{
       })
       .catch((err) => {
         if (cancelled) return;
-        setVastError('تعذر جلب ملف VAST من الخادم الإعلاني (CORS أو رابط غير متاح).');
+        setVastError(`تعذر جلب ملف VAST: ${String(err?.message || 'الرابط غير متاح')}`);
         if (!isPreview) {
           void onEmitVastEvent('vast_error', { reason: String(err?.message || 'fetch_failed') });
         }
