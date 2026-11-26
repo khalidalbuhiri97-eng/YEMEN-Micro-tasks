@@ -22,7 +22,13 @@ import { InfoCenter } from './components/public/InfoCenter.tsx';
 import { YtEcosystemApp } from './yt-ecosystem/YtEcosystemApp.tsx';
 
 import { ResetPasswordPage } from './components/auth/ResetPasswordPage.tsx';
+import { EmailVerificationPage } from './components/auth/EmailVerificationPage.tsx';
 import { Home, CheckSquare, Wallet, User, Shield, Megaphone } from 'lucide-react';
+
+function isEmailVerificationLocation(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.location.pathname.replace(/\\/+$/, '') === '/verify-email';
+}
 
 function isResetPasswordLocation(): boolean {
   if (typeof window === 'undefined') return false;
@@ -38,6 +44,9 @@ function MainApp() {
   const { user, isAdmin, openAuthModal } = useAuth();
   const [isResetPasswordRoute, setIsResetPasswordRoute] = useState<boolean>(() =>
     isResetPasswordLocation()
+  );
+  const [isEmailVerificationRoute, setIsEmailVerificationRoute] = useState<boolean>(() =>
+    isEmailVerificationLocation()
   );
   const [currentTab, setCurrentTab] = useState<'home' | 'tasks' | 'wallet' | 'offerwall' | 'earn_ads' | 'how_it_works' | 'dashboard' | 'referrals' | 'settings' | 'advertiser' | 'admin' | 'ytcoin' | 'info_center'>('home');
   const [offerwallDefaultView, setOfferwallDefaultView] = useState<'hub' | 'wall' | 'gg-wall'>('hub');
@@ -92,6 +101,7 @@ function MainApp() {
   useEffect(() => {
     const syncRoute = () => {
       setIsResetPasswordRoute(isResetPasswordLocation());
+      setIsEmailVerificationRoute(isEmailVerificationLocation());
     };
     const handleNavigateReset = () => setIsResetPasswordRoute(true);
     window.addEventListener('popstate', syncRoute);
@@ -112,6 +122,18 @@ function MainApp() {
       openAuthModal('login');
     }
   };
+
+  if (isEmailVerificationRoute) {
+    return (
+      <EmailVerificationPage
+        onGoHome={() => {
+          window.history.replaceState({}, document.title, '/');
+          setIsEmailVerificationRoute(false);
+          setCurrentTab('home');
+        }}
+      />
+    );
+  }
 
   if (isResetPasswordRoute) {
     return (
