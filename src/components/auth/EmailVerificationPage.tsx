@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, AlertCircle, Mail, Loader2, RefreshCw, ArrowRight, ShieldCheck } from 'lucide-react';
 import { supabase } from '../../api/supabase.ts';
 import { api, setAuthTokens } from '../../api/client.ts';
@@ -98,6 +98,8 @@ export const EmailVerificationPage: React.FC<{ onGoHome: () => void }> = ({ onGo
   const email = useMemo(() => {
     try { return new URLSearchParams(window.location.search).get('email') || ''; } catch { return ''; }
   }, []);
+  const onGoHomeRef = useRef(onGoHome);
+  useEffect(() => { onGoHomeRef.current = onGoHome; }, [onGoHome]);
   const [status, setStatus] = useState<VerifyStatus>('checking');
   const [message, setMessage] = useState('');
   const [verifiedEmail, setVerifiedEmail] = useState(email);
@@ -112,7 +114,7 @@ export const EmailVerificationPage: React.FC<{ onGoHome: () => void }> = ({ onGo
         setVerifiedEmail(result.email || email);
         setStatus('success');
         setMessage('تم تأكيد بريدك الإلكتروني وتسجيل دخولك بنجاح. سيتم تحويلك إلى الصفحة الرئيسية.');
-        window.setTimeout(onGoHome, 1300);
+        window.setTimeout(() => onGoHomeRef.current(), 1300);
       } else {
         setStatus('waiting');
         setMessage(result.message);
@@ -123,7 +125,7 @@ export const EmailVerificationPage: React.FC<{ onGoHome: () => void }> = ({ onGo
       setMessage(errorText(err?.message || 'تعذر إكمال التحقق.'));
     });
     return () => { active = false; };
-  }, [email, onGoHome]);
+  }, [email]);
 
   useEffect(() => {
     if (cooldown <= 0) return;
