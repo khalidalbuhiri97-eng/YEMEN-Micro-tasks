@@ -4349,6 +4349,68 @@ app.get('/api/yt-coin/ads', authMiddleware, getYtCoinAdCenter);
 app.post('/api/yt-coin/ads/session', authMiddleware, createYtCoinAdSession);
 app.all('/api/postbacks/yt-coin-ads/:networkKey', handleVerifiedYtCoinAdPostback);
 
+// Server-side VAST XML proxy: avoids browser CORS restrictions without exposing credentials.
+const isAllowedVastHost = (hostname: string) => {
+  const host = hostname.toLowerCase();
+  return host === 'magsrv.com' || host.endsWith('.magsrv.com') ||
+    host === 'exoclick.com' || host.endsWith('.exoclick.com') ||
+    host === 'exosrv.com' || host.endsWith('.exosrv.com');
+};
+
+app.get('/api/mining-ads/vast-proxy', async (req: Request, res: Response) => {
+  try {
+    const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+    if (!rawUrl || rawUrl.length > 2048) {
+      return res.status(400).json({ error: 'رابط VAST غير صالح.' });
+    }
+    let upstreamUrl: URL;
+    try {
+      upstreamUrl = new URL(rawUrl);
+    } catch {
+      return res.status(400).json({ error: 'صيغة رابط VAST غير صالحة.' });
+    }
+    if (upstreamUrl.protocol !== 'https:' || upstreamUrl.username || upstreamUrl.password || !isAllowedVastHost(upstreamUrl.hostname)) {
+      return res.status(403).json({ error: 'مصدر VAST غير مسموح.' });
+    }
+
+    // Follow a short wrapper/redirect chain, validating every destination to prevent SSRF.
+    let upstream: globalThis.Response | null = null;
+    for (let hop = 0; hop <= 3; hop += 1) {
+      upstream = await fetch(upstreamUrl.toString(), {
+        method: 'GET',
+        redirect: 'manual',
+        headers: { Accept: 'application/xml,text/xml,*/*', 'User-Agent': 'YemenTask-VAST-Proxy/1.0' },
+      });
+      if (![301, 302, 303, 307, 308].includes(upstream.status)) break;
+      const location = upstream.headers.get('location');
+      if (!location || hop === 3) {
+        return res.status(502).json({ error: 'تعذر متابعة تحويل رابط VAST.' });
+      }
+      const nextUrl = new URL(location, upstreamUrl);
+      if (nextUrl.protocol !== 'https:' || nextUrl.username || nextUrl.password || !isAllowedVastHost(nextUrl.hostname)) {
+        return res.status(403).json({ error: 'وجهة تحويل VAST غير مسموحة.' });
+      }
+      upstreamUrl = nextUrl;
+    }
+
+    if (!upstream || !upstream.ok) {
+      return res.status(502).json({ error: `خادم VAST أعاد الحالة ${upstream?.status ?? 'unknown'}.` });
+    }
+    const xml = await upstream.text();
+    if (!xml || Buffer.byteLength(xml, 'utf8') > 1024 * 1024) {
+      return res.status(502).json({ error: 'استجابة VAST فارغة أو أكبر من الحد المسموح.' });
+    }
+    if (!/<VAST[\s>]/i.test(xml)) {
+      return res.status(502).json({ error: 'استجابة المصدر ليست ملف VAST XML صالحاً.' });
+    }
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'private, max-age=10');
+    return res.status(200).send(xml);
+  } catch (err: any) {
+    return res.status(502).json({ error: err?.message || 'تعذر جلب ملف VAST من الشبكة الإعلانية.' });
+  }
+});
+
 // Mining Ad Center (Public Placements & Templates + Non-Financial Impression Counter + Ad Tracking API)
 app.get('/api/mining-ads/public', async (req: Request, res: Response) => {
   try {
