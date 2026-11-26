@@ -535,7 +535,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       email: cleanEmail,
       password: password,
       options: {
-        emailRedirectTo: `${AUTH_REDIRECT_URL}/verify-email`,
+        emailRedirectTo: 'https://yemen-microtasks.vip/verify-email',
         data: {
           full_name: fullName.trim(),
           phone: cleanPhone,
@@ -880,7 +880,7 @@ app.post('/api/auth/resend-verification', async (req: Request, res: Response) =>
       type: 'signup',
       email: targetEmail,
       options: {
-        emailRedirectTo: `${AUTH_REDIRECT_URL}/verify-email`,
+        emailRedirectTo: 'https://yemen-microtasks.vip/verify-email',
       },
     });
 
