@@ -290,6 +290,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearAuthToken();
       await clearUserUiCache();
       showToast(res.message || 'تم إنشاء الحساب بنجاح. يرجى تأكيد بريدك الإلكتروني قبل تسجيل الدخول.', 'info');
+      if (typeof window !== 'undefined') {
+        const verificationEmail = String(payload?.email || '').trim().toLowerCase();
+        window.location.assign(`/verify-email${verificationEmail ? `?email=${encodeURIComponent(verificationEmail)}` : ''}`);
+      }
     }
   };
 
