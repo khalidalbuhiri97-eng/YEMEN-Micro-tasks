@@ -53,6 +53,66 @@ import {
   XCircle,
 } from 'lucide-react';
 
+const EXOCLICK_DISPLAY_ZONE_ID = '6109072';
+
+function ExoClickVideoPageDisplayAd() {
+  useEffect(() => {
+    const metaName = 'exoclick-delegate-client-hints';
+    let meta = document.querySelector<HTMLMetaElement>(`meta[name="${metaName}"]`);
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = metaName;
+      meta.httpEquiv = 'Delegate-CH';
+      meta.content =
+        'Sec-CH-UA https://s.magsrv.com; Sec-CH-UA-Mobile https://s.magsrv.com; Sec-CH-UA-Arch https://s.magsrv.com; Sec-CH-UA-Model https://s.magsrv.com; Sec-CH-UA-Platform https://s.magsrv.com; Sec-CH-UA-Platform-Version https://s.magsrv.com; Sec-CH-UA-Bitness https://s.magsrv.com; Sec-CH-UA-Full-Version-List https://s.magsrv.com; Sec-CH-UA-Full-Version https://s.magsrv.com;';
+      document.head.appendChild(meta);
+    }
+
+    const serveAd = () => {
+      const providerWindow = window as typeof window & {
+        AdProvider?: Array<{ serve: Record<string, never> }>;
+      };
+      providerWindow.AdProvider = providerWindow.AdProvider || [];
+      providerWindow.AdProvider.push({ serve: {} });
+    };
+
+    const scriptId = 'exoclick-ad-provider-6109072';
+    const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null;
+    if (existingScript?.dataset.loaded === 'true') {
+      serveAd();
+    } else if (existingScript) {
+      existingScript.addEventListener('load', serveAd, { once: true });
+    } else {
+      const script = document.createElement('script');
+      script.id = scriptId;
+      script.async = true;
+      script.type = 'application/javascript';
+      script.src = 'https://a.magsrv.com/ad-provider.js';
+      script.addEventListener(
+        'load',
+        () => {
+          script.dataset.loaded = 'true';
+          serveAd();
+        },
+        { once: true }
+      );
+      document.body.appendChild(script);
+    }
+  }, []);
+
+  return (
+    <section className="rounded-2xl border border-white/10 bg-[#131822] p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-black text-white">إعلان إضافي</h3>
+        <span className="text-[10px] rounded-full bg-white/10 px-2 py-1 text-gray-400">ExoClick</span>
+      </div>
+      <div className="min-h-[100px] flex items-center justify-center overflow-hidden">
+        <ins className="eas6a97888e37" data-zoneid={EXOCLICK_DISPLAY_ZONE_ID} />
+      </div>
+    </section>
+  );
+}
+
 export type MiningCenterSubPageId =
   | 'mining_tasks'
   | 'banner_ads'
@@ -914,6 +974,7 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
       {/* ============================================================ */}
       {activeSubPage === 'video_ads' && (
         <div className="space-y-4">
+          <ExoClickVideoPageDisplayAd />
           <MiningAdSlot
             placementKey="mining_video_primary"
             placements={placements}
