@@ -1798,6 +1798,15 @@ export const YtCoinMiningCard: React.FC<{
                   compact
                 />
 
+                {/* Main VAST video slot — same managed placement also appears in the Video Ads section */}
+                <MiningAdSlot
+                  placementKey="mining_video_primary"
+                  placements={miningPlacements}
+                  templates={miningTemplates}
+                  comfortSettings={comfortSettings}
+                  compact
+                />
+
                 {/* Recommendation Widget below intro (Automatically hidden when empty) */}
                 <MiningAdSlot
                   placementKey="mining_recommendation_intro"
