@@ -880,7 +880,7 @@ app.post('/api/auth/resend-verification', async (req: Request, res: Response) =>
       type: 'signup',
       email: targetEmail,
       options: {
-        emailRedirectTo: `${AUTH_REDIRECT_URL}/`,
+        emailRedirectTo: `${AUTH_REDIRECT_URL}/verify-email`,
       },
     });
 
