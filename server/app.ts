@@ -535,7 +535,6 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
       email: cleanEmail,
       password: password,
       options: {
-        emailRedirectTo: 'https://yemen-microtasks.vip/verify-email',
         data: {
           full_name: fullName.trim(),
           phone: cleanPhone,
@@ -864,7 +863,7 @@ app.post('/api/auth/resend-verification', async (req: Request, res: Response) =>
     }
 
     if (!targetEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
-      return res.status(400).json({ error: 'يرجى إدخال بريد إلكتروني صحيح لإعادة إرسال رابط التفعيل.' });
+      return res.status(400).json({ error: 'يرجى إدخال بريد إلكتروني صحيح لإعادة إرسال رمز التحقق.' });
     }
 
     const nowMs = Date.now();
@@ -872,16 +871,13 @@ app.post('/api/auth/resend-verification', async (req: Request, res: Response) =>
     const waitSec = Math.ceil((60_000 - (nowMs - lastSentMs)) / 1000);
     if (waitSec > 0) {
       return res.status(429).json({
-        error: `يرجى الانتظار ${waitSec} ثانية قبل إعادة إرسال رابط التفعيل مجدداً.`,
+        error: `يرجى الانتظار ${waitSec} ثانية قبل إعادة إرسال رمز التحقق مجدداً.`,
       });
     }
 
     const { error: resendErr } = await supabaseServer.auth.resend({
       type: 'signup',
       email: targetEmail,
-      options: {
-        emailRedirectTo: 'https://yemen-microtasks.vip/verify-email',
-      },
     });
 
     if (resendErr) {
@@ -893,10 +889,10 @@ app.post('/api/auth/resend-verification', async (req: Request, res: Response) =>
     verificationResendCooldowns.set(targetEmail, nowMs);
     return res.json({
       success: true,
-      message: 'تم إرسال رابط التفعيل الرسمي إلى بريدك الإلكتروني. تحقق من الوارد والرسائل غير المرغوب فيها.',
+      message: 'تم إرسال رمز تحقق جديد إلى بريدك الإلكتروني. أدخله في صفحة التحقق لإكمال تسجيل الدخول.',
     });
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'تعذر إعادة إرسال رابط التفعيل.' });
+    return res.status(500).json({ error: err?.message || 'تعذر إعادة إرسال رمز التحقق.' });
   }
 });
 
