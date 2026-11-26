@@ -289,7 +289,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       clearAuthToken();
       await clearUserUiCache();
-      showToast(res.message || 'تم إنشاء الحساب بنجاح. يرجى تأكيد بريدك الإلكتروني قبل تسجيل الدخول.', 'info');
+      showToast(res.message || 'تم إنشاء الحساب بنجاح. أدخل رمز التحقق المرسل إلى بريدك الإلكتروني.', 'info');
       if (typeof window !== 'undefined') {
         const verificationEmail = String(payload?.email || '').trim().toLowerCase();
         window.location.assign(`/verify-email${verificationEmail ? `?email=${encodeURIComponent(verificationEmail)}` : ''}`);
