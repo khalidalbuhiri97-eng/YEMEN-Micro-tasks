@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AdsterraAd } from '../components/ads/AdsterraAd.tsx';
 import {
   ArrowDownToLine,
   BarChart3,
@@ -1506,6 +1507,11 @@ export const YtEcosystemApp: React.FC<Props> = ({
           {/* -------------------- TAB 3: السوق والبيانات الاقتصادية -------------------- */}
           {tab === 'market' && (
             <section className="space-y-4">
+              <div className="mx-auto w-full max-w-3xl space-y-2" aria-label="إعلانات market">
+                <AdsterraAd placementId="ytcoin-market-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} />
+                <AdsterraAd placementId="ytcoin-market-468x60" adKey="5cf71e97e1b47a9c6b2d89e879cc8c00" scriptSrc="https://bauval.org/22/5cf71e97e1b47a9c6b2d89e879cc8c00" width={468} height={60} />
+              </div>
+
               {/* بطاقة السعر اللحظي والسيولة التفصيلية */}
               <div className="tsk-vip-card rounded-3xl p-5">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-0.5 font-mono text-[10px] text-emerald-300">
@@ -1611,6 +1617,11 @@ export const YtEcosystemApp: React.FC<Props> = ({
           {/* -------------------- TAB 4: الإحالات -------------------- */}
           {tab === 'referrals' && (
             <section className="space-y-4">
+              <div className="mx-auto w-full max-w-3xl space-y-2" aria-label="إعلانات referrals">
+                <AdsterraAd placementId="ytcoin-referrals-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} />
+                <AdsterraAd placementId="ytcoin-referrals-468x60" adKey="5cf71e97e1b47a9c6b2d89e879cc8c00" scriptSrc="https://bauval.org/22/5cf71e97e1b47a9c6b2d89e879cc8c00" width={468} height={60} />
+              </div>
+
               <div className="tsk-vip-card rounded-3xl p-5">
                 <h2 className="text-base font-black text-amber-300">🤝 برنامج سفراء Taska Coin</h2>
                 <p className="mt-1 text-xs leading-6 text-slate-300">
@@ -1665,6 +1676,11 @@ export const YtEcosystemApp: React.FC<Props> = ({
           {/* -------------------- TAB 5: الإعدادات والأمان -------------------- */}
           {tab === 'settings' && (
             <section className="space-y-4">
+              <div className="mx-auto w-full max-w-3xl space-y-2" aria-label="إعلانات security">
+                <AdsterraAd placementId="ytcoin-security-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} />
+                <AdsterraAd placementId="ytcoin-security-468x60" adKey="5cf71e97e1b47a9c6b2d89e879cc8c00" scriptSrc="https://bauval.org/22/5cf71e97e1b47a9c6b2d89e879cc8c00" width={468} height={60} />
+              </div>
+
               <div className="tsk-card rounded-3xl p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <h2 className="text-sm font-extrabold text-amber-300">🔐 أمان المحفظة (رمز PIN)</h2>
