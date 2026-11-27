@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AdsterraAd } from '../components/ads/AdsterraAd.tsx';
 import {
   ArrowDownToLine,
   BarChart3,
@@ -1605,6 +1606,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   ))}
                 </div>
               </div>
+            
+              <AdsterraAd placementId="yt-market-bottom-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} className="mx-auto" />
             </section>
           )}
 
@@ -1659,6 +1662,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   )}
                 </div>
               </div>
+            
+              <AdsterraAd placementId="yt-referrals-bottom-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} className="mx-auto" />
             </section>
           )}
 
@@ -1715,6 +1720,8 @@ export const YtEcosystemApp: React.FC<Props> = ({
                   حفظ وتفعيل رمز الأمان PIN
                 </button>
               </div>
+            
+              <AdsterraAd placementId="yt-security-bottom-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} className="mx-auto" />
             </section>
           )}
 
