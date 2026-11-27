@@ -878,6 +878,7 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
             templates={templates}
             comfortSettings={comfortSettings}
           />
+          <AdsterraAd placementId="banner-filter-250x300" adKey="5cf71e97e1b47a9c6b2d89e879cc8c00" scriptSrc="https://bauval.org/22/5cf71e97e1b47a9c6b2d89e879cc8c00" width={250} height={300} className="mx-auto" />
           <MiningAdSlot
             placementKey="mining_mid_banner"
             placements={placements}
@@ -977,6 +978,7 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
         <div className="space-y-4">
           <ExoClickVideoPageDisplayAd />
           <AdsterraAd placementId="video-area-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} className="mx-auto" />
+          <AdsterraAd placementId="video-filter-250x300" adKey="5cf71e97e1b47a9c6b2d89e879cc8c00" scriptSrc="https://bauval.org/22/5cf71e97e1b47a9c6b2d89e879cc8c00" width={250} height={300} className="mx-auto" />
           <MiningAdSlot
             placementKey="mining_video_primary"
             placements={placements}
@@ -1096,6 +1098,7 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
             onStartVerifiedSession={handleStartVerifiedSession}
             startingSessionKey={startingKey}
           />
+          <AdsterraAd placementId="smart-links-468x60" adKey="5cf71e97e1b47a9c6b2d89e879cc8c00" scriptSrc="https://bauval.org/22/5cf71e97e1b47a9c6b2d89e879cc8c00" width={468} height={60} className="mx-auto" />
 
           {linkTemplates.filter((t) => t.placementKey !== 'mining_links_featured').length > 0 && (
             <div className="grid grid-cols-1 gap-3">
