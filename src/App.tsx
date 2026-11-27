@@ -3,7 +3,8 @@
  * Full-Stack Fintech Platform for Micro-Tasks & Remittances in Yemen
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { supabase } from './api/supabase.ts';
 import { AuthProvider, useAuth } from './context/AuthContext.tsx';
 import { Navbar } from './components/layout/Navbar.tsx';
 import { Hero } from './components/public/Hero.tsx';
@@ -52,6 +53,39 @@ function MainApp() {
   const [offerwallDefaultView, setOfferwallDefaultView] = useState<'hub' | 'wall' | 'gg-wall'>('hub');
   const [legalModalType, setLegalModalType] = useState<'terms' | 'privacy' | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [newTaskNotice, setNewTaskNotice] = useState<{ id: string; title: string } | null>(null);
+  const seenTaskNoticeIds = useRef<Set<string>>(new Set());
+
+  // One Realtime subscription per app session; the event table exposes only safe task notice fields.
+  useEffect(() => {
+    let active = true;
+    const channel = supabase
+      .channel('public-task-publication-notices')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'task_publication_events',
+      }, (payload) => {
+        const event = payload.new as { task_id?: string; title?: string; created_by?: string | null };
+        if (!active || !event.task_id || seenTaskNoticeIds.current.has(event.task_id)) return;
+        seenTaskNoticeIds.current.add(event.task_id);
+        // Do not notify the administrator/advertiser who created the task.
+        if (user?.id && event.created_by === user.id) return;
+        setNewTaskNotice({ id: event.task_id, title: event.title?.trim() || 'مهمة جديدة' });
+      })
+      .subscribe();
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!newTaskNotice) return;
+    const timeout = window.setTimeout(() => setNewTaskNotice(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [newTaskNotice]);
   
   // Dark mode handler adhering to §1.F
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -146,6 +180,23 @@ function MainApp() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors overflow-x-hidden w-full max-w-full">
+      {currentTab === 'home' && newTaskNotice && (
+        <button
+          type="button"
+          onClick={() => { setCurrentTab('tasks'); setNewTaskNotice(null); }}
+          className="fixed top-[5.5rem] left-1/2 -translate-x-1/2 z-[90] w-[min(92vw,26rem)] rounded-2xl border border-emerald-200/70 dark:border-emerald-400/20 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl shadow-xl shadow-emerald-950/10 px-4 py-3 text-right flex items-center gap-3 animate-in fade-in slide-in-from-top-3 duration-300"
+          aria-live="polite"
+          aria-label="فتح المهام الجديدة"
+        >
+          <span className="shrink-0 w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center text-xl">✦</span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-extrabold text-sm text-slate-900 dark:text-white">🎉 مهمة جديدة متاحة!</span>
+            <span className="block text-xs text-slate-600 dark:text-slate-300 truncate mt-0.5">{newTaskNotice.title} — سارع بالمشاركة واربح المكافأة</span>
+          </span>
+          <span className="text-emerald-600 dark:text-emerald-400 text-xs font-bold shrink-0">عرض</span>
+        </button>
+      )}
+
       {/* Non-blocking Animated Splash Overlay & Offline Status Indicator */}
       <SplashScreen />
       <OfflineIndicator />
