@@ -56,9 +56,18 @@ function MainApp() {
   const [newTaskNotice, setNewTaskNotice] = useState<{ id: string; title: string } | null>(null);
   const seenTaskNoticeIds = useRef<Set<string>>(new Set());
 
-  // One Realtime subscription per app session; the event table exposes only safe task notice fields.
+  // Realtime delivery with a lightweight polling fallback for mobile/network interruptions.
   useEffect(() => {
+    if (currentTab !== 'home') return;
     let active = true;
+    const startedAt = new Date().toISOString();
+    let lastCheckedAt = startedAt;
+    const deliverNotice = (row: { task_id?: string; title?: string }) => {
+      if (!active || !row.task_id || seenTaskNoticeIds.current.has(row.task_id)) return;
+      seenTaskNoticeIds.current.add(row.task_id);
+      setNewTaskNotice({ id: row.task_id, title: row.title?.trim() || 'مهمة جديدة' });
+    };
+
     const channel = supabase
       .channel('public-task-publication-notices')
       .on('postgres_changes', {
@@ -66,18 +75,39 @@ function MainApp() {
         schema: 'public',
         table: 'task_publication_events',
       }, (payload) => {
-        const event = payload.new as { task_id?: string; title?: string };
-        if (!active || currentTab !== 'home' || !event.task_id || seenTaskNoticeIds.current.has(event.task_id)) return;
-        seenTaskNoticeIds.current.add(event.task_id);
-        setNewTaskNotice({ id: event.task_id, title: event.title?.trim() || 'مهمة جديدة' });
+        deliverNotice(payload.new as { task_id?: string; title?: string });
       })
-      .subscribe();
+      .subscribe((status, error) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[YemenTask] Realtime task notice channel:', status, error);
+        }
+      });
 
+    const pollForMissedEvents = async () => {
+      const queryFrom = lastCheckedAt;
+      const checkedAt = new Date().toISOString();
+      const { data, error } = await supabase
+        .from('task_publication_events')
+        .select('task_id,title,created_at')
+        .gt('created_at', queryFrom)
+        .order('created_at', { ascending: true })
+        .limit(20);
+      if (!active) return;
+      if (error) {
+        console.warn('[YemenTask] Task notice fallback check failed:', error.message);
+        return;
+      }
+      lastCheckedAt = checkedAt;
+      (data || []).forEach((row) => deliverNotice(row as { task_id?: string; title?: string }));
+    };
+
+    const pollId = window.setInterval(() => { void pollForMissedEvents(); }, 4000);
     return () => {
       active = false;
+      window.clearInterval(pollId);
       void supabase.removeChannel(channel);
     };
-  }, [currentTab, user?.id]);
+  }, [currentTab]);
 
   useEffect(() => {
     if (!newTaskNotice) return;
