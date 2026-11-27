@@ -182,7 +182,8 @@ function MainApp() {
         <button
           type="button"
           onClick={() => { setCurrentTab('tasks'); setNewTaskNotice(null); }}
-          className="fixed top-[5.5rem] left-1/2 -translate-x-1/2 z-[90] w-[min(92vw,26rem)] rounded-2xl border border-emerald-200/70 dark:border-emerald-400/20 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl shadow-xl shadow-emerald-950/10 px-4 py-3 text-right flex items-center gap-3 animate-in fade-in slide-in-from-top-3 duration-300"
+          className="fixed top-[5.5rem] left-1/2 -translate-x-1/2 z-[90] w-[min(92vw,26rem)] rounded-2xl border border-emerald-200/70 dark:border-emerald-400/20 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xl shadow-xl shadow-emerald-950/10 px-4 py-3 text-right flex items-center gap-3"
+          style={{ animation: 'yemenTaskNotice 5s ease both' }}
           aria-live="polite"
           aria-label="فتح المهام الجديدة"
         >
