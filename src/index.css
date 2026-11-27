@@ -79,3 +79,11 @@ video,
 canvas {
   max-width: 100%;
 }
+
+
+@keyframes yemenTaskNotice {
+  0% { opacity: 0; transform: translate(-50%, -10px); }
+  8% { opacity: 1; transform: translate(-50%, 0); }
+  90% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -6px); }
+}
