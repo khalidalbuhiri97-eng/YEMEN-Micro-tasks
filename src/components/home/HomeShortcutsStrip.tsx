@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   CheckSquare,
   Wallet,
@@ -13,6 +13,8 @@ import {
   Clock3,
   Tv,
   Download,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { formatYer } from '../../../shared/money.ts';
@@ -25,6 +27,13 @@ interface HomeShortcutsStripProps {
 export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNavigate }) => {
   const { user, wallet, isAdmin } = useAuth();
   const isStandalone = useIsStandalone();
+  const shortcutsScrollerRef = useRef<HTMLDivElement>(null);
+  const scrollShortcuts = (direction: 'next' | 'previous') => {
+    const el = shortcutsScrollerRef.current;
+    if (!el) return;
+    const distance = Math.max(220, Math.round(el.clientWidth * 0.72));
+    el.scrollBy({ left: direction === 'next' ? -distance : distance, behavior: 'smooth' });
+  };
 
   const shortcuts = [
     {
@@ -172,7 +181,14 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
         </div>
 
         <div className="relative">
+          <button type="button" onClick={() => scrollShortcuts('previous')} aria-label="تمرير الأيقونات إلى اليمين" className="absolute right-0 top-1/2 z-10 hidden h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-800/95 dark:text-slate-100 sm:flex">
+            <ChevronRight className="h-5 w-5" />
+          </button>
+          <button type="button" onClick={() => scrollShortcuts('next')} aria-label="تمرير الأيقونات إلى اليسار" className="absolute left-0 top-1/2 z-10 hidden h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-800/95 dark:text-slate-100 sm:flex">
+            <ChevronLeft className="h-5 w-5" />
+          </button>
           <div
+            ref={shortcutsScrollerRef}
             dir="rtl"
             className="flex flex-row gap-3 overflow-x-auto overflow-y-hidden overscroll-x-contain scroll-smooth snap-x snap-mandatory pb-3 pt-1 px-0.5 [scrollbar-width:thin] [scrollbar-color:#a7f3d0_transparent]"
             aria-label="بطاقات الخدمات والتنقل - مرر جانبياً"
