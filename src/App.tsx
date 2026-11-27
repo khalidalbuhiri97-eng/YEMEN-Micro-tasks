@@ -66,11 +66,9 @@ function MainApp() {
         schema: 'public',
         table: 'task_publication_events',
       }, (payload) => {
-        const event = payload.new as { task_id?: string; title?: string; created_by?: string | null };
+        const event = payload.new as { task_id?: string; title?: string };
         if (!active || !event.task_id || seenTaskNoticeIds.current.has(event.task_id)) return;
         seenTaskNoticeIds.current.add(event.task_id);
-        // Do not notify the administrator/advertiser who created the task.
-        if (user?.id && event.created_by === user.id) return;
         setNewTaskNotice({ id: event.task_id, title: event.title?.trim() || 'مهمة جديدة' });
       })
       .subscribe();
