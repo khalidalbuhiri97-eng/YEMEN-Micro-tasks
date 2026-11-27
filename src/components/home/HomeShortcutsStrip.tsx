@@ -181,7 +181,7 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
         </div>
 
         <div className="relative">
-          <button type="button" onClick={() => scrollShortcuts('previous')} aria-label="تمرير الأيقونات إلى اليمين" className="absolute right-0 top-1/2 z-10 hidden h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-800/95 dark:text-slate-100 sm:flex">
+          <button type="button" onClick={() => scrollShortcuts('previous')} aria-label="تمرير الأيقونات إلى اليمين" className="absolute right-0 top-1/2 z-10 flex h-8 w-8 sm:h-9 sm:w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-800/95 dark:text-slate-100 sm:flex">
             <ChevronRight className="h-5 w-5" />
           </button>
           <button type="button" onClick={() => scrollShortcuts('next')} aria-label="تمرير الأيقونات إلى اليسار" className="absolute left-0 top-1/2 z-10 hidden h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 shadow-md backdrop-blur hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-800/95 dark:text-slate-100 sm:flex">
