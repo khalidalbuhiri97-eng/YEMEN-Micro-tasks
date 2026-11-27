@@ -289,7 +289,7 @@ export const OfferWallView: React.FC<OfferWallViewProps> = ({ defaultView = 'hub
             <button
               type="button"
               onClick={() => { setSelectedPartner(null); setActiveTab('wall'); }}
-              className="min-h-[190px] rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-emerald-950/40 dark:via-slate-900 dark:to-slate-900 p-5 text-right shadow-sm hover:shadow-md hover:border-emerald-400 transition-all flex flex-col justify-between"
+              className="group min-h-[210px] rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-gradient-to-br from-emerald-50 via-white to-teal-50 dark:from-emerald-950/40 dark:via-slate-900 dark:to-slate-900 p-5 text-right shadow-sm hover:shadow-md hover:border-emerald-400 transition-all flex flex-col justify-between"
             >
               <div className="flex items-center gap-3">
                 <span className="w-12 h-12 rounded-xl bg-white dark:bg-slate-800 border border-emerald-100 dark:border-emerald-900 flex items-center justify-center"><ClixWallIcon size={32} /></span>
@@ -299,12 +299,12 @@ export const OfferWallView: React.FC<OfferWallViewProps> = ({ defaultView = 'hub
                 </span>
               </div>
               <span className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">افتح حائط ClixWall المخصص لحسابك وتابع مكافآتك وسجل التحويلات.</span>
-              <span className="text-xs font-extrabold text-emerald-700 dark:text-emerald-400">فتح حائط ClixWall ←</span>
+              <span className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-extrabold text-white shadow-md transition-colors group-hover:bg-emerald-700">ادخل الآن إلى ClixWall <ExternalLink className="h-4 w-4" /></span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('gg-wall')}
-              className="min-h-[190px] rounded-2xl border border-cyan-200 dark:border-cyan-900/60 bg-gradient-to-br from-cyan-50 via-white to-blue-50 dark:from-cyan-950/40 dark:via-slate-900 dark:to-slate-900 p-5 text-right shadow-sm hover:shadow-md hover:border-cyan-400 transition-all flex flex-col justify-between"
+              className="group min-h-[210px] rounded-2xl border border-cyan-200 dark:border-cyan-900/60 bg-gradient-to-br from-cyan-50 via-white to-blue-50 dark:from-cyan-950/40 dark:via-slate-900 dark:to-slate-900 p-5 text-right shadow-sm hover:shadow-md hover:border-cyan-400 transition-all flex flex-col justify-between"
             >
               <div className="flex items-center gap-3">
                 <span className="w-12 h-12 rounded-xl bg-white dark:bg-slate-800 border border-cyan-100 dark:border-cyan-900 flex items-center justify-center"><Layers className="w-7 h-7 text-cyan-600" /></span>
@@ -314,7 +314,7 @@ export const OfferWallView: React.FC<OfferWallViewProps> = ({ defaultView = 'hub
                 </span>
               </div>
               <span className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">عروض واستبيانات ومهام من Offerwall.GG، وتُضاف المكافآت المؤكدة إلى محفظتك بالريال.</span>
-              <span className="text-xs font-extrabold text-cyan-700 dark:text-cyan-400">فتح Offerwall.GG ←</span>
+              <span className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-700 px-4 py-3 text-sm font-extrabold text-white shadow-md transition-colors group-hover:bg-cyan-800">ادخل الآن إلى Offerwall.GG <ExternalLink className="h-4 w-4" /></span>
             </button>
             {offerWallPartners.map((partner) => (
               <button
