@@ -21,6 +21,7 @@ import {
   type ConnectedYtNetworkLite,
 } from './MiningAdSandboxRenderer.tsx';
 import { MiningAdsManager } from '../admin/MiningAdsManager.tsx';
+import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 import {
   Award,
   Bell,
@@ -975,6 +976,7 @@ export const MiningAdsCenterSubPages: React.FC<MiningAdsCenterSubPagesProps> = (
       {activeSubPage === 'video_ads' && (
         <div className="space-y-4">
           <ExoClickVideoPageDisplayAd />
+          <AdsterraAd placementId="video-area-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} className="mx-auto" />
           <MiningAdSlot
             placementKey="mining_video_primary"
             placements={placements}
