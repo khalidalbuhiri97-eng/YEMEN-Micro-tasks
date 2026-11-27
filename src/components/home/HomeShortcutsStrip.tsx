@@ -19,7 +19,6 @@ import {
 import { useAuth } from '../../context/AuthContext.tsx';
 import { formatYer } from '../../../shared/money.ts';
 import { useIsStandalone } from '../pwa/PWAInstallButton.tsx';
-import { AdsterraAd } from '../ads/AdsterraAd.tsx';
 
 interface HomeShortcutsStripProps {
   onNavigate: (tab: string) => void;
@@ -222,7 +221,6 @@ export const HomeShortcutsStrip: React.FC<HomeShortcutsStripProps> = ({ onNaviga
             })}
           </div>
           <p className="mt-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">اسحب جانبياً لاستعراض جميع الخدمات <span aria-hidden="true">←</span></p>
-          <AdsterraAd placementId="quick-shortcuts-300x250" adKey="6e18ad3e7bb40480e41d4d20431b5bb4" scriptSrc="https://bauval.org/22/6e18ad3e7bb40480e41d4d20431b5bb4" width={300} height={250} className="mx-auto" />
         </div>
       </div>
     </section>
